@@ -1,0 +1,15 @@
+[package]
+name = "apygen_python_analysis"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+apygen_analysis = { workspace = true }
+apygen_finder = { workspace = true }
+apy = { workspace = true }
+rayon = { workspace = true }
+ordered-float = { workspace = true }
+thiserror = { workspace = true }
+imbl = { workspace = true }

@@ -8,6 +8,7 @@ rust-version = "1.92"
 license = "MIT"
 
 [workspace.dependencies]
+apygen_python_analysis = { path = "crates/apygen_python_analysis" }
 apygen_cfg = { path = "crates/apygen_cfg" }
 apygen_analysis = { path = "crates/apygen_analysis" }
 apygen_finder = { path = "crates/apygen_finder" }
