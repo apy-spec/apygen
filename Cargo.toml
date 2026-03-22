@@ -9,6 +9,7 @@ license = "MIT"
 
 [workspace.dependencies]
 apygen_cfg = { path = "crates/apygen_cfg" }
+apygen_analysis = { path = "crates/apygen_analysis" }
 apygen_finder = { path = "crates/apygen_finder" }
 
 apy = { git = "https://github.com/apy-spec/apy-rs.git" }
