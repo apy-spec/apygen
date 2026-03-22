@@ -1,0 +1,11 @@
+[package]
+name = "apygen"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+apygen_python_analysis = { workspace = true }
+apy = { workspace = true, version = "1.0.0", features = ["yaml"] }
+rayon = { workspace = true }
