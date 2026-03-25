@@ -5,8 +5,9 @@ use crate::genkill::literals::{
     gen_expr_boolean_literal, gen_expr_ellipsis_literal, gen_expr_none_literal,
     gen_expr_number_literal, gen_expr_string_literal,
 };
-use apy::v1::QualifiedName;
-use apygen_analysis::cfg::nodes::Expr;
+use apy::OneOrMany;
+use apy::v1::{Identifier, QualifiedName};
+use apygen_analysis::cfg::nodes::{Expr, ExprName};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -132,25 +133,62 @@ pub fn gen_expr_tuple(
     )
 }
 
+pub fn gen_name(
+    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    environment_location: &Location<QualifiedName>,
+    expr_name: &ExprName,
+) -> GenExprResult<Type> {
+    let identifier = match Identifier::try_from(expr_name.id.as_ref()) {
+        Ok(identifier) => identifier,
+        Err(_) => return GenExprResult::unknown(),
+    };
+
+    GenExprResult::unknown()
+}
+
 pub fn gen_expr(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     environment_location: &Location<QualifiedName>,
     expression: &nodes::Expr,
 ) -> GenExprResult<Type> {
     GenExprResult::new_total_pure_non_raising(match expression {
+        Expr::BoolOp(_) => return GenExprResult::unknown(),
+        Expr::Named(_) => return GenExprResult::unknown(),
+        Expr::BinOp(_) => return GenExprResult::unknown(),
+        Expr::UnaryOp(_) => return GenExprResult::unknown(),
+        Expr::Lambda(_) => return GenExprResult::unknown(),
+        Expr::If(_) => return GenExprResult::unknown(),
+        Expr::Dict(_) => return GenExprResult::unknown(),
+        Expr::Set(_) => return GenExprResult::unknown(),
+        Expr::ListComp(_) => return GenExprResult::unknown(),
+        Expr::SetComp(_) => return GenExprResult::unknown(),
+        Expr::DictComp(_) => return GenExprResult::unknown(),
+        Expr::Generator(_) => return GenExprResult::unknown(),
+        Expr::Await(_) => return GenExprResult::unknown(),
+        Expr::Yield(_) => return GenExprResult::unknown(),
+        Expr::YieldFrom(_) => return GenExprResult::unknown(),
+        Expr::Compare(_) => return GenExprResult::unknown(),
+        Expr::Call(_) => return GenExprResult::unknown(),
+        Expr::FString(_) => return GenExprResult::unknown(),
         Expr::StringLiteral(expr_string_literal) => gen_expr_string_literal(expr_string_literal),
+        Expr::BytesLiteral(_) => return GenExprResult::unknown(),
         Expr::NumberLiteral(expr_number_literal) => gen_expr_number_literal(expr_number_literal),
         Expr::BooleanLiteral(expr_boolean_literal) => {
             gen_expr_boolean_literal(expr_boolean_literal)
         }
         Expr::NoneLiteral(_) => gen_expr_none_literal(),
         Expr::EllipsisLiteral(_) => gen_expr_ellipsis_literal(),
+        Expr::Attribute(_) => return GenExprResult::unknown(),
+        Expr::Subscript(_) => return GenExprResult::unknown(),
+        Expr::Starred(_) => return GenExprResult::unknown(),
+        Expr::Name(expr_name) => return gen_name(context, environment_location, expr_name),
         Expr::List(expr_list) => {
             return gen_expr_list(context, environment_location, expr_list);
         }
         Expr::Tuple(expr_tuple) => {
             return gen_expr_tuple(context, environment_location, expr_tuple);
         }
-        _ => return GenExprResult::unknown(),
+        Expr::Slice(_) => return GenExprResult::unknown(),
+        Expr::IpyEscapeCommand(_) => return GenExprResult::unknown(),
     })
 }
