@@ -7,5 +7,5 @@ license.workspace = true
 
 [dependencies]
 apygen_python_analysis = { workspace = true }
-apy = { workspace = true, version = "1.0.0", features = ["yaml"] }
+apy = { workspace = true, features = ["yaml"] }
 rayon = { workspace = true }
