@@ -2,7 +2,7 @@ use apy;
 use apy::Value;
 use apy::v1::{PythonValue, QualifiedName, TypeArgument};
 use apygen_python_analysis::abstract_environment::{
-    AbstractEnvironment, Attribute, LiteralValue, Type,
+    AbstractEnvironment, Attribute, Type, TypeLiteral,
 };
 use apygen_python_analysis::analysis::namespace::{
     Location, NamespaceLocation, Namespaces, NamespacesContext,
@@ -29,7 +29,7 @@ fn add_attributes(
         let apy_attribute = match attribute.as_ref() {
             Attribute::Local(local_attribute) => match local_attribute.attribute_type.as_ref() {
                 Type::Literal(literal_value) => match literal_value.as_ref() {
-                    LiteralValue::ListLiteral(list_literal) => {
+                    TypeLiteral::List(list_literal) => {
                         apy::v1::Attribute::Variable(apy::v1::Variable {
                             variable_type: apy::v1::Type {
                                 id: QualifiedName::try_from("list").unwrap(),
@@ -46,7 +46,7 @@ fn add_attributes(
                             is_final: false,
                         })
                     }
-                    LiteralValue::TupleLiteral(list_literal) => {
+                    TypeLiteral::Tuple(list_literal) => {
                         apy::v1::Attribute::Variable(apy::v1::Variable {
                             variable_type: apy::v1::Type {
                                 id: QualifiedName::try_from("tuple").unwrap(),
@@ -63,14 +63,14 @@ fn add_attributes(
                             is_final: false,
                         })
                     }
-                    LiteralValue::StringLiteral(string_literal) => {
+                    TypeLiteral::String(string_literal) => {
                         apy::v1::Attribute::Variable(apy::v1::Variable {
                             variable_type: apy::v1::Type {
                                 id: QualifiedName::try_from("Literal").unwrap(),
                                 history_index: 0,
                                 arguments: Vec::from_iter([TypeArgument::Value {
                                     value: PythonValue::Str {
-                                        str: string_literal.as_ref().clone(),
+                                        str: string_literal.value.as_ref().clone(),
                                     },
                                 }]),
                                 extensions: Default::default(),
@@ -84,14 +84,14 @@ fn add_attributes(
                             is_final: false,
                         })
                     }
-                    LiteralValue::IntegerLiteral(integer) => {
+                    TypeLiteral::Integer(integer) => {
                         apy::v1::Attribute::Variable(apy::v1::Variable {
                             variable_type: apy::v1::Type {
                                 id: QualifiedName::try_from("Literal").unwrap(),
                                 history_index: 0,
                                 arguments: Vec::from_iter([TypeArgument::Value {
                                     value: PythonValue::Int {
-                                        int: integer.to_string(),
+                                        int: integer.value.to_string(),
                                     },
                                 }]),
                                 extensions: Default::default(),
@@ -105,15 +105,15 @@ fn add_attributes(
                             is_final: false,
                         })
                     }
-                    LiteralValue::ImportedModule(module_reference) => {
+                    TypeLiteral::ImportedModule(module_reference) => {
                         apy::v1::Attribute::ImportedModule(apy::v1::ImportedModule {
-                            module: module_reference.module.as_ref().clone(),
+                            module: module_reference.value.module.as_ref().clone(),
                             is_deprecated: local_attribute.is_deprecated,
                             visibility: local_attribute.visibility,
                             extensions: BTreeMap::new(),
                         })
                     }
-                    LiteralValue::Function(function_type) => {
+                    TypeLiteral::Function(function_type) => {
                         apy::v1::Attribute::Function(apy::v1::Function {
                             signature: apy::OneOrMany::one(apy::v1::Signature {
                                 parameters: apy::v1::Parameters::new(),
@@ -132,7 +132,7 @@ fn add_attributes(
                                     let mut variables: Vec<Value> = Vec::new();
                                     if let Some(env) = namespaces.get_abstract_environment(
                                         &Location::at_exit(namespace_location.sub_location(
-                                            function_type.location.program_point.id(),
+                                            function_type.value.location.program_point.id(),
                                         )),
                                     ) {
                                         for variable_name in env.attributes.keys() {
@@ -153,13 +153,14 @@ fn add_attributes(
                             extensions: BTreeMap::new(),
                         })
                     }
-                    LiteralValue::Class(class_type) => {
+                    TypeLiteral::Class(class_type) => {
                         let Some(class_abstract_environment) =
                             namespaces.get_abstract_environment(&Location::at_exit(
                                 class_type
+                                    .value
                                     .location
                                     .namespace_location
-                                    .sub_location(class_type.location.program_point.id()),
+                                    .sub_location(class_type.value.location.program_point.id()),
                             ))
                         else {
                             continue;

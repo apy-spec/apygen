@@ -1,5 +1,6 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, Identifier, LiteralValue, LocalAttribute, QualifiedName, Type,
+    AbstractEnvironment, Attribute, Identifier, LiteralBigInteger, LiteralInteger, LocalAttribute,
+    QualifiedName, Type, TypeLiteral,
 };
 use crate::analysis::cfg::nodes::{Expr, ExprSubscript, ExprUnaryOp, UnaryOp};
 use crate::analysis::namespace::{Location, NamespacesContext};
@@ -77,12 +78,12 @@ fn get_attribute<'a>(
     };
 
     let result = match literal_value.as_ref() {
-        LiteralValue::Class(class_type) => {
-            get_attribute(context, &class_type.location, attribute_identifiers)
+        TypeLiteral::Class(class_type) => {
+            get_attribute(context, &class_type.value.location, attribute_identifiers)
         }
-        LiteralValue::ImportedModule(module_reference_type) => get_attribute(
+        TypeLiteral::ImportedModule(module_reference_type) => get_attribute(
             context,
-            &Location::from(module_reference_type.module.clone()),
+            &Location::from(module_reference_type.value.module.clone()),
             attribute_identifiers,
         ),
         _ => Err(GetAttributeError::IsNotNamespace(identifier.to_owned())),
@@ -152,9 +153,9 @@ pub fn gen_expr_qualified_name(
     };
 
     let origin = match literal_value.as_ref() {
-        LiteralValue::Class(class_type) => class_type.location.clone(),
-        LiteralValue::TypeAlias(type_alias_type) => type_alias_type.location.clone(),
-        LiteralValue::Generic(generic_type) => generic_type.location.clone(),
+        TypeLiteral::Class(class_type) => class_type.value.location.clone(),
+        TypeLiteral::TypeAlias(type_alias_type) => type_alias_type.value.location.clone(),
+        TypeLiteral::Generic(generic_type) => generic_type.value.location.clone(),
         _ => {
             return Err(GenAnnotationError::InvalidAnnotation {
                 reason: "The base is not a type".to_owned(),
@@ -226,15 +227,17 @@ pub fn gen_expr_unary_op(expression: &ExprUnaryOp) -> Result<Type, GenAnnotation
     };
 
     match number_literal.as_ref() {
-        LiteralValue::IntegerLiteral(int) => {
-            Ok(Type::new_literal(LiteralValue::IntegerLiteral(-int)))
+        TypeLiteral::Integer(LiteralInteger { value }) => {
+            Ok(Type::new_literal(TypeLiteral::Integer(LiteralInteger {
+                value: -value,
+            })))
         }
-        LiteralValue::BigIntegerLiteral { positive, value } => {
-            Ok(Type::new_literal(LiteralValue::BigIntegerLiteral {
+        TypeLiteral::BigInteger(LiteralBigInteger { positive, value }) => Ok(Type::new_literal(
+            TypeLiteral::BigInteger(LiteralBigInteger {
                 positive: !positive,
                 value: value.clone(),
-            }))
-        }
+            }),
+        )),
         _ => unreachable!("gen_expr_number_literal always returns a number literal"),
     }
 }

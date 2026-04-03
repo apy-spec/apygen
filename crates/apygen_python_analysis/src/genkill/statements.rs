@@ -1,7 +1,4 @@
-use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, ClassType, Diagnostic, FunctionType, ImportedAttribute,
-    ImportedModuleType, LiteralValue, LocalAttribute, Type,
-};
+use crate::abstract_environment::{AbstractEnvironment, Attribute, ClassType, Diagnostic, FunctionType, ImportedAttribute, ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule, LocalAttribute, Type, TypeLiteral};
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{Cfg, EdgeData, nodes};
 use crate::analysis::namespace::{Location, NamespaceLocation, NamespacesContext};
@@ -171,14 +168,16 @@ pub fn gen_import(
         target_abstract_environment.attributes.insert(
             Arc::new(name.identifiers.last().clone()),
             Arc::new(Attribute::Local(LocalAttribute {
-                attribute_type: Arc::new(Type::new_literal(LiteralValue::ImportedModule(
-                    Arc::new(ImportedModuleType {
-                        location: location.clone(),
-                        module: Arc::new(QualifiedName {
-                            identifiers: OneOrMany::one(root_package),
+                attribute_type: Arc::new(Type::new_literal(TypeLiteral::ImportedModule(
+                    LiteralImportedModule {
+                        value: Arc::new(ImportedModuleType {
+                            location: location.clone(),
+                            module: Arc::new(QualifiedName {
+                                identifiers: OneOrMany::one(root_package),
+                            }),
+                            submodules,
                         }),
-                        submodules,
-                    }),
+                    },
                 ))),
                 is_deprecated: false,
                 is_final: false,
@@ -274,11 +273,13 @@ pub fn gen_import_from(
                         Arc::new(name),
                         Arc::new(Attribute::Local(LocalAttribute {
                             attribute_type: Arc::new(Type::new_literal(
-                                LiteralValue::ImportedModule(Arc::new(ImportedModuleType {
-                                    location: location.clone(),
-                                    module: submodule.clone(),
-                                    submodules: imbl::OrdSet::new(),
-                                })),
+                                TypeLiteral::ImportedModule(LiteralImportedModule {
+                                    value: Arc::new(ImportedModuleType {
+                                        location: location.clone(),
+                                        module: submodule.clone(),
+                                        submodules: imbl::OrdSet::new(),
+                                    }),
+                                }),
                             )),
                             is_deprecated: false,
                             is_final: false,
@@ -327,14 +328,14 @@ pub fn gen_function_def(
     target_abstract_environment.attributes.insert(
         Arc::new(name),
         Arc::new(Attribute::Local(LocalAttribute {
-            attribute_type: Arc::new(Type::new_literal(LiteralValue::Function(Arc::new(
-                FunctionType {
+            attribute_type: Arc::new(Type::new_literal(TypeLiteral::Function(LiteralFunction {
+                value: Arc::new(FunctionType {
                     location: location.clone(),
                     generics: imbl::OrdMap::new(),
                     is_async: stmt_function_def.is_async,
                     parameters: Vec::new(),
-                },
-            )))),
+                }),
+            }))),
             is_deprecated: false,
             is_final: false,
             is_initialised: true,
@@ -378,15 +379,15 @@ pub fn gen_class_def(
     target_abstract_environment.attributes.insert(
         Arc::new(name),
         Arc::new(Attribute::Local(LocalAttribute {
-            attribute_type: Arc::new(Type::new_literal(LiteralValue::Class(Arc::new(
-                ClassType {
+            attribute_type: Arc::new(Type::new_literal(TypeLiteral::Class(LiteralClass {
+                value: Arc::new(ClassType {
                     location: location.clone(),
                     generics: imbl::OrdMap::new(),
                     bases: imbl::Vector::new(),
                     is_abstract: false,
                     keyword_arguments: imbl::OrdMap::new(),
-                },
-            )))),
+                }),
+            }))),
             is_deprecated: false,
             is_final: false,
             is_initialised: true,

@@ -1,13 +1,18 @@
-use crate::abstract_environment::{AbstractEnvironment, Exception, LiteralValue, Type};
+pub mod calls;
+
+use crate::abstract_environment::{
+    AbstractEnvironment, Exception, LiteralList, LiteralTuple, Type, TypeLiteral, TypeUnion,
+    resolve_attribute,
+};
 use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::{Location, NamespacesContext};
+use crate::genkill::expressions::calls::type_literal::{as_boolean, call_unary_op};
 use crate::genkill::literals::{
-    gen_expr_boolean_literal, gen_expr_ellipsis_literal, gen_expr_none_literal,
-    gen_expr_number_literal, gen_expr_string_literal,
+    gen_expr_boolean_literal, gen_expr_bytes_literal, gen_expr_ellipsis_literal,
+    gen_expr_none_literal, gen_expr_number_literal, gen_expr_string_literal,
 };
-use apy::OneOrMany;
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::cfg::nodes::{Expr, ExprName};
+use apygen_analysis::cfg::nodes::{Expr, ExprBoolOp, ExprName, ExprUnaryOp};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -39,6 +44,15 @@ impl<T> GenExprResult<T> {
 }
 
 impl GenExprResult<Type> {
+    pub fn raise(exception: Exception) -> Self {
+        GenExprResult {
+            value: Type::NoReturn,
+            exceptions: BTreeSet::from_iter([exception]),
+            pure: false,
+            partial: false,
+        }
+    }
+
     pub fn unknown() -> Self {
         GenExprResult {
             value: Type::Any,
@@ -46,6 +60,18 @@ impl GenExprResult<Type> {
             pure: false,
             partial: true,
         }
+    }
+}
+
+pub fn gen_bool_value(ty: &Type) -> Option<bool> {
+    match ty {
+        Type::Any => None,
+        Type::Never => None,
+        Type::NoReturn => None,
+        Type::Reference { .. } => None,
+        Type::Union(_) => None,
+        Type::Intersection(_) => None,
+        Type::Literal(literal_value) => as_boolean(literal_value.as_ref()),
     }
 }
 
@@ -77,7 +103,7 @@ pub fn gen_expr_list(
     //            Its creation can be non-pure, partial or raise exceptions
     //            if any of its elements is non-pure, partial or can raise exceptions respectively.
     gen_expr_collection(context, environment_location, &expr_list.elts).map(|list_types_iterator| {
-        let mut literal_values: imbl::Vector<Arc<LiteralValue>> = imbl::Vector::new();
+        let mut literal_values: imbl::Vector<Arc<TypeLiteral>> = imbl::Vector::new();
         let mut non_literal_types: Vec<Arc<Type>> = Vec::new();
 
         for list_type in list_types_iterator {
@@ -88,7 +114,46 @@ pub fn gen_expr_list(
         }
 
         let value = if non_literal_types.is_empty() {
-            Type::new_literal(LiteralValue::ListLiteral(literal_values))
+            Type::new_literal(TypeLiteral::List(LiteralList {
+                value: literal_values,
+            }))
+        } else {
+            Type::new_list(Arc::new(Type::new_union(
+                literal_values
+                    .into_iter()
+                    .map(|literal_value| Arc::new(Type::Literal(literal_value)))
+                    .chain(non_literal_types.into_iter()),
+            )))
+        };
+
+        value
+    })
+}
+
+pub fn gen_expr_set(
+    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    environment_location: &Location<QualifiedName>,
+    expr_set: &nodes::ExprSet,
+) -> GenExprResult<Type> {
+    // SOUNDNESS: A set can either be literal (if all its elements are literals)
+    //            or non-literal (if any of its element is non-literal).
+    //            Its creation can be non-pure, partial or raise exceptions
+    //            if any of its elements is non-pure, partial or can raise exceptions respectively.
+    gen_expr_collection(context, environment_location, &expr_set.elts).map(|set_types_iterator| {
+        let mut literal_values: imbl::Vector<Arc<TypeLiteral>> = imbl::Vector::new();
+        let mut non_literal_types: Vec<Arc<Type>> = Vec::new();
+
+        for list_type in set_types_iterator {
+            match list_type {
+                Type::Literal(literal_value) => literal_values.push_back(literal_value),
+                non_literal_type => non_literal_types.push(Arc::new(non_literal_type)),
+            };
+        }
+
+        let value = if non_literal_types.is_empty() {
+            Type::new_literal(TypeLiteral::List(LiteralList {
+                value: literal_values,
+            }))
         } else {
             Type::new_list(Arc::new(Type::new_union(
                 literal_values
@@ -123,7 +188,9 @@ pub fn gen_expr_tuple(
                         _ => unreachable!("The if condition ensures that all types are literals"),
                     })
                     .collect();
-                Type::new_literal(LiteralValue::TupleLiteral(tuple_values))
+                Type::new_literal(TypeLiteral::Tuple(LiteralTuple {
+                    value: tuple_values,
+                }))
             } else {
                 Type::new_tuple(tuple_types.into_iter().map(|ty| Arc::new(ty)))
             };
@@ -138,12 +205,74 @@ pub fn gen_name(
     environment_location: &Location<QualifiedName>,
     expr_name: &ExprName,
 ) -> GenExprResult<Type> {
-    let identifier = match Identifier::try_from(expr_name.id.as_ref()) {
-        Ok(identifier) => identifier,
-        Err(_) => return GenExprResult::unknown(),
+    let Ok(identifier) = Identifier::try_from(expr_name.id.as_ref()) else {
+        return GenExprResult::unknown();
     };
 
+    if let Some(abstract_environment) = context.get_abstract_environment(environment_location) {
+        if let Some(attribute) = abstract_environment.attributes.get(&identifier) {
+            if let Ok(local_attribute) = resolve_attribute(context, attribute) {
+                return GenExprResult::unknown();
+            }
+        }
+    }
+
+    // TODO: Add non-local scopes
+
     GenExprResult::unknown()
+}
+
+pub fn gen_bool_op(
+    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    environment_location: &Location<QualifiedName>,
+    expr_bool_op: &ExprBoolOp,
+) -> GenExprResult<Type> {
+    let mut expr_iter = expr_bool_op
+        .values
+        .iter()
+        .map(|expr| gen_expr(context, environment_location, expr));
+
+    let mut result = expr_iter
+        .next()
+        .expect("A boolean operation must have at least one operand");
+
+    for expr_result in expr_iter {
+        if let Some(bool) = gen_bool_value(&result.value) {
+            if (expr_bool_op.op == nodes::BoolOp::And && !bool)
+                || (expr_bool_op.op == nodes::BoolOp::Or && bool)
+            {
+                break;
+            }
+            result = expr_result;
+        } else {
+            let mut type_union = TypeUnion::new();
+            type_union.add_type(Arc::new(result.value));
+            type_union.add_type(Arc::new(expr_result.value));
+
+            result.value = type_union.simplify().as_ref().clone();
+            result.exceptions.extend(expr_result.exceptions);
+            result.pure &= expr_result.pure;
+            result.partial |= expr_result.partial;
+        }
+    }
+
+    result
+}
+
+pub fn gen_unary_op(
+    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    environment_location: &Location<QualifiedName>,
+    expr_unary_op: &ExprUnaryOp,
+) -> GenExprResult<Type> {
+    gen_expr(context, environment_location, &expr_unary_op.operand).map(|ty| match ty {
+        Type::Any => Type::Any,
+        Type::Never => Type::Never,
+        Type::NoReturn => Type::NoReturn,
+        Type::Reference { .. } => Type::Any,
+        Type::Union(_) => Type::Any,
+        Type::Intersection(_) => Type::Any,
+        Type::Literal(type_literal) => call_unary_op(type_literal.as_ref(), expr_unary_op.op).value,
+    })
 }
 
 pub fn gen_expr(
@@ -152,14 +281,18 @@ pub fn gen_expr(
     expression: &nodes::Expr,
 ) -> GenExprResult<Type> {
     GenExprResult::new_total_pure_non_raising(match expression {
-        Expr::BoolOp(_) => return GenExprResult::unknown(),
+        Expr::BoolOp(expr_bool_op) => {
+            return gen_bool_op(context, environment_location, expr_bool_op);
+        }
         Expr::Named(_) => return GenExprResult::unknown(),
         Expr::BinOp(_) => return GenExprResult::unknown(),
-        Expr::UnaryOp(_) => return GenExprResult::unknown(),
+        Expr::UnaryOp(expr_unary_op) => {
+            return gen_unary_op(context, environment_location, expr_unary_op);
+        }
         Expr::Lambda(_) => return GenExprResult::unknown(),
         Expr::If(_) => return GenExprResult::unknown(),
         Expr::Dict(_) => return GenExprResult::unknown(),
-        Expr::Set(_) => return GenExprResult::unknown(),
+        Expr::Set(expr_set) => return gen_expr_set(context, environment_location, expr_set),
         Expr::ListComp(_) => return GenExprResult::unknown(),
         Expr::SetComp(_) => return GenExprResult::unknown(),
         Expr::DictComp(_) => return GenExprResult::unknown(),
@@ -171,7 +304,7 @@ pub fn gen_expr(
         Expr::Call(_) => return GenExprResult::unknown(),
         Expr::FString(_) => return GenExprResult::unknown(),
         Expr::StringLiteral(expr_string_literal) => gen_expr_string_literal(expr_string_literal),
-        Expr::BytesLiteral(_) => return GenExprResult::unknown(),
+        Expr::BytesLiteral(expr_bytes_literal) => gen_expr_bytes_literal(expr_bytes_literal),
         Expr::NumberLiteral(expr_number_literal) => gen_expr_number_literal(expr_number_literal),
         Expr::BooleanLiteral(expr_boolean_literal) => {
             gen_expr_boolean_literal(expr_boolean_literal)

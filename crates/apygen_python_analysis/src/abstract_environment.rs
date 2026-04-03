@@ -15,6 +15,10 @@ pub const TYPING_MODULE: &str = "typing";
 pub const TYPING_EXTENSIONS_MODULE: &str = "typing_extensions";
 pub const ABC_MODULE: &str = "abc";
 
+pub fn new_identifier_or_panic(name: &str) -> Identifier {
+    Identifier::try_from(name).expect(&format!("Invalid identifier: '{}'", name))
+}
+
 pub fn join_visibility(first: Visibility, second: Visibility) -> Visibility {
     if matches!(first, Visibility::Internal) || matches!(second, Visibility::Internal) {
         Visibility::Internal
@@ -27,7 +31,7 @@ pub fn join_visibility(first: Visibility, second: Visibility) -> Visibility {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Parameter {
-    pub name: String,
+    pub name: Identifier,
 
     pub kind: ParameterKind,
 
@@ -130,33 +134,104 @@ pub struct ImportedModuleType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LiteralValue {
-    IntegerLiteral(i64),
-    BigIntegerLiteral {
-        positive: bool,
-        value: Arc<String>,
-    },
-    FloatLiteral(OrderedFloat<f64>),
-    ComplexLiteral {
-        real: OrderedFloat<f64>,
-        image: OrderedFloat<f64>,
-    },
-    StringLiteral(Arc<String>),
-    BytesLiteral(imbl::Vector<u8>),
-    BooleanLiteral(bool),
-    NoneLiteral,
+pub struct LiteralInteger {
+    pub value: i64,
+}
 
-    EllipsisLiteral,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralBigInteger {
+    pub positive: bool,
+    pub value: Arc<String>,
+}
 
-    ListLiteral(imbl::Vector<Arc<LiteralValue>>),
-    TupleLiteral(imbl::Vector<Arc<LiteralValue>>),
-    DictLiteral(imbl::OrdMap<Arc<LiteralValue>, Arc<LiteralValue>>),
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralFloat {
+    pub value: OrderedFloat<f64>,
+}
 
-    Function(Arc<FunctionType>),
-    Class(Arc<ClassType>),
-    TypeAlias(Arc<TypeAliasType>),
-    Generic(Arc<GenericType>),
-    ImportedModule(Arc<ImportedModuleType>),
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralComplex {
+    pub real: OrderedFloat<f64>,
+    pub image: OrderedFloat<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralString {
+    pub value: Arc<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralBytes {
+    pub value: imbl::Vector<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralBoolean {
+    pub value: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralList {
+    pub value: imbl::Vector<Arc<TypeLiteral>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralTuple {
+    pub value: imbl::Vector<Arc<TypeLiteral>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralDict {
+    pub value: imbl::OrdMap<Arc<TypeLiteral>, Arc<TypeLiteral>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralFunction {
+    pub value: Arc<FunctionType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralClass {
+    pub value: Arc<ClassType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralTypeAlias {
+    pub value: Arc<TypeAliasType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralGeneric {
+    pub value: Arc<GenericType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralImportedModule {
+    pub value: Arc<ImportedModuleType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TypeLiteral {
+    Integer(LiteralInteger),
+    BigInteger(LiteralBigInteger),
+    Boolean(LiteralBoolean),
+    Float(LiteralFloat),
+    Complex(LiteralComplex),
+    String(LiteralString),
+    Bytes(LiteralBytes),
+
+    None,
+    Ellipsis,
+
+    List(LiteralList),
+    Tuple(LiteralTuple),
+    Dict(LiteralDict),
+
+    Function(LiteralFunction),
+    Class(LiteralClass),
+    TypeAlias(LiteralTypeAlias),
+    Generic(LiteralGeneric),
+    ImportedModule(LiteralImportedModule),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -182,6 +257,10 @@ impl TypeUnion {
                 self.types.insert(ty);
             }
         };
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.types.is_empty()
     }
 
     pub fn contains(&self, ty: &Arc<Type>) -> bool {
@@ -214,12 +293,36 @@ pub enum Type {
     },
     Union(TypeUnion),
     Intersection(imbl::OrdSet<Arc<Type>>),
-    Literal(Arc<LiteralValue>),
+    Literal(Arc<TypeLiteral>),
 }
 
 impl Type {
-    pub fn new_literal(literal: LiteralValue) -> Self {
+    pub fn new_literal(literal: TypeLiteral) -> Self {
         Type::Literal(Arc::new(literal))
+    }
+
+    pub fn new_integer_literal(literal_integer: LiteralInteger) -> Self {
+        Type::Literal(Arc::new(TypeLiteral::Integer(literal_integer)))
+    }
+
+    pub fn new_big_integer_literal(literal_big_integer: LiteralBigInteger) -> Self {
+        Type::Literal(Arc::new(TypeLiteral::BigInteger(literal_big_integer)))
+    }
+
+    pub fn new_float_literal(literal_float: LiteralFloat) -> Self {
+        Type::Literal(Arc::new(TypeLiteral::Float(literal_float)))
+    }
+
+    pub fn new_complex_literal(literal_complex: LiteralComplex) -> Self {
+        Type::Literal(Arc::new(TypeLiteral::Complex(literal_complex)))
+    }
+
+    pub fn new_string_literal(literal_string: LiteralString) -> Self {
+        Type::Literal(Arc::new(TypeLiteral::String(literal_string)))
+    }
+
+    pub fn new_boolean_literal(literal_boolean: LiteralBoolean) -> Self {
+        Type::Literal(Arc::new(TypeLiteral::Boolean(literal_boolean)))
     }
 
     pub fn new_reference(name: QualifiedName, origin: Location<QualifiedName>) -> Self {
