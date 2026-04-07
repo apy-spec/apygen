@@ -334,7 +334,7 @@ pub fn gen_function_def(
                     location: location.clone(),
                     generics: imbl::OrdMap::new(),
                     is_async: stmt_function_def.is_async,
-                    parameters: Vec::new(),
+                    parameters: imbl::Vector::new(),
                 }),
             }))),
             is_deprecated: false,

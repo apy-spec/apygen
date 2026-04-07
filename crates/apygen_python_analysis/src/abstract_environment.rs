@@ -16,6 +16,7 @@ pub const TYPES_MODULE: &str = "types";
 pub const TYPING_MODULE: &str = "typing";
 pub const TYPING_EXTENSIONS_MODULE: &str = "typing_extensions";
 pub const ABC_MODULE: &str = "abc";
+pub const DEPTH_LIMIT: usize = 20;
 
 pub fn new_qualified_name_or_panic(name: &str) -> QualifiedName {
     QualifiedName::try_from(name).expect(&format!("Invalid qualified name: '{}'", name))
@@ -28,6 +29,41 @@ pub fn join_visibility(first: Visibility, second: Visibility) -> Visibility {
         Visibility::Subclass
     } else {
         Visibility::Public
+    }
+}
+
+fn iter_depth<'a, S: StructuralDepth + 'a>(iter: impl Iterator<Item = &'a S>) -> usize {
+    iter.map(|item| item.depth()).max().unwrap_or(0)
+}
+
+pub trait StructuralDepth {
+    fn depth(&self) -> usize;
+}
+
+impl<S: StructuralDepth> StructuralDepth for Arc<S> {
+    fn depth(&self) -> usize {
+        self.as_ref().depth()
+    }
+}
+
+impl<S: StructuralDepth> StructuralDepth for Option<S> {
+    fn depth(&self) -> usize {
+        match self {
+            None => 0,
+            Some(value) => value.depth(),
+        }
+    }
+}
+
+impl<S: StructuralDepth> StructuralDepth for imbl::Vector<S> {
+    fn depth(&self) -> usize {
+        iter_depth(self.iter())
+    }
+}
+
+impl<S: StructuralDepth + Ord> StructuralDepth for imbl::OrdSet<S> {
+    fn depth(&self) -> usize {
+        iter_depth(self.iter())
     }
 }
 
@@ -44,6 +80,12 @@ pub struct Parameter {
     pub is_deprecated: bool,
 }
 
+impl StructuralDepth for Parameter {
+    fn depth(&self) -> usize {
+        self.parameter_type.depth()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct GenericType {
     pub location: Location<QualifiedName>,
@@ -52,13 +94,19 @@ pub struct GenericType {
 
     pub bound: Arc<Type>,
 
-    pub constraints: Vec<Arc<Type>>,
+    pub constraints: imbl::Vector<Arc<Type>>,
 
     pub default: Option<Arc<Type>>,
 
     pub is_covariant: bool,
 
     pub is_contravariant: bool,
+}
+
+impl StructuralDepth for GenericType {
+    fn depth(&self) -> usize {
+        self.bound.depth() + self.constraints.depth() + self.default.depth()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -94,9 +142,15 @@ pub struct FunctionType {
 
     pub generics: imbl::OrdMap<String, GenericType>,
 
-    pub parameters: Vec<Parameter>,
+    pub parameters: imbl::Vector<Parameter>,
 
     pub is_async: bool,
+}
+
+impl StructuralDepth for FunctionType {
+    fn depth(&self) -> usize {
+        1 + self.parameters.depth() + iter_depth(self.generics.values())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -117,6 +171,12 @@ pub struct TypeAliasType {
     pub kind: TypeAliasKind,
 }
 
+impl StructuralDepth for TypeAliasType {
+    fn depth(&self) -> usize {
+        1 + self.alias.depth() + iter_depth(self.generics.values())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ClassType {
     pub location: Location<QualifiedName>,
@@ -125,9 +185,17 @@ pub struct ClassType {
 
     pub bases: imbl::Vector<Arc<Type>>,
 
-    pub keyword_arguments: imbl::OrdMap<String, Type>,
+    pub keyword_arguments: imbl::OrdMap<String, Arc<Type>>,
 
     pub is_abstract: bool,
+}
+
+impl StructuralDepth for ClassType {
+    fn depth(&self) -> usize {
+        1 + iter_depth(self.generics.values())
+            + self.bases.depth()
+            + iter_depth(self.keyword_arguments.values())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -189,14 +257,32 @@ pub struct LiteralList {
     pub value: imbl::Vector<Arc<TypeLiteral>>,
 }
 
+impl StructuralDepth for LiteralList {
+    fn depth(&self) -> usize {
+        1 + self.value.depth()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralTuple {
     pub value: imbl::Vector<Arc<TypeLiteral>>,
 }
 
+impl StructuralDepth for LiteralTuple {
+    fn depth(&self) -> usize {
+        1 + self.value.depth()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralDict {
     pub value: imbl::OrdMap<Arc<TypeLiteral>, Arc<TypeLiteral>>,
+}
+
+impl StructuralDepth for LiteralDict {
+    fn depth(&self) -> usize {
+        1 + iter_depth(self.value.keys()).max(iter_depth(self.value.values()))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -246,6 +332,30 @@ pub enum TypeLiteral {
     TypeAlias(LiteralTypeAlias),
     Generic(LiteralGeneric),
     ImportedModule(LiteralImportedModule),
+}
+
+impl StructuralDepth for TypeLiteral {
+    fn depth(&self) -> usize {
+        match self {
+            TypeLiteral::Integer(_)
+            | TypeLiteral::BigInteger(_)
+            | TypeLiteral::Boolean(_)
+            | TypeLiteral::Float(_)
+            | TypeLiteral::Complex(_)
+            | TypeLiteral::String(_)
+            | TypeLiteral::Bytes(_)
+            | TypeLiteral::None
+            | TypeLiteral::Ellipsis
+            | TypeLiteral::ImportedModule(_) => 0,
+            TypeLiteral::List(literal_list) => literal_list.depth(),
+            TypeLiteral::Tuple(literal_tuple) => literal_tuple.depth(),
+            TypeLiteral::Dict(literal_dict) => literal_dict.depth(),
+            TypeLiteral::Function(literal_function) => literal_function.value.depth(),
+            TypeLiteral::Class(literal_class) => literal_class.value.depth(),
+            TypeLiteral::TypeAlias(literal_type_alias) => literal_type_alias.value.depth(),
+            TypeLiteral::Generic(literal_generic) => literal_generic.value.depth(),
+        }
+    }
 }
 
 impl Display for TypeLiteral {
@@ -385,6 +495,12 @@ impl TypeReference {
     }
 }
 
+impl StructuralDepth for TypeReference {
+    fn depth(&self) -> usize {
+        1 + self.arguments.depth()
+    }
+}
+
 impl Display for TypeReference {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if self.arguments.is_empty() {
@@ -449,6 +565,12 @@ impl TypeUnion {
         } else {
             Arc::new(Type::Union(self))
         }
+    }
+}
+
+impl StructuralDepth for TypeUnion {
+    fn depth(&self) -> usize {
+        1 + self.types.depth()
     }
 }
 
@@ -544,6 +666,18 @@ impl Type {
     }
 }
 
+impl StructuralDepth for Type {
+    fn depth(&self) -> usize {
+        match self {
+            Type::Any | Type::Never | Type::NoReturn => 0,
+            Type::Reference(type_reference) => type_reference.depth(),
+            Type::Union(type_union) => type_union.depth(),
+            Type::Intersection(type_intersection) => type_intersection.depth(),
+            Type::Literal(type_literal) => type_literal.depth(),
+        }
+    }
+}
+
 impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -599,8 +733,14 @@ impl LocalAttribute {
         type_union.add_type(self.attribute_type.clone());
         type_union.add_type(other.attribute_type.clone());
 
+        let ty = type_union.simplify();
+
         LocalAttribute {
-            attribute_type: type_union.simplify(),
+            attribute_type: if ty.depth() > DEPTH_LIMIT {
+                Arc::new(Type::Any)
+            } else {
+                ty
+            },
             visibility: join_visibility(self.visibility, other.visibility),
             is_initialised: self.is_initialised && other.is_initialised,
             is_readonly: self.is_readonly || other.is_readonly,
