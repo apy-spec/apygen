@@ -188,21 +188,23 @@ fn add_attributes(
                     }
                     _ => continue,
                 },
-                Type::Reference { name, .. } => apy::v1::Attribute::Variable(apy::v1::Variable {
-                    variable_type: apy::v1::Type {
-                        id: name.clone(),
-                        history_index: 0,
-                        arguments: Vec::new(),
-                        extensions: Default::default(),
-                    },
-                    description: "".to_owned(),
-                    is_initialised: false,
-                    is_readonly: false,
-                    visibility: local_attribute.visibility,
-                    is_deprecated: local_attribute.is_deprecated,
-                    extensions: BTreeMap::new(),
-                    is_final: false,
-                }),
+                Type::Reference(type_reference) => {
+                    apy::v1::Attribute::Variable(apy::v1::Variable {
+                        variable_type: apy::v1::Type {
+                            id: type_reference.name.clone(),
+                            history_index: 0,
+                            arguments: Vec::new(),
+                            extensions: Default::default(),
+                        },
+                        description: "".to_owned(),
+                        is_initialised: false,
+                        is_readonly: false,
+                        visibility: local_attribute.visibility,
+                        is_deprecated: local_attribute.is_deprecated,
+                        extensions: BTreeMap::new(),
+                        is_final: false,
+                    })
+                }
                 _ => continue,
             },
             Attribute::Imported(imported_attribute) => {
