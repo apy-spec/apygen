@@ -1,6 +1,4 @@
-use crate::abstract_environment::{
-    LiteralBigInteger, LiteralBoolean, OneOrMany, QualifiedName, Type, TypeReference,
-};
+use crate::abstract_environment::{LiteralBigInteger, LiteralBoolean, Type, TypeReference};
 use apygen_analysis::cfg::nodes;
 
 pub fn as_boolean(literal_big_integer: &LiteralBigInteger) -> bool {
