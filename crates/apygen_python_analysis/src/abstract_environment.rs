@@ -7,6 +7,7 @@ pub use apy::v1::{
 use apygen_analysis::cfg::ProgramPoint;
 use imbl;
 pub use ordered_float::OrderedFloat;
+use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -247,6 +248,99 @@ pub enum TypeLiteral {
     ImportedModule(LiteralImportedModule),
 }
 
+impl Display for TypeLiteral {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeLiteral::Integer(literal_integer) => {
+                write!(f, "builtins.Literal[{}]", literal_integer.value)
+            }
+            TypeLiteral::BigInteger(literal_big_integer) => {
+                if literal_big_integer.positive {
+                    write!(f, "builtins.Literal[{}]", literal_big_integer.value)
+                } else {
+                    write!(f, "builtins.Literal[-{}]", literal_big_integer.value)
+                }
+            }
+            TypeLiteral::Boolean(literal_boolean) => {
+                write!(f, "builtins.Literal[{}]", literal_boolean.value)
+            }
+            TypeLiteral::Float(literal_float) => {
+                write!(f, "builtins.Literal[{}]", literal_float.value)
+            }
+            TypeLiteral::Complex(literal_complex) => {
+                if literal_complex.image >= OrderedFloat(0.0) {
+                    write!(
+                        f,
+                        "apy_extensions.Literal[{}+{}j]",
+                        literal_complex.real, literal_complex.image
+                    )
+                } else {
+                    write!(
+                        f,
+                        "apy_extensions.Literal[{}{}j]",
+                        literal_complex.real, literal_complex.image
+                    )
+                }
+            }
+            TypeLiteral::String(literal_string) => {
+                write!(f, "builtins.Literal[\"{}\"]", literal_string.value)
+            }
+            TypeLiteral::Bytes(literal_bytes) => write!(
+                f,
+                "apy_extensions.Literal[b\"{}\"]",
+                String::from_utf8_lossy(&literal_bytes.value.iter().cloned().collect::<Vec<u8>>())
+            ),
+            TypeLiteral::None => write!(f, "types.NoneType"),
+            TypeLiteral::Ellipsis => write!(f, "types.EllipsisType"),
+            TypeLiteral::List(literal_list) => write!(
+                f,
+                "apy_extensions.Literal[[{}]]",
+                literal_list
+                    .value
+                    .iter()
+                    .map(|element| element.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            TypeLiteral::Tuple(literal_tuple) => write!(
+                f,
+                "apy_extensions.Literal[({})]",
+                literal_tuple
+                    .value
+                    .iter()
+                    .map(|element| element.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            TypeLiteral::Dict(literal_dict) => write!(
+                f,
+                "apy_extensions.Literal[{{{}}}]",
+                literal_dict
+                    .value
+                    .iter()
+                    .map(|(key, value)| format!("{}: {}", key, value))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            TypeLiteral::Function(_) => {
+                write!(f, "types.FunctionType")
+            }
+            TypeLiteral::Class(_) => {
+                write!(f, "builtins.type")
+            }
+            TypeLiteral::TypeAlias(_) => {
+                write!(f, "builtins.type")
+            }
+            TypeLiteral::Generic(_) => {
+                write!(f, "builtins.type")
+            }
+            TypeLiteral::ImportedModule(_) => {
+                write!(f, "types.ModuleType")
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypeReference {
     pub module: Arc<QualifiedName>,
@@ -288,6 +382,26 @@ impl TypeReference {
     pub fn with_origin(mut self, origin: ProgramPoint) -> Self {
         self.origin = origin;
         self
+    }
+}
+
+impl Display for TypeReference {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.arguments.is_empty() {
+            write!(f, "{}.{}", self.module, self.name)
+        } else {
+            write!(
+                f,
+                "{}.{}[{}]",
+                self.module,
+                self.name,
+                self.arguments
+                    .iter()
+                    .map(|arg| arg.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
     }
 }
 
@@ -335,6 +449,20 @@ impl TypeUnion {
         } else {
             Arc::new(Type::Union(self))
         }
+    }
+}
+
+impl Display for TypeUnion {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Union[{}]",
+            self.types
+                .iter()
+                .map(|ty| ty.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 }
 
@@ -412,6 +540,20 @@ impl Type {
                 }
             }
             Type::Literal(_) => Ok(false),
+        }
+    }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Any => write!(f, "Any"),
+            Type::Never => write!(f, "Never"),
+            Type::NoReturn => write!(f, "NoReturn"),
+            Type::Reference(type_reference) => write!(f, "{}", type_reference),
+            Type::Union(type_union) => write!(f, "{}", type_union),
+            Type::Intersection(_) => write!(f, "Intersection"),
+            Type::Literal(type_literal) => write!(f, "{}", type_literal),
         }
     }
 }
