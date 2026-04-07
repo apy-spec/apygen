@@ -1,9 +1,6 @@
 pub mod calls;
 
-use crate::abstract_environment::{
-    AbstractEnvironment, Exception, LiteralList, LiteralTuple, Type, TypeLiteral, TypeReference,
-    TypeUnion,
-};
+use crate::abstract_environment::{AbstractEnvironment, Exception, LiteralList, LiteralTuple, Type, TypeLiteral, TypeReference, TypeUnion};
 use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::{Location, NamespacesContext};
 use crate::genkill::expressions::calls::type_literal::{as_boolean, call_unary_op};
@@ -213,7 +210,13 @@ pub fn gen_name(
 
     if let Some(abstract_environment) = context.get_abstract_environment(environment_location) {
         if let Some(attribute) = abstract_environment.attributes.get(&identifier) {
-            return GenExprResult::unknown();
+            return if let Ok(local_attribute) = attribute.resolve(context) {
+                GenExprResult::new_total_pure_non_raising(
+                    local_attribute.attribute_type.as_ref().clone(),
+                )
+            } else {
+                GenExprResult::unknown()
+            }
         }
     }
 
