@@ -219,6 +219,11 @@ pub struct LiteralBigInteger {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralBoolean {
+    pub value: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralFloat {
     pub value: OrderedFloat<f64>,
 }
@@ -245,11 +250,6 @@ impl LiteralString {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralBytes {
     pub value: imbl::Vector<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct LiteralBoolean {
-    pub value: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
