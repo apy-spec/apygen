@@ -1,6 +1,5 @@
 use apy;
-use apy::Value;
-use apy::v1::{PythonValue, QualifiedName, TypeArgument};
+use apy::{Map, Value};
 use apygen_python_analysis::abstract_environment::{
     AbstractEnvironment, Attribute, Type, TypeLiteral,
 };
@@ -32,7 +31,7 @@ fn add_attributes(
                     TypeLiteral::List(list_literal) => {
                         apy::v1::Attribute::Variable(apy::v1::Variable {
                             variable_type: apy::v1::Type {
-                                id: QualifiedName::try_from("list").unwrap(),
+                                id: apy::v1::QualifiedName::try_from("list").unwrap(),
                                 history_index: 0,
                                 arguments: Vec::new(),
                                 extensions: Default::default(),
@@ -49,7 +48,7 @@ fn add_attributes(
                     TypeLiteral::Tuple(list_literal) => {
                         apy::v1::Attribute::Variable(apy::v1::Variable {
                             variable_type: apy::v1::Type {
-                                id: QualifiedName::try_from("tuple").unwrap(),
+                                id: apy::v1::QualifiedName::try_from("tuple").unwrap(),
                                 history_index: 0,
                                 arguments: Vec::new(),
                                 extensions: Default::default(),
@@ -66,10 +65,10 @@ fn add_attributes(
                     TypeLiteral::String(string_literal) => {
                         apy::v1::Attribute::Variable(apy::v1::Variable {
                             variable_type: apy::v1::Type {
-                                id: QualifiedName::try_from("Literal").unwrap(),
+                                id: apy::v1::QualifiedName::try_from("Literal").unwrap(),
                                 history_index: 0,
-                                arguments: Vec::from_iter([TypeArgument::Value {
-                                    value: PythonValue::Str {
+                                arguments: Vec::from_iter([apy::v1::TypeArgument::Value {
+                                    value: apy::v1::PythonValue::Str {
                                         str: string_literal.value.as_ref().clone(),
                                     },
                                 }]),
@@ -87,10 +86,10 @@ fn add_attributes(
                     TypeLiteral::Integer(integer) => {
                         apy::v1::Attribute::Variable(apy::v1::Variable {
                             variable_type: apy::v1::Type {
-                                id: QualifiedName::try_from("Literal").unwrap(),
+                                id: apy::v1::QualifiedName::try_from("Literal").unwrap(),
                                 history_index: 0,
-                                arguments: Vec::from_iter([TypeArgument::Value {
-                                    value: PythonValue::Int {
+                                arguments: Vec::from_iter([apy::v1::TypeArgument::Value {
+                                    value: apy::v1::PythonValue::Int {
                                         int: integer.value.to_string(),
                                     },
                                 }]),
@@ -129,20 +128,35 @@ fn add_attributes(
                                 description: String::new(),
                                 is_pure: false,
                                 extensions: {
-                                    let mut variables: Vec<Value> = Vec::new();
-                                    if let Some(env) = namespaces.get_abstract_environment(
-                                        &Location::at_exit(namespace_location.sub_location(
+                                    let function_namespace_location = namespace_location
+                                        .sub_location(
                                             function_type.value.location.program_point.id(),
-                                        )),
-                                    ) {
-                                        for variable_name in env.attributes.keys() {
-                                            variables
-                                                .push(Value::String(variable_name.to_string()));
-                                        }
+                                        );
+                                    let attributes = match namespaces
+                                        .locations
+                                        .get(&function_namespace_location)
+                                        .and_then(|data| data.at_exit())
+                                    {
+                                        Some(env) => add_attributes(
+                                            namespaces,
+                                            function_namespace_location,
+                                            env,
+                                        ),
+                                        None => BTreeMap::new(),
+                                    };
+
+                                    let mut variables: Map<String, Value> = Map::new();
+
+                                    for (name, attribute) in attributes {
+                                        let Ok(value) = serde_json::to_value(&attribute) else {
+                                            continue;
+                                        };
+                                        variables.insert(name.to_string(), value);
                                     }
+
                                     BTreeMap::from_iter([(
-                                        "variables".to_string(),
-                                        Value::Array(variables),
+                                        "variables".to_owned(),
+                                        Value::Object(variables),
                                     )])
                                 },
                             }),

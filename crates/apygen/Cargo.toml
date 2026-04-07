@@ -9,3 +9,4 @@ license.workspace = true
 apygen_python_analysis = { workspace = true }
 apy = { workspace = true, features = ["yaml"] }
 rayon = { workspace = true }
+serde_json = { workspace = true }

@@ -61,6 +61,7 @@ dependencies = [
  "apy",
  "apygen_python_analysis",
  "rayon",
+ "serde_json",
 ]
 
 [[package]]
