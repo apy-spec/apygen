@@ -488,10 +488,13 @@ pub enum Attribute {
 
 #[derive(Error, Debug)]
 pub enum GetAttributeError {
-    #[error("the environment location does not exist")]
-    LocationNotFound,
-    #[error("the attribute does not exist")]
-    AttributeNotFound,
+    #[error("the environment location does not exist: `{0:?}`")]
+    LocationNotFound(Location<QualifiedName>),
+    #[error("the attribute `{identifier}` does not exist at location `{location:?}`")]
+    AttributeNotFound {
+        location: Location<QualifiedName>,
+        identifier: Identifier,
+    },
 }
 
 pub fn get_attribute<'a>(
@@ -500,11 +503,14 @@ pub fn get_attribute<'a>(
     name: &Identifier,
 ) -> Result<&'a Attribute, GetAttributeError> {
     let Some(abstract_environment) = context.get_abstract_environment(location) else {
-        return Err(GetAttributeError::LocationNotFound);
+        return Err(GetAttributeError::LocationNotFound(location.clone()));
     };
 
     let Some(attribute) = abstract_environment.attributes.get(name) else {
-        return Err(GetAttributeError::AttributeNotFound);
+        return Err(GetAttributeError::AttributeNotFound {
+            location: location.clone(),
+            identifier: name.clone(),
+        });
     };
 
     Ok(attribute)
@@ -525,6 +531,56 @@ pub fn resolve_attribute<'a>(
             )?,
         ),
     }
+}
+
+#[derive(Error, Debug)]
+pub enum FindTypeError {
+    #[error("failed to resolve attribute: {0}")]
+    FailedToResolveAttribute(#[from] GetAttributeError),
+    #[error("the identifier `{0:?}` is not a namespace")]
+    IsNotNamespace(Identifier),
+}
+
+fn get_type_attribute<'a>(
+    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    location: &Location<QualifiedName>,
+    identifiers: &[Identifier],
+) -> Result<&'a LocalAttribute, FindTypeError> {
+    let (identifier, attribute_identifiers) = identifiers
+        .split_first()
+        .expect("identifiers should not be empty");
+
+    let attribute = get_attribute(context, location, identifier)?;
+
+    let local_attribute = resolve_attribute(context, attribute)?;
+
+    if attribute_identifiers.is_empty() {
+        return Ok(local_attribute);
+    };
+
+    let Type::Literal(literal_value) = local_attribute.attribute_type.as_ref() else {
+        return Err(FindTypeError::IsNotNamespace(identifier.to_owned()));
+    };
+
+    match literal_value.as_ref() {
+        TypeLiteral::Class(class_type) => {
+            get_type_attribute(context, &class_type.value.location, attribute_identifiers)
+        }
+        TypeLiteral::ImportedModule(module_reference_type) => get_type_attribute(
+            context,
+            &Location::from(module_reference_type.value.module.clone()),
+            attribute_identifiers,
+        ),
+        _ => Err(FindTypeError::IsNotNamespace(identifier.to_owned())),
+    }
+}
+
+pub fn get_type<'a>(
+    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    location: &Location<QualifiedName>,
+    name: &QualifiedName,
+) -> Result<&'a Type, FindTypeError> {
+    Ok(&get_type_attribute(context, location, &name.identifiers)?.attribute_type)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

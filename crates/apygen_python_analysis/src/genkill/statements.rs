@@ -1,8 +1,12 @@
-use crate::abstract_environment::{AbstractEnvironment, Attribute, ClassType, Diagnostic, FunctionType, ImportedAttribute, ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule, LocalAttribute, Type, TypeLiteral};
+use crate::abstract_environment::{
+    AbstractEnvironment, Attribute, ClassType, Diagnostic, FunctionType, ImportedAttribute,
+    ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule, LocalAttribute, Type,
+    TypeLiteral, get_type,
+};
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{Cfg, EdgeData, nodes};
 use crate::analysis::namespace::{Location, NamespaceLocation, NamespacesContext};
-use crate::genkill::annotations::{gen_annotation, get_type};
+use crate::genkill::annotations::gen_annotation;
 use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::expressions::gen_expr;
 use crate::genkill::visibility::gen_visibility;

@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, Identifier, LiteralBigInteger, LiteralInteger, LocalAttribute,
-    QualifiedName, Type, TypeLiteral,
+    AbstractEnvironment, Attribute, FindTypeError, LiteralBigInteger, LiteralInteger,
+    LocalAttribute, QualifiedName, Type, TypeLiteral, get_attribute, get_type,
 };
 use crate::analysis::cfg::nodes::{Expr, ExprSubscript, ExprUnaryOp, UnaryOp};
 use crate::analysis::namespace::{Location, NamespacesContext};
@@ -12,106 +12,13 @@ use crate::genkill::{ToQualifiedName, ToQualifiedNameError};
 use std::sync::Arc;
 use thiserror::Error;
 
-#[derive(Error, Debug)]
-pub enum GetAttributeError {
-    #[error("the environment location `{0:?}` does not exist")]
-    LocationNotFound(Location<QualifiedName>),
-    #[error("the name `{0:?}` does not exist")]
-    NameNotFound(Identifier),
-    #[error("the attribute `{0:?}` does not exist")]
-    AttributeNotFound(Identifier),
-    #[error("the identifier `{0:?}` is not a namespace")]
-    IsNotNamespace(Identifier),
-}
-
-fn get_name<'a>(
-    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    location: &Location<QualifiedName>,
-    name: &Identifier,
-) -> Result<&'a Arc<Attribute>, GetAttributeError> {
-    let abstract_environment = context
-        .get_abstract_environment(location)
-        .ok_or_else(|| GetAttributeError::LocationNotFound(location.to_owned()))?;
-
-    abstract_environment
-        .attributes
-        .get(name)
-        .ok_or_else(|| GetAttributeError::NameNotFound(name.to_owned()))
-}
-
-pub fn resolve_attribute<'a>(
-    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    attribute: &'a Attribute,
-) -> Result<&'a LocalAttribute, GetAttributeError> {
-    match attribute {
-        Attribute::Local(local_attribute) => Ok(local_attribute),
-        Attribute::Imported(imported_attribute) => resolve_attribute(
-            context,
-            get_name(
-                context,
-                &Location::from(imported_attribute.module.clone()),
-                &imported_attribute.name,
-            )?,
-        ),
-    }
-}
-
-fn get_attribute<'a>(
-    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    location: &Location<QualifiedName>,
-    identifiers: &[Identifier],
-) -> Result<&'a LocalAttribute, GetAttributeError> {
-    let (identifier, attribute_identifiers) = identifiers
-        .split_first()
-        .expect("identifiers should not be empty");
-
-    let name = get_name(context, location, identifier)?;
-
-    let local_attribute = resolve_attribute(context, name)?;
-
-    if attribute_identifiers.is_empty() {
-        return Ok(local_attribute);
-    };
-
-    let Type::Literal(literal_value) = local_attribute.attribute_type.as_ref() else {
-        return Err(GetAttributeError::IsNotNamespace(identifier.to_owned()));
-    };
-
-    let result = match literal_value.as_ref() {
-        TypeLiteral::Class(class_type) => {
-            get_attribute(context, &class_type.value.location, attribute_identifiers)
-        }
-        TypeLiteral::ImportedModule(module_reference_type) => get_attribute(
-            context,
-            &Location::from(module_reference_type.value.module.clone()),
-            attribute_identifiers,
-        ),
-        _ => Err(GetAttributeError::IsNotNamespace(identifier.to_owned())),
-    };
-
-    match result {
-        Err(GetAttributeError::NameNotFound(name)) => {
-            Err(GetAttributeError::AttributeNotFound(name))
-        }
-        result => result,
-    }
-}
-
-pub fn get_type<'a>(
-    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    location: &Location<QualifiedName>,
-    name: &QualifiedName,
-) -> Result<&'a Type, GetAttributeError> {
-    Ok(&get_attribute(context, location, &name.identifiers)?.attribute_type)
-}
-
 pub fn as_local_attribute(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     attribute: &Attribute,
 ) -> LocalAttribute {
     match attribute {
         Attribute::Local(local_attribute) => local_attribute.clone(),
-        Attribute::Imported(imported_attribute) => match get_name(
+        Attribute::Imported(imported_attribute) => match get_attribute(
             context,
             &Location::from(imported_attribute.module.clone()),
             &imported_attribute.name,
@@ -129,8 +36,8 @@ pub fn as_local_attribute(
 
 #[derive(Error, Debug)]
 pub enum GenAnnotationError {
-    #[error("an error occurred while finding an attribute : `{0:?}`")]
-    Find(#[from] GetAttributeError),
+    #[error("failed to find the type : `{0:?}`")]
+    FailedToFindType(#[from] FindTypeError),
     #[error(
         "an error occurred while converting some part of the expression to a qualified name : `{0:?}`"
     )]
