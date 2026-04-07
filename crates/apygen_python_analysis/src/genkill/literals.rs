@@ -37,7 +37,7 @@ pub fn gen_expr_number_literal(expression: &ExprNumberLiteral) -> Type {
         })),
         Number::Complex { real, imag } => Type::new_literal(TypeLiteral::Complex(LiteralComplex {
             real: OrderedFloat(*real),
-            image: OrderedFloat(*imag),
+            imaginary: OrderedFloat(*imag),
         })),
     }
 }

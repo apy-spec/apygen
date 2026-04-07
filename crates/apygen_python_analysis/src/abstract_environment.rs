@@ -226,7 +226,7 @@ pub struct LiteralFloat {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralComplex {
     pub real: OrderedFloat<f64>,
-    pub image: OrderedFloat<f64>,
+    pub imaginary: OrderedFloat<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -378,17 +378,17 @@ impl Display for TypeLiteral {
                 write!(f, "builtins.Literal[{}]", literal_float.value)
             }
             TypeLiteral::Complex(literal_complex) => {
-                if literal_complex.image >= OrderedFloat(0.0) {
+                if literal_complex.imaginary >= OrderedFloat(0.0) {
                     write!(
                         f,
                         "apy_extensions.Literal[{}+{}j]",
-                        literal_complex.real, literal_complex.image
+                        literal_complex.real, literal_complex.imaginary
                     )
                 } else {
                     write!(
                         f,
                         "apy_extensions.Literal[{}{}j]",
-                        literal_complex.real, literal_complex.image
+                        literal_complex.real, literal_complex.imaginary
                     )
                 }
             }

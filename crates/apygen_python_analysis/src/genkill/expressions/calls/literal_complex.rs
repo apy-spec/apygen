@@ -3,7 +3,7 @@ use crate::genkill::expressions::GenExprResult;
 use apygen_analysis::cfg::nodes;
 
 pub fn as_boolean(literal_complex: &LiteralComplex) -> bool {
-    literal_complex.real != 0.0 || literal_complex.image != 0.0
+    literal_complex.real != 0.0 || literal_complex.imaginary != 0.0
 }
 
 pub fn call_dunder_bool(literal_complex: &LiteralComplex) -> Type {
@@ -25,7 +25,7 @@ pub fn call_dunder_pos(literal_complex: &LiteralComplex) -> Type {
 pub fn call_dunder_neg(literal_complex: &LiteralComplex) -> Type {
     Type::new_complex_literal(LiteralComplex {
         real: -literal_complex.real,
-        image: -literal_complex.image,
+        imaginary: -literal_complex.imaginary,
     })
 }
 
