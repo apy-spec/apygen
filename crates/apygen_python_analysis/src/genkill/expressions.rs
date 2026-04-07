@@ -1,8 +1,8 @@
 pub mod calls;
 
 use crate::abstract_environment::{
-    AbstractEnvironment, Exception, LiteralList, LiteralTuple, Type, TypeLiteral, TypeUnion,
-    resolve_attribute,
+    AbstractEnvironment, Exception, LiteralList, LiteralTuple, Type, TypeLiteral, TypeReference,
+    TypeUnion,
 };
 use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::{Location, NamespacesContext};
@@ -118,12 +118,12 @@ pub fn gen_expr_list(
                 value: literal_values,
             }))
         } else {
-            Type::new_list(Arc::new(Type::new_union(
+            Type::Reference(TypeReference::builtins_list(Arc::new(Type::new_union(
                 literal_values
                     .into_iter()
                     .map(|literal_value| Arc::new(Type::Literal(literal_value)))
                     .chain(non_literal_types.into_iter()),
-            )))
+            ))))
         };
 
         value
@@ -155,12 +155,12 @@ pub fn gen_expr_set(
                 value: literal_values,
             }))
         } else {
-            Type::new_list(Arc::new(Type::new_union(
+            Type::Reference(TypeReference::builtins_list(Arc::new(Type::new_union(
                 literal_values
                     .into_iter()
                     .map(|literal_value| Arc::new(Type::Literal(literal_value)))
                     .chain(non_literal_types.into_iter()),
-            )))
+            ))))
         };
 
         value
@@ -192,7 +192,9 @@ pub fn gen_expr_tuple(
                     value: tuple_values,
                 }))
             } else {
-                Type::new_tuple(tuple_types.into_iter().map(|ty| Arc::new(ty)))
+                Type::Reference(TypeReference::builtins_tuple(
+                    tuple_types.into_iter().map(|ty| Arc::new(ty)),
+                ))
             };
 
             value
@@ -211,9 +213,7 @@ pub fn gen_name(
 
     if let Some(abstract_environment) = context.get_abstract_environment(environment_location) {
         if let Some(attribute) = abstract_environment.attributes.get(&identifier) {
-            if let Ok(local_attribute) = resolve_attribute(context, attribute) {
-                return GenExprResult::unknown();
-            }
+            return GenExprResult::unknown();
         }
     }
 

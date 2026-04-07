@@ -1,7 +1,4 @@
-use crate::abstract_environment::{
-    Exception, LiteralBoolean, LiteralBytes, OneOrMany, QualifiedName, Type,
-    new_identifier_or_panic,
-};
+use crate::abstract_environment::{Exception, LiteralBoolean, LiteralBytes, Type};
 use crate::genkill::expressions::GenExprResult;
 use apygen_analysis::cfg::nodes;
 
@@ -27,13 +24,7 @@ pub fn call_unary_op(
 ) -> GenExprResult<Type> {
     match operator {
         nodes::UnaryOp::Invert | nodes::UnaryOp::UAdd | nodes::UnaryOp::USub => {
-            GenExprResult::raise(Exception::from_type(Type::Reference {
-                name: QualifiedName {
-                    identifiers: OneOrMany::one(new_identifier_or_panic("TypeError")),
-                },
-                arguments: imbl::Vector::new(),
-                origin: None,
-            }))
+            GenExprResult::raise(Exception::type_error())
         }
         nodes::UnaryOp::Not => GenExprResult::new_total_pure_non_raising(call_not(literal_bytes)),
     }

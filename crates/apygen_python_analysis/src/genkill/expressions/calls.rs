@@ -1,5 +1,5 @@
 use crate::abstract_environment::{
-    LiteralString, LiteralTuple, Parameter, Type, TypeLiteral, TypeUnion, new_identifier_or_panic,
+    LiteralString, LiteralTuple, Parameter, Type, TypeLiteral, TypeReference, TypeUnion,
 };
 use crate::genkill::expressions::GenExprResult;
 use apy::OneOrMany;
@@ -82,41 +82,38 @@ impl Arguments {
                         var_positional_arguments.add_type(argument);
                     }
 
-                    let ty = if var_positional_arguments.is_empty() {
-                        Arc::new(Type::Reference {
-                            name: QualifiedName {
-                                identifiers: OneOrMany::one(new_identifier_or_panic("tuple")),
-                            },
-                            arguments: imbl::vector![Arc::new(Type::Literal(Arc::new(
-                                TypeLiteral::Tuple(LiteralTuple {
-                                    value: imbl::Vector::new()
-                                })
-                            )))],
-                            origin: None,
-                        })
+                    let arguments = if var_positional_arguments.is_empty() {
+                        imbl::vector![Arc::new(Type::Literal(Arc::new(TypeLiteral::Tuple(
+                            LiteralTuple {
+                                value: imbl::Vector::new()
+                            }
+                        ))))]
                     } else {
-                        Arc::new(Type::Reference {
-                            name: QualifiedName {
-                                identifiers: OneOrMany::one(new_identifier_or_panic("tuple")),
-                            },
-                            arguments: imbl::vector![var_positional_arguments.simplify()],
-                            origin: None,
-                        })
+                        imbl::vector![var_positional_arguments.simplify()]
                     };
+
+                    let ty = Arc::new(Type::Reference(
+                        TypeReference::builtins("tuple").with_arguments(arguments),
+                    ));
 
                     bindings.insert(&parameter.name, ty);
                 }
                 ParameterKind::KeywordOnly => {
+                    if bindings.contains_key(&parameter.name) {
+                        return Err(BindError::MultipleValuesForParameter);
+                    }
+
                     if let Some(argument) = self.keyword.get(&parameter.name) {
-                        if bindings.contains_key(&parameter.name) {
-                            return Err(BindError::MultipleValuesForParameter);
-                        }
                         bindings.insert(&parameter.name, argument.clone());
                     } else {
                         return Err(BindError::MissingKeywordArgument);
                     }
                 }
                 ParameterKind::VarKeyword => {
+                    if bindings.contains_key(&parameter.name) {
+                        return Err(BindError::MultipleValuesForParameter);
+                    }
+
                     let mut var_keyword_arguments = TypeUnion::new();
 
                     for (key, argument) in &self.keyword {
@@ -125,34 +122,19 @@ impl Arguments {
                         }
                     }
 
-                    let ty = if var_keyword_arguments.is_empty() {
-                        Arc::new(Type::Reference {
-                            name: QualifiedName {
-                                identifiers: OneOrMany::one(new_identifier_or_panic("dict")),
-                            },
-                            arguments: imbl::vector![Arc::new(Type::Never)],
-                            origin: None,
-                        })
+                    let str_literal = Arc::new(Type::new_literal(TypeLiteral::String(
+                        LiteralString::from_str("str"),
+                    )));
+
+                    let arguments = if var_keyword_arguments.is_empty() {
+                        imbl::vector![str_literal, Arc::new(Type::Never)]
                     } else {
-                        Arc::new(Type::Reference {
-                            name: QualifiedName {
-                                identifiers: OneOrMany::one(new_identifier_or_panic("dict")),
-                            },
-                            arguments: imbl::vector![
-                                Arc::new(Type::Literal(Arc::new(TypeLiteral::String(
-                                    LiteralString {
-                                        value: Arc::new("str".to_owned())
-                                    }
-                                )))),
-                                var_keyword_arguments.simplify()
-                            ],
-                            origin: None,
-                        })
+                        imbl::vector![str_literal, var_keyword_arguments.simplify()]
                     };
 
-                    if bindings.contains_key(&parameter.name) {
-                        return Err(BindError::MultipleValuesForParameter);
-                    }
+                    let ty = Arc::new(Type::Reference(
+                        TypeReference::builtins("dict").with_arguments(arguments),
+                    ));
 
                     bindings.insert(&parameter.name, ty);
                 }

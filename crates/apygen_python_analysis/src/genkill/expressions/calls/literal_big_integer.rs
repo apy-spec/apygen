@@ -1,5 +1,5 @@
 use crate::abstract_environment::{
-    LiteralBigInteger, LiteralBoolean, OneOrMany, QualifiedName, Type, new_identifier_or_panic,
+    LiteralBigInteger, LiteralBoolean, OneOrMany, QualifiedName, Type, TypeReference,
 };
 use apygen_analysis::cfg::nodes;
 
@@ -31,13 +31,7 @@ pub fn call_dunder_neg(literal_big_integer: &LiteralBigInteger) -> Type {
 }
 
 pub fn call_dunder_invert() -> Type {
-    Type::Reference {
-        name: QualifiedName {
-            identifiers: OneOrMany::one(new_identifier_or_panic("int")),
-        },
-        arguments: imbl::Vector::new(),
-        origin: None,
-    }
+    Type::Reference(TypeReference::builtins("int"))
 }
 
 pub fn call_unary_op(literal_big_integer: &LiteralBigInteger, operator: nodes::UnaryOp) -> Type {

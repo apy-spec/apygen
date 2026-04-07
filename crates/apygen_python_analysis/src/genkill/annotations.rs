@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, FindTypeError, LiteralBigInteger, LiteralInteger,
-    LocalAttribute, QualifiedName, Type, TypeLiteral, get_attribute, get_type,
+    AbstractEnvironment, Attribute, GetAttributeError, LiteralBigInteger, LiteralInteger,
+    LocalAttribute, QualifiedName, Type, TypeLiteral, TypeReference, get_attribute,
 };
 use crate::analysis::cfg::nodes::{Expr, ExprSubscript, ExprUnaryOp, UnaryOp};
 use crate::analysis::namespace::{Location, NamespacesContext};
@@ -9,35 +9,17 @@ use crate::genkill::literals::{
     gen_expr_none_literal, gen_expr_number_literal, gen_expr_string_literal,
 };
 use crate::genkill::{ToQualifiedName, ToQualifiedNameError};
+use apy::OneOrMany;
+use apy::v1::Identifier;
 use std::sync::Arc;
 use thiserror::Error;
 
-pub fn as_local_attribute(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    attribute: &Attribute,
-) -> LocalAttribute {
-    match attribute {
-        Attribute::Local(local_attribute) => local_attribute.clone(),
-        Attribute::Imported(imported_attribute) => match get_attribute(
-            context,
-            &Location::from(imported_attribute.module.clone()),
-            &imported_attribute.name,
-        ) {
-            Ok(name) => {
-                let mut result = as_local_attribute(context, name);
-                result.visibility = imported_attribute.visibility.clone();
-                result.is_deprecated = imported_attribute.is_deprecated;
-                result
-            }
-            Err(_) => LocalAttribute::unknown(),
-        },
-    }
-}
-
 #[derive(Error, Debug)]
 pub enum GenAnnotationError {
-    #[error("failed to find the type : `{0:?}`")]
-    FailedToFindType(#[from] FindTypeError),
+    #[error("failed to resolve attribute: {0}")]
+    FailedToResolveAttribute(#[from] GetAttributeError),
+    #[error("the identifier `{0:?}` is not a namespace")]
+    IsNotNamespace(Identifier),
     #[error(
         "an error occurred while converting some part of the expression to a qualified name : `{0:?}`"
     )]
@@ -46,23 +28,92 @@ pub enum GenAnnotationError {
     InvalidAnnotation { reason: String },
 }
 
+fn resolve_with_module<'a>(
+    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    location: &Location<QualifiedName>,
+    identifier: &Identifier,
+) -> Result<(&'a LocalAttribute, Arc<QualifiedName>), GenAnnotationError> {
+    match get_attribute(context, location, identifier)? {
+        Attribute::Local(local_attribute) => {
+            Ok((local_attribute, location.namespace_location.module.clone()))
+        }
+        Attribute::Imported(imported_attribute) => resolve_with_module(
+            context,
+            &Location::from(imported_attribute.module.clone()),
+            &imported_attribute.name,
+        ),
+    }
+}
+
+fn get_type_attribute<'a>(
+    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    location: &Location<QualifiedName>,
+    identifiers: &[Identifier],
+) -> Result<(&'a LocalAttribute, Arc<QualifiedName>, QualifiedName), GenAnnotationError> {
+    let (identifier, attribute_identifiers) = identifiers
+        .split_first()
+        .expect("identifiers should not be empty");
+
+    let (local_attribute, module) = resolve_with_module(context, location, identifier)?;
+
+    if attribute_identifiers.is_empty() {
+        return Ok((
+            local_attribute,
+            module,
+            QualifiedName {
+                identifiers: OneOrMany::one(identifier.clone()),
+            },
+        ));
+    };
+
+    let Type::Literal(literal_value) = local_attribute.attribute_type.as_ref() else {
+        return Err(GenAnnotationError::IsNotNamespace(identifier.to_owned()));
+    };
+
+    match literal_value.as_ref() {
+        TypeLiteral::Class(class_type) => {
+            let (class_local_attribute, class_module, class_name) =
+                get_type_attribute(context, &class_type.value.location, attribute_identifiers)?;
+
+            let name = if module != class_module {
+                class_name
+            } else {
+                let mut name = QualifiedName {
+                    identifiers: OneOrMany::one(identifier.clone()),
+                };
+                name.identifiers.extend(class_name.identifiers);
+                name
+            };
+
+            Ok((class_local_attribute, class_module, name))
+        }
+        TypeLiteral::ImportedModule(module_reference_type) => get_type_attribute(
+            context,
+            &Location::from(module_reference_type.value.module.clone()),
+            attribute_identifiers,
+        ),
+        _ => Err(GenAnnotationError::IsNotNamespace(identifier.to_owned())),
+    }
+}
+
 pub fn gen_expr_qualified_name(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     location: &Location<QualifiedName>,
     qualified_name: QualifiedName,
 ) -> Result<Type, GenAnnotationError> {
-    let attribute_type = get_type(context, location, &qualified_name)?;
+    let (local_attribute, module, name) =
+        get_type_attribute(context, location, &qualified_name.identifiers)?;
 
-    let Type::Literal(literal_value) = attribute_type else {
+    let Type::Literal(literal_value) = local_attribute.attribute_type.as_ref() else {
         return Err(GenAnnotationError::InvalidAnnotation {
             reason: "The base is not a literal".to_owned(),
         });
     };
 
     let origin = match literal_value.as_ref() {
-        TypeLiteral::Class(class_type) => class_type.value.location.clone(),
-        TypeLiteral::TypeAlias(type_alias_type) => type_alias_type.value.location.clone(),
-        TypeLiteral::Generic(generic_type) => generic_type.value.location.clone(),
+        TypeLiteral::Class(class_type) => class_type.value.location.program_point,
+        TypeLiteral::TypeAlias(type_alias_type) => type_alias_type.value.location.program_point,
+        TypeLiteral::Generic(generic_type) => generic_type.value.location.program_point,
         _ => {
             return Err(GenAnnotationError::InvalidAnnotation {
                 reason: "The base is not a type".to_owned(),
@@ -70,7 +121,9 @@ pub fn gen_expr_qualified_name(
         }
     };
 
-    Ok(Type::new_reference(qualified_name, origin))
+    Ok(Type::Reference(
+        TypeReference::new(module, name).with_origin(origin),
+    ))
 }
 
 pub fn gen_expr_subscript(
@@ -78,11 +131,8 @@ pub fn gen_expr_subscript(
     location: &Location<QualifiedName>,
     expression: &ExprSubscript,
 ) -> Result<Type, GenAnnotationError> {
-    let Type::Reference {
-        name,
-        mut arguments,
-        origin,
-    } = gen_annotation(context, location, expression.value.as_ref())?
+    let Type::Reference(mut type_reference) =
+        gen_annotation(context, location, expression.value.as_ref())?
     else {
         return Err(GenAnnotationError::InvalidAnnotation {
             reason: "The base is not a reference".to_owned(),
@@ -92,23 +142,25 @@ pub fn gen_expr_subscript(
     let slice = expression.slice.as_ref();
 
     match slice {
-        Expr::EllipsisLiteral(_) => arguments.push_back(Arc::new(gen_expr_ellipsis_literal())),
+        Expr::EllipsisLiteral(_) => type_reference
+            .arguments
+            .push_back(Arc::new(gen_expr_ellipsis_literal())),
         Expr::Tuple(expr_tuple) => {
             for tuple_expression in &expr_tuple.elts {
-                arguments.push_back(Arc::new(match tuple_expression {
-                    Expr::EllipsisLiteral(_) => gen_expr_ellipsis_literal(),
-                    _ => gen_annotation(context, location, tuple_expression)?,
-                }));
+                type_reference
+                    .arguments
+                    .push_back(Arc::new(match tuple_expression {
+                        Expr::EllipsisLiteral(_) => gen_expr_ellipsis_literal(),
+                        _ => gen_annotation(context, location, tuple_expression)?,
+                    }));
             }
         }
-        _ => arguments.push_back(Arc::new(gen_annotation(context, location, slice)?)),
+        _ => type_reference
+            .arguments
+            .push_back(Arc::new(gen_annotation(context, location, slice)?)),
     };
 
-    Ok(Type::Reference {
-        name,
-        arguments,
-        origin,
-    })
+    Ok(Type::Reference(type_reference))
 }
 
 pub fn gen_expr_unary_op(expression: &ExprUnaryOp) -> Result<Type, GenAnnotationError> {

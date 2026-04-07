@@ -4,6 +4,7 @@ pub use apy::OneOrMany;
 pub use apy::v1::{
     FromInvalidIdentifierError, GenericKind, Identifier, ParameterKind, QualifiedName, Visibility,
 };
+use apygen_analysis::cfg::ProgramPoint;
 use imbl;
 pub use ordered_float::OrderedFloat;
 use std::sync::Arc;
@@ -15,8 +16,8 @@ pub const TYPING_MODULE: &str = "typing";
 pub const TYPING_EXTENSIONS_MODULE: &str = "typing_extensions";
 pub const ABC_MODULE: &str = "abc";
 
-pub fn new_identifier_or_panic(name: &str) -> Identifier {
-    Identifier::try_from(name).expect(&format!("Invalid identifier: '{}'", name))
+pub fn new_qualified_name_or_panic(name: &str) -> QualifiedName {
+    QualifiedName::try_from(name).expect(&format!("Invalid qualified name: '{}'", name))
 }
 
 pub fn join_visibility(first: Visibility, second: Visibility) -> Visibility {
@@ -79,6 +80,10 @@ impl Exception {
             exception_type: Arc::new(exception_type),
             origin: ExceptionOrigin::Raised,
         }
+    }
+
+    pub fn type_error() -> Self {
+        Exception::from_type(Type::Reference(TypeReference::builtins("TypeError")))
     }
 }
 
@@ -160,6 +165,14 @@ pub struct LiteralString {
     pub value: Arc<String>,
 }
 
+impl LiteralString {
+    pub fn from_str(value: &str) -> Self {
+        LiteralString {
+            value: Arc::new(value.to_owned()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralBytes {
     pub value: imbl::Vector<u8>,
@@ -235,6 +248,50 @@ pub enum TypeLiteral {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TypeReference {
+    pub module: Arc<QualifiedName>,
+    pub name: QualifiedName,
+    pub arguments: imbl::Vector<Arc<Type>>,
+    pub origin: ProgramPoint,
+}
+
+impl TypeReference {
+    pub fn new(module: Arc<QualifiedName>, name: QualifiedName) -> Self {
+        TypeReference {
+            module,
+            name,
+            arguments: imbl::Vector::new(),
+            origin: ProgramPoint::Exit,
+        }
+    }
+
+    pub fn builtins(name: &str) -> Self {
+        TypeReference::new(
+            Arc::new(new_qualified_name_or_panic(BUILTINS_MODULE)),
+            new_qualified_name_or_panic(name),
+        )
+    }
+
+    pub fn builtins_list(element_type: Arc<Type>) -> Self {
+        TypeReference::builtins("list").with_arguments(imbl::vector![element_type])
+    }
+
+    pub fn builtins_tuple<I: IntoIterator<Item = Arc<Type>>>(element_types: I) -> Self {
+        TypeReference::builtins("tuple").with_arguments(element_types.into_iter().collect())
+    }
+
+    pub fn with_arguments(mut self, arguments: imbl::Vector<Arc<Type>>) -> Self {
+        self.arguments = arguments;
+        self
+    }
+
+    pub fn with_origin(mut self, origin: ProgramPoint) -> Self {
+        self.origin = origin;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypeUnion {
     types: imbl::OrdSet<Arc<Type>>,
 }
@@ -286,11 +343,7 @@ pub enum Type {
     Any,
     Never,
     NoReturn,
-    Reference {
-        name: QualifiedName,
-        arguments: imbl::Vector<Arc<Type>>,
-        origin: Option<Location<QualifiedName>>,
-    },
+    Reference(TypeReference),
     Union(TypeUnion),
     Intersection(imbl::OrdSet<Arc<Type>>),
     Literal(Arc<TypeLiteral>),
@@ -323,60 +376,6 @@ impl Type {
 
     pub fn new_boolean_literal(literal_boolean: LiteralBoolean) -> Self {
         Type::Literal(Arc::new(TypeLiteral::Boolean(literal_boolean)))
-    }
-
-    pub fn new_reference(name: QualifiedName, origin: Location<QualifiedName>) -> Self {
-        Type::Reference {
-            name,
-            arguments: imbl::Vector::new(),
-            origin: Some(origin),
-        }
-    }
-
-    pub fn new_absolute_reference(name: QualifiedName) -> Self {
-        Self::new_absolute_reference_with_args(name, imbl::Vector::new())
-    }
-
-    pub fn new_absolute_reference_with_args(
-        name: QualifiedName,
-        arguments: imbl::Vector<Arc<Type>>,
-    ) -> Self {
-        Type::Reference {
-            name,
-            arguments,
-            origin: None,
-        }
-    }
-
-    pub fn new_builtins_reference(id: &str) -> Self {
-        Self::new_absolute_reference(QualifiedName {
-            identifiers: OneOrMany::try_from_iter([
-                Identifier::try_from(BUILTINS_MODULE).unwrap(),
-                Identifier::try_from(id).unwrap(),
-            ])
-            .unwrap(),
-        })
-    }
-
-    pub fn new_builtins_reference_with_args(id: &str, arguments: imbl::Vector<Arc<Type>>) -> Self {
-        Self::new_absolute_reference_with_args(
-            QualifiedName {
-                identifiers: OneOrMany::try_from_iter([
-                    Identifier::try_from(BUILTINS_MODULE).unwrap(),
-                    Identifier::try_from(id).unwrap(),
-                ])
-                .unwrap(),
-            },
-            arguments,
-        )
-    }
-
-    pub fn new_list(element_type: Arc<Type>) -> Self {
-        Self::new_builtins_reference_with_args("list", imbl::vector![element_type])
-    }
-
-    pub fn new_tuple<I: IntoIterator<Item = Arc<Type>>>(element_types: I) -> Self {
-        Self::new_builtins_reference_with_args("tuple", element_types.into_iter().collect())
     }
 
     pub fn new_union<I: IntoIterator<Item = Arc<Type>>>(types: I) -> Self {
@@ -480,10 +479,48 @@ pub struct ImportedAttribute {
     pub is_deprecated: bool,
 }
 
+impl ImportedAttribute {
+    pub fn resolve<'a>(
+        &'a self,
+        context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    ) -> Result<&'a LocalAttribute, GetAttributeError> {
+        get_attribute(context, &Location::from(self.module.clone()), &self.name)?.resolve(context)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Attribute {
     Local(LocalAttribute),
     Imported(ImportedAttribute),
+}
+
+impl Attribute {
+    pub fn resolve<'a>(
+        &'a self,
+        context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    ) -> Result<&'a LocalAttribute, GetAttributeError> {
+        match self {
+            Attribute::Local(local_attribute) => Ok(local_attribute),
+            Attribute::Imported(imported_attribute) => imported_attribute.resolve(context),
+        }
+    }
+
+    fn as_local(
+        &self,
+        context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    ) -> Result<LocalAttribute, GetAttributeError> {
+        match self {
+            Attribute::Local(local_attribute) => Ok(local_attribute.clone()),
+            Attribute::Imported(imported_attribute) => {
+                let mut resolved_attribute = imported_attribute.resolve(context)?.clone();
+
+                resolved_attribute.visibility = imported_attribute.visibility;
+                resolved_attribute.is_deprecated = imported_attribute.is_deprecated;
+
+                Ok(resolved_attribute)
+            }
+        }
+    }
 }
 
 #[derive(Error, Debug)]
@@ -514,73 +551,6 @@ pub fn get_attribute<'a>(
     };
 
     Ok(attribute)
-}
-
-pub fn resolve_attribute<'a>(
-    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    attribute: &'a Attribute,
-) -> Result<&'a LocalAttribute, GetAttributeError> {
-    match attribute {
-        Attribute::Local(local_attribute) => Ok(local_attribute),
-        Attribute::Imported(imported_attribute) => resolve_attribute(
-            context,
-            get_attribute(
-                context,
-                &Location::from(imported_attribute.module.clone()),
-                &imported_attribute.name,
-            )?,
-        ),
-    }
-}
-
-#[derive(Error, Debug)]
-pub enum FindTypeError {
-    #[error("failed to resolve attribute: {0}")]
-    FailedToResolveAttribute(#[from] GetAttributeError),
-    #[error("the identifier `{0:?}` is not a namespace")]
-    IsNotNamespace(Identifier),
-}
-
-fn get_type_attribute<'a>(
-    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    location: &Location<QualifiedName>,
-    identifiers: &[Identifier],
-) -> Result<&'a LocalAttribute, FindTypeError> {
-    let (identifier, attribute_identifiers) = identifiers
-        .split_first()
-        .expect("identifiers should not be empty");
-
-    let attribute = get_attribute(context, location, identifier)?;
-
-    let local_attribute = resolve_attribute(context, attribute)?;
-
-    if attribute_identifiers.is_empty() {
-        return Ok(local_attribute);
-    };
-
-    let Type::Literal(literal_value) = local_attribute.attribute_type.as_ref() else {
-        return Err(FindTypeError::IsNotNamespace(identifier.to_owned()));
-    };
-
-    match literal_value.as_ref() {
-        TypeLiteral::Class(class_type) => {
-            get_type_attribute(context, &class_type.value.location, attribute_identifiers)
-        }
-        TypeLiteral::ImportedModule(module_reference_type) => get_type_attribute(
-            context,
-            &Location::from(module_reference_type.value.module.clone()),
-            attribute_identifiers,
-        ),
-        _ => Err(FindTypeError::IsNotNamespace(identifier.to_owned())),
-    }
-}
-
-pub fn get_type<'a>(
-    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    location: &Location<QualifiedName>,
-    name: &QualifiedName,
-) -> Result<&'a Type, FindTypeError> {
-    Ok(&get_type_attribute(context, location, &name.identifiers)?.attribute_type)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -627,20 +597,21 @@ impl Lattice<QualifiedName> for AbstractEnvironment {
                     }
 
                     let self_local_attribute =
-                        resolve_attribute(context, self_attribute).map_err(|error| {
-                            ContextError {
+                        self_attribute
+                            .as_local(context)
+                            .map_err(|error| ContextError {
                                 identifier: name.clone(),
                                 error,
-                            }
-                        })?;
+                            })?;
+                    let other_local_attribute =
+                        other_attribute
+                            .as_local(context)
+                            .map_err(|error| ContextError {
+                                identifier: name.clone(),
+                                error,
+                            })?;
 
-                    let other_local_attribute = resolve_attribute(context, other_attribute)
-                        .map_err(|error| ContextError {
-                            identifier: name.clone(),
-                            error,
-                        })?;
-
-                    if !self_local_attribute.includes(context, other_local_attribute)? {
+                    if !self_local_attribute.includes(context, &other_local_attribute)? {
                         return Ok(false);
                     }
                 }
@@ -661,23 +632,29 @@ impl Lattice<QualifiedName> for AbstractEnvironment {
         for (name, other_attribute) in &other.attributes {
             match new_abstract_environment.attributes.entry(name.clone()) {
                 imbl::hashmap::Entry::Occupied(mut entry) => {
-                    if entry.get() == other_attribute {
+                    let entry_attribute = entry.get();
+
+                    if entry_attribute == other_attribute {
                         continue;
                     }
 
                     let entry_local_attribute =
-                        resolve_attribute(context, entry.get()).map_err(|error| ContextError {
-                            identifier: name.clone(),
-                            error,
-                        })?;
-                    let other_local_attribute = resolve_attribute(context, other_attribute)
-                        .map_err(|error| ContextError {
-                            identifier: name.clone(),
-                            error,
-                        })?;
+                        entry_attribute
+                            .as_local(context)
+                            .map_err(|error| ContextError {
+                                identifier: name.clone(),
+                                error,
+                            })?;
+                    let other_local_attribute =
+                        other_attribute
+                            .as_local(context)
+                            .map_err(|error| ContextError {
+                                identifier: name.clone(),
+                                error,
+                            })?;
 
                     entry.insert(Arc::new(Attribute::Local(
-                        entry_local_attribute.join(other_local_attribute),
+                        entry_local_attribute.join(&other_local_attribute),
                     )));
                 }
                 imbl::hashmap::Entry::Vacant(entry) => {

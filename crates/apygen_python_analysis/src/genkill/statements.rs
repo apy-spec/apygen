@@ -1,7 +1,7 @@
 use crate::abstract_environment::{
     AbstractEnvironment, Attribute, ClassType, Diagnostic, FunctionType, ImportedAttribute,
     ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule, LocalAttribute, Type,
-    TypeLiteral, get_type,
+    TypeLiteral, get_attribute,
 };
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{Cfg, EdgeData, nodes};
@@ -248,19 +248,16 @@ pub fn gen_import_from(
         };
 
         let visibility = gen_visibility(cfgs, &location, &name);
+        let identifier = Identifier::try_from(alias.name.id.as_ref())?;
 
-        match get_type(
-            context,
-            &Location::from(module.clone()),
-            &QualifiedName::try_from(alias.name.id.as_ref())?,
-        ) {
+        match get_attribute(context, &Location::from(module.clone()), &identifier) {
             Ok(_) => {
                 target_abstract_environment.attributes.insert(
                     Arc::new(name),
                     Arc::new(Attribute::Imported(ImportedAttribute {
                         module: module.clone(),
                         visibility,
-                        name: Identifier::try_from(alias.name.id.as_ref())?,
+                        name: identifier,
                         is_deprecated: false,
                     })),
                 );
@@ -268,7 +265,7 @@ pub fn gen_import_from(
             Err(_) => {
                 let submodule = {
                     let mut identifiers = module.identifiers.clone();
-                    identifiers.push(Identifier::try_from(alias.name.id.as_ref())?);
+                    identifiers.push(identifier);
                     Arc::new(QualifiedName { identifiers })
                 };
 
