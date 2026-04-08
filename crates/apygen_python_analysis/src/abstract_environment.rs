@@ -2,7 +2,7 @@ use crate::analysis::lattice::Lattice;
 use crate::analysis::namespace::{Location, NamespaceLocation, NamespacesContext};
 pub use apy::OneOrMany;
 pub use apy::v1::{
-    FromInvalidIdentifierError, GenericKind, Identifier, ParameterKind, QualifiedName, Visibility,
+    GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName, Visibility,
 };
 use apygen_analysis::cfg::ProgramPoint;
 use imbl;

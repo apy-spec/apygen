@@ -8,13 +8,13 @@ pub mod visibility;
 use crate::abstract_environment::Identifier;
 use crate::analysis::cfg::nodes::{Expr, ExprAttribute, ExprName};
 use apy::OneOrMany;
-use apy::v1::{FromInvalidIdentifierError, QualifiedName};
+use apy::v1::{ParseIdentifierError, QualifiedName};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ToQualifiedNameError {
     #[error("expression contains an invalid identifier")]
-    InvalidIdentifier(#[from] FromInvalidIdentifierError),
+    InvalidIdentifier(#[from] ParseIdentifierError),
     #[error("expression is not a valid qualified name expression")]
     InvalidQualifiedName,
 }

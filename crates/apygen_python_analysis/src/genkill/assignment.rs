@@ -1,13 +1,13 @@
 use crate::analysis::cfg::nodes::{
     Expr, ExprAttribute, ExprList, ExprName, ExprStarred, ExprSubscript, ExprTuple,
 };
-use crate::abstract_environment::{FromInvalidIdentifierError, Identifier};
+use crate::abstract_environment::{ParseIdentifierError, Identifier};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum FromAssignmentTargetError {
     #[error("the expression contains an invalid identifier")]
-    InvalidIdentifier(#[from] FromInvalidIdentifierError),
+    InvalidIdentifier(#[from] ParseIdentifierError),
     #[error("the expression is not a valid assignment target")]
     InvalidTarget,
 }

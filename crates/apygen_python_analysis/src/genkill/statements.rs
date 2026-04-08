@@ -11,7 +11,7 @@ use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::expressions::gen_expr;
 use crate::genkill::visibility::gen_visibility;
 use apy::OneOrMany;
-use apy::v1::{FromInvalidQualifiedNameError, Identifier, QualifiedName};
+use apy::v1::{Identifier, ParseQualifiedNameError, QualifiedName};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -21,7 +21,7 @@ pub fn gen_assign(
     cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
     location: Location<QualifiedName>,
     stmt_assign: &nodes::StmtAssign,
-) -> Result<HashMap<EdgeData, AbstractEnvironment>, FromInvalidQualifiedNameError> {
+) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
         .get_abstract_environment(&location)
         .cloned()
@@ -59,7 +59,7 @@ pub fn gen_return(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     location: Location<QualifiedName>,
     stmt_return: &nodes::StmtReturn,
-) -> Result<HashMap<EdgeData, AbstractEnvironment>, FromInvalidQualifiedNameError> {
+) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
         .get_abstract_environment(&location)
         .cloned()
@@ -83,7 +83,7 @@ pub fn gen_ann_assign(
     cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
     location: Location<QualifiedName>,
     stmt_ann_assign: &nodes::StmtAnnAssign,
-) -> Result<HashMap<EdgeData, AbstractEnvironment>, FromInvalidQualifiedNameError> {
+) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
         .get_abstract_environment(&location)
         .cloned()
@@ -135,7 +135,7 @@ pub fn gen_import(
     import_tx: &Sender<NamespaceLocation<QualifiedName>>,
     location: Location<QualifiedName>,
     stmt_import: &nodes::StmtImport,
-) -> Result<HashMap<EdgeData, AbstractEnvironment>, FromInvalidQualifiedNameError> {
+) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
         .get_abstract_environment(&location)
         .cloned()
@@ -217,7 +217,7 @@ pub fn gen_import_from(
     import_tx: &Sender<NamespaceLocation<QualifiedName>>,
     location: Location<QualifiedName>,
     stmt_import_from: &nodes::StmtImportFrom,
-) -> Result<HashMap<EdgeData, AbstractEnvironment>, FromInvalidQualifiedNameError> {
+) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
         .get_abstract_environment(&location)
         .cloned()
@@ -318,7 +318,7 @@ pub fn gen_function_def(
     cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
     location: Location<QualifiedName>,
     stmt_function_def: &nodes::StmtFunctionDef,
-) -> Result<HashMap<EdgeData, AbstractEnvironment>, FromInvalidQualifiedNameError> {
+) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
         .get_abstract_environment(&location)
         .cloned()
@@ -369,7 +369,7 @@ pub fn gen_class_def(
     cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
     location: Location<QualifiedName>,
     stmt_class_def: &nodes::StmtClassDef,
-) -> Result<HashMap<EdgeData, AbstractEnvironment>, FromInvalidQualifiedNameError> {
+) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
         .get_abstract_environment(&location)
         .cloned()
@@ -422,7 +422,7 @@ pub fn gen_statement(
     import_tx: &Sender<NamespaceLocation<QualifiedName>>,
     location: Location<QualifiedName>,
     statement: &Stmt,
-) -> Result<HashMap<EdgeData, AbstractEnvironment>, FromInvalidQualifiedNameError> {
+) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     match statement {
         Stmt::AnnAssign(stmt_ann_assign) => {
             gen_ann_assign(context, cfgs, location, &stmt_ann_assign)
