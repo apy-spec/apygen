@@ -115,7 +115,7 @@ impl<F: Filesystem> PathFinder<F> {
             return None;
         }
 
-        let identifier = Identifier::try_from(file_prefix.to_str()?).ok()?;
+        let identifier = Identifier::try_parse(file_prefix.to_str()?).ok()?;
 
         let extension = candidate_module_path.extension()?;
 
@@ -145,7 +145,7 @@ impl<F: Filesystem> PathFinder<F> {
         }
 
         let identifier =
-            Identifier::try_from(candidate_package_path.file_name()?.to_str()?).ok()?;
+            Identifier::try_parse(candidate_package_path.file_name()?.to_str()?).ok()?;
 
         let init_file_path = candidate_package_path
             .try_join(INIT_FILE_PREFIX)
