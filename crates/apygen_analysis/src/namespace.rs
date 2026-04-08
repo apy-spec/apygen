@@ -73,7 +73,7 @@ impl<M> Location<M> {
         }
     }
 
-    pub fn at_sub_location_exit(&self) -> Self {
+    pub fn as_sub_location_exit(&self) -> Self {
         Location {
             namespace_location: self
                 .namespace_location
