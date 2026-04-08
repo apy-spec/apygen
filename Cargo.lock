@@ -44,7 +44,7 @@ checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 [[package]]
 name = "apy"
 version = "0.1.0"
-source = "git+https://github.com/apy-spec/apy-rs.git#71f097c5676553309fb0238ae99320d96f4dab7a"
+source = "git+https://github.com/apy-spec/apy-rs.git#e4cd4c4dacf4fe473f197f2747450946b4806bdc"
 dependencies = [
  "serde",
  "serde-saphyr",
