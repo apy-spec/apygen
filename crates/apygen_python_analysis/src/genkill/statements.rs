@@ -242,13 +242,13 @@ pub fn gen_import_from(
 
     for alias in &stmt_import_from.names {
         let Ok(name) =
-            Identifier::try_from(alias.asname.as_ref().unwrap_or(&alias.name).id.as_ref())
+            Identifier::try_parse(alias.asname.as_ref().unwrap_or(&alias.name).id.as_ref())
         else {
             continue;
         };
 
         let visibility = gen_visibility(cfgs, &location, &name);
-        let identifier = Identifier::try_from(alias.name.id.as_ref())?;
+        let identifier = Identifier::try_parse(alias.name.id.as_ref())?;
 
         match get_attribute(context, &Location::from(module.clone()), &identifier) {
             Ok(_) => {
@@ -324,7 +324,7 @@ pub fn gen_function_def(
         .cloned()
         .unwrap_or_default();
 
-    let name = Identifier::try_from(stmt_function_def.name.id.as_ref())?;
+    let name = Identifier::try_parse(stmt_function_def.name.id.as_ref())?;
     let visibility = gen_visibility(cfgs, &location, &name);
     target_abstract_environment.attributes.insert(
         Arc::new(name),
@@ -375,7 +375,7 @@ pub fn gen_class_def(
         .cloned()
         .unwrap_or_default();
 
-    let name = Identifier::try_from(stmt_class_def.name.id.as_ref())?;
+    let name = Identifier::try_parse(stmt_class_def.name.id.as_ref())?;
     let visibility = gen_visibility(cfgs, &location, &name);
     target_abstract_environment.attributes.insert(
         Arc::new(name),

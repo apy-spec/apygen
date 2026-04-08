@@ -25,9 +25,9 @@ pub trait ToQualifiedName {
 
 impl ToQualifiedName for ExprName {
     fn to_qualified_name(&self) -> Result<QualifiedName, ToQualifiedNameError> {
-        Ok(QualifiedName {
-            identifiers: OneOrMany::one(Identifier::try_from(self.id.as_ref())?),
-        })
+        Ok(QualifiedName::new(OneOrMany::one(Identifier::try_parse(
+            self.id.as_ref(),
+        )?)))
     }
 }
 
@@ -36,7 +36,7 @@ impl ToQualifiedName for ExprAttribute {
         let mut qualified_name = self.value.to_qualified_name()?;
         qualified_name
             .identifiers
-            .push(Identifier::try_from(self.attr.id.as_ref())?);
+            .push(Identifier::try_parse(self.attr.id.as_ref())?);
         Ok(qualified_name)
     }
 }

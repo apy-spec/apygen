@@ -31,7 +31,7 @@ impl TryFrom<&ExprName> for AssignmentTarget<'_> {
     type Error = FromAssignmentTargetError;
 
     fn try_from(value: &ExprName) -> Result<Self, Self::Error> {
-        Ok(AssignmentTarget::Name(Identifier::try_from(
+        Ok(AssignmentTarget::Name(Identifier::try_parse(
             value.id.as_ref(),
         )?))
     }
@@ -42,7 +42,7 @@ impl<'e> TryFrom<&'e ExprAttribute> for AssignmentTarget<'e> {
 
     fn try_from(value: &'e ExprAttribute) -> Result<Self, Self::Error> {
         Ok(AssignmentTarget::Attribute {
-            attr: Identifier::try_from(value.attr.id.as_ref())?,
+            attr: Identifier::try_parse(value.attr.id.as_ref())?,
             target: Box::new(AssignmentTarget::try_from(value.value.as_ref())?),
         })
     }
