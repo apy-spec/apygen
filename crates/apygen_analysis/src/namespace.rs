@@ -72,6 +72,15 @@ impl<M> Location<M> {
             program_point: ProgramPoint::Exit,
         }
     }
+
+    pub fn at_sub_location_exit(&self) -> Self {
+        Location {
+            namespace_location: self
+                .namespace_location
+                .sub_location(self.program_point.id()),
+            program_point: ProgramPoint::Exit,
+        }
+    }
 }
 
 impl<M> From<Arc<M>> for Location<M> {
