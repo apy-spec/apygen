@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
     AbstractEnvironment, Attribute, GetAttributeError, LiteralBigInteger, LiteralInteger,
-    LocalAttribute, QualifiedName, Type, TypeLiteral, TypeReference, get_attribute,
+    LocalAttribute, QualifiedName, Type, TypeLiteral, TypeReference, TypeUnion, get_attribute,
 };
 use crate::analysis::cfg::nodes::{Expr, ExprSubscript, ExprUnaryOp, UnaryOp};
 use crate::analysis::namespace::{Location, NamespacesContext};
@@ -11,6 +11,7 @@ use crate::genkill::literals::{
 use crate::genkill::{ToQualifiedName, ToQualifiedNameError};
 use apy::OneOrMany;
 use apy::v1::Identifier;
+use apygen_analysis::cfg::nodes::{ExprBinOp, Operator};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -201,6 +202,27 @@ pub fn gen_expr_unary_op(expression: &ExprUnaryOp) -> Result<Type, GenAnnotation
     }
 }
 
+pub fn gen_expr_bin_op(
+    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    location: &Location<QualifiedName>,
+    expression: &ExprBinOp,
+) -> Result<Type, GenAnnotationError> {
+    if !matches!(expression.op, Operator::BitOr) {
+        return Err(GenAnnotationError::InvalidAnnotation {
+            reason: "The binary operator is not a binary or".to_owned(),
+        });
+    }
+
+    let left_expression = gen_annotation(context, location, expression.left.as_ref())?;
+    let right_expression = gen_annotation(context, location, expression.right.as_ref())?;
+
+    let mut ty = TypeUnion::new();
+    ty.add_type(Arc::new(left_expression));
+    ty.add_type(Arc::new(right_expression));
+
+    Ok(ty.simplify().as_ref().clone())
+}
+
 pub fn gen_annotation(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     location: &Location<QualifiedName>,
@@ -222,6 +244,7 @@ pub fn gen_annotation(
         }
         Expr::Subscript(expr_subscript) => gen_expr_subscript(context, location, expr_subscript)?,
         Expr::UnaryOp(expr_unary_op) => gen_expr_unary_op(expr_unary_op)?,
+        Expr::BinOp(expr_binary_op) => gen_expr_bin_op(context, location, expr_binary_op)?,
         _ => {
             return Err(GenAnnotationError::InvalidAnnotation {
                 reason: "The expression is not a valid annotation".to_owned(),
