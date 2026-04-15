@@ -18,10 +18,6 @@ pub const TYPING_EXTENSIONS_MODULE: &str = "typing_extensions";
 pub const ABC_MODULE: &str = "abc";
 pub const DEPTH_LIMIT: usize = 20;
 
-pub fn new_qualified_name_or_panic(name: &str) -> QualifiedName {
-    QualifiedName::try_from(name).expect(&format!("Invalid qualified name: '{}'", name))
-}
-
 pub fn join_visibility(first: Visibility, second: Visibility) -> Visibility {
     if matches!(first, Visibility::Internal) || matches!(second, Visibility::Internal) {
         Visibility::Internal
@@ -471,8 +467,8 @@ impl TypeReference {
 
     pub fn builtins(name: &str) -> Self {
         TypeReference::new(
-            Arc::new(new_qualified_name_or_panic(BUILTINS_MODULE)),
-            new_qualified_name_or_panic(name),
+            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            QualifiedName::parse(name),
         )
     }
 
@@ -787,7 +783,7 @@ impl Attribute {
         }
     }
 
-    fn as_local(
+    pub fn as_local(
         &self,
         context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     ) -> Result<LocalAttribute, GetAttributeError> {
