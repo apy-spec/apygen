@@ -319,12 +319,9 @@ mod tests {
         assert_eq!(
             module_specs.keys().collect::<HashSet<&QualifiedName>>(),
             HashSet::from([
-                &QualifiedName::try_from("package").expect("package should be a valid identifier"),
-                &QualifiedName::try_from("package.submodule")
-                    .expect("package.submodule should be a valid submodule"),
-                &QualifiedName::try_from("hello").expect("hello should be a valid identifier"),
-                &QualifiedName::try_from("calculator")
-                    .expect("calculator should be a valid identifier"),
+                &QualifiedName::parse("package"),
+                &QualifiedName::parse("hello"),
+                &QualifiedName::parse("calculator"),
             ])
         );
     }
