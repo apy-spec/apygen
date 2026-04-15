@@ -550,6 +550,10 @@ impl TypeUnion {
         self.types.contains(ty)
     }
 
+    pub fn types(&self) -> &imbl::OrdSet<Arc<Type>> {
+        &self.types
+    }
+
     pub fn simplify(self) -> Arc<Type> {
         if self.types.is_empty() {
             Arc::new(Type::Never)

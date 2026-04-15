@@ -3,7 +3,7 @@ use crate::abstract_environment::{
     LiteralBytes, LiteralClass, LiteralComplex, LiteralDict, LiteralFloat, LiteralFunction,
     LiteralGeneric, LiteralImportedModule, LiteralInteger, LiteralList, LiteralString,
     LiteralTuple, LiteralTypeAlias, QualifiedName, TYPES_MODULE, TYPING_MODULE, Type, TypeLiteral,
-    TypeReference,
+    TypeReference, TypeUnion,
 };
 use crate::genkill::visibility::visibility_from_module_name;
 use apy;
@@ -271,9 +271,26 @@ pub fn convert_type_reference(type_reference: &TypeReference) -> apy::v1::TypeRe
         .with_module(Some(type_reference.module.as_ref().clone()))
 }
 
-pub fn convert_type_union() -> apy::v1::TypeReference {
-    apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("Union"))
-        .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE)))
+pub fn convert_type_union(
+    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    type_union: &TypeUnion,
+) -> Option<apy::v1::TypeReference> {
+    Some(
+        apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("Union"))
+            .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE)))
+            .with_arguments(
+                type_union
+                    .types()
+                    .iter()
+                    .map(|ty| {
+                        Some(apy::v1::TypeArgument::Type(convert_type(
+                            context,
+                            ty.as_ref(),
+                        )?))
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+    )
 }
 
 pub fn convert_type_intersection() -> apy::v1::TypeReference {
@@ -290,7 +307,7 @@ pub fn convert_type(
         Type::Never => convert_type_never(),
         Type::NoReturn => convert_type_no_return(),
         Type::Reference(type_reference) => convert_type_reference(type_reference),
-        Type::Union(_) => convert_type_union(),
+        Type::Union(type_union) => convert_type_union(context, type_union)?,
         Type::Intersection(_) => convert_type_intersection(),
         Type::Literal(type_literal) => match convert_type_literal(context, type_literal)? {
             ConvertedTypeLiteral::TypeReference(ty) => ty,
@@ -339,7 +356,9 @@ pub fn convert_attribute(
         Type::Reference(type_reference) => {
             apy::v1::Type::Reference(convert_type_reference(type_reference))
         }
-        Type::Union(_) => apy::v1::Type::Reference(convert_type_union()),
+        Type::Union(type_union) => {
+            apy::v1::Type::Reference(convert_type_union(context, type_union)?)
+        }
         Type::Intersection(_) => apy::v1::Type::Reference(convert_type_intersection()),
         Type::Literal(type_literal) => match convert_type_literal(context, type_literal)? {
             ConvertedTypeLiteral::TypeReference(ty) => apy::v1::Type::Reference(ty),
