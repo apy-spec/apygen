@@ -1,7 +1,7 @@
 use crate::abstract_environment::{
     AbstractEnvironment, Attribute, ClassType, Diagnostic, FunctionType, ImportedAttribute,
-    ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule, LocalAttribute, Type,
-    TypeLiteral, get_attribute,
+    ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule, LocalAttribute,
+    Parameter, ParameterKind, Type, TypeLiteral, get_attribute,
 };
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{Cfg, EdgeData, nodes};
@@ -11,7 +11,7 @@ use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::expressions::gen_expr;
 use crate::genkill::visibility::gen_visibility;
 use apy::OneOrMany;
-use apy::v1::{Identifier, ParseQualifiedNameError, QualifiedName};
+use apy::v1::{Identifier, ParseIdentifierError, ParseQualifiedNameError, QualifiedName};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -309,6 +309,38 @@ pub fn gen_import_from(
     )]))
 }
 
+pub fn gen_parameter(
+    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    location: &Location<QualifiedName>,
+    parameter: &nodes::Parameter,
+    kind: ParameterKind,
+    default: Option<&Box<nodes::Expr>>,
+) -> Result<Parameter, ParseIdentifierError> {
+    let annotation_ty = match &parameter.annotation {
+        Some(annotation) => gen_annotation(context, location, annotation.as_ref()).ok(),
+        None => None,
+    };
+
+    let ty = match default {
+        Some(default) => {
+            let default_ty = gen_expr(context, location, default.as_ref()).value;
+            match annotation_ty {
+                Some(annotation_ty) => annotation_ty,
+                None => default_ty,
+            }
+        }
+        None => Type::Any,
+    };
+
+    Ok(Parameter {
+        name: Identifier::try_parse(parameter.name.id.as_ref())?,
+        parameter_type: Arc::new(ty),
+        is_deprecated: false,
+        kind,
+        is_optional: default.is_some(),
+    })
+}
+
 pub fn gen_function_def(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     dependents: &mut HashMap<
@@ -325,6 +357,54 @@ pub fn gen_function_def(
         .unwrap_or_default();
 
     let name = Identifier::try_parse(stmt_function_def.name.id.as_ref())?;
+
+    let mut parameters: Vec<Parameter> = Vec::new();
+    for positional_parameter in &stmt_function_def.parameters.posonlyargs {
+        parameters.push(gen_parameter(
+            context,
+            &location,
+            &positional_parameter.parameter,
+            ParameterKind::PositionalOnly,
+            positional_parameter.default.as_ref(),
+        )?);
+    }
+    for positional_or_keyword_parameter in &stmt_function_def.parameters.args {
+        parameters.push(gen_parameter(
+            context,
+            &location,
+            &positional_or_keyword_parameter.parameter,
+            ParameterKind::PositionalOrKeyword,
+            positional_or_keyword_parameter.default.as_ref(),
+        )?);
+    }
+    if let Some(var_positional_parameter) = &stmt_function_def.parameters.vararg {
+        parameters.push(gen_parameter(
+            context,
+            &location,
+            &var_positional_parameter,
+            ParameterKind::VarPositional,
+            None,
+        )?);
+    }
+    for keyword_parameter in &stmt_function_def.parameters.kwonlyargs {
+        parameters.push(gen_parameter(
+            context,
+            &location,
+            &keyword_parameter.parameter,
+            ParameterKind::KeywordOnly,
+            keyword_parameter.default.as_ref(),
+        )?);
+    }
+    if let Some(var_keyword_parameter) = &stmt_function_def.parameters.kwarg {
+        parameters.push(gen_parameter(
+            context,
+            &location,
+            &var_keyword_parameter,
+            ParameterKind::VarKeyword,
+            None,
+        )?);
+    }
+
     let visibility = gen_visibility(cfgs, &location, &name);
     target_abstract_environment.attributes.insert(
         Arc::new(name),
@@ -334,7 +414,7 @@ pub fn gen_function_def(
                     location: location.clone(),
                     generics: imbl::OrdMap::new(),
                     is_async: stmt_function_def.is_async,
-                    parameters: imbl::Vector::new(),
+                    parameters: imbl::Vector::from(parameters),
                 }),
             }))),
             is_deprecated: false,
