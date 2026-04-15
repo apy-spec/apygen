@@ -58,6 +58,20 @@ impl<F: Filesystem> ModuleSpec<F> {
     pub fn is_package(&self) -> bool {
         !self.submodule_search_locations.is_empty()
     }
+
+    pub fn is_inside(&self, directory: &AbsolutePathBuf) -> bool {
+        if self.is_package() {
+            self.submodule_search_locations
+                .iter()
+                .any(|location| location.starts_with(directory))
+        } else {
+            match &self.file_loader {
+                FileLoader::SourceFileLoader { path, .. } => path.starts_with(directory),
+                FileLoader::ExtensionFileLoader { path, .. } => path.starts_with(directory),
+                FileLoader::NamespaceLoader => false,
+            }
+        }
+    }
 }
 
 /// # References:
