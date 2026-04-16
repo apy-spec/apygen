@@ -86,7 +86,6 @@ dependencies = [
 name = "apygen_finder"
 version = "0.1.0"
 dependencies = [
- "apy",
  "git2",
  "rayon",
  "thiserror",

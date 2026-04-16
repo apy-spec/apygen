@@ -9,7 +9,6 @@ license.workspace = true
 git2 = { workspace = true, optional = true }
 thiserror = { workspace = true }
 rayon = { workspace = true }
-apy = { workspace = true }
 
 [features]
 git = ["dep:git2"]

@@ -1,14 +1,14 @@
 use crate::abstract_environment::AbstractEnvironment;
 use crate::genkill::statements::gen_statement;
 use apy::OneOrMany;
-use apy::v1::QualifiedName;
+use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::{Cfg, EdgeData, ProgramPoint};
 pub use apygen_analysis::lattice::Lattice;
 use apygen_analysis::namespace::{
     Location, NamespaceLocation, Namespaces, NamespacesContext, NamespacesProxy,
 };
 use apygen_finder::filesystem::{Error as FilesystemError, Filesystem};
-use apygen_finder::pathfinder::{FileLoader, ModuleSpec};
+use apygen_finder::pathfinder::{FileLoader, FinderSpec, ModuleSpec};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -175,35 +175,47 @@ pub fn load_cfg(module_spec: &ModuleSpec<impl Filesystem>) -> Result<Cfg, Import
     }
 }
 
-pub fn import_module_spec<'a>(
-    qualified_name: &'a QualifiedName,
-    module_spec: &'a ModuleSpec<impl Filesystem>,
-) -> impl ParallelIterator<Item = (&'a QualifiedName, Result<Cfg, ImportModuleError>)> {
-    fn all_submodule_specs<'a, F: Filesystem>(
-        qualified_name: &'a QualifiedName,
-        module_spec: &'a ModuleSpec<F>,
-    ) -> Vec<(&'a QualifiedName, &'a ModuleSpec<F>)> {
-        rayon::iter::once((qualified_name, module_spec))
-            .chain(module_spec.submodule_specs.par_iter().flat_map(
-                |(submodule_qualified_name, submodule_spec)| {
-                    all_submodule_specs(submodule_qualified_name, submodule_spec)
-                },
-            ))
-            .collect()
+pub fn convert_specs<F: Filesystem>(
+    specs: HashMap<Identifier, FinderSpec<Identifier, F>>,
+) -> HashMap<Identifier, HashMap<QualifiedName, ModuleSpec<F>>> {
+    pub fn convert_package_specs<F: Filesystem>(
+        package_identifiers: OneOrMany<Identifier>,
+        finder_spec: FinderSpec<Identifier, F>,
+    ) -> HashMap<QualifiedName, ModuleSpec<F>> {
+        rayon::iter::once((
+            QualifiedName::new(package_identifiers.clone()),
+            finder_spec.module_spec,
+        ))
+        .chain(finder_spec.submodules.into_par_iter().flat_map(
+            |(submodule_identifier, submodule_spec)| {
+                let mut submodule_identifiers = package_identifiers.clone();
+                submodule_identifiers.push(submodule_identifier);
+                convert_package_specs(submodule_identifiers, submodule_spec)
+            },
+        ))
+        .collect()
     }
 
-    all_submodule_specs(qualified_name, module_spec)
+    specs
         .into_par_iter()
-        .map(|(qualified_name, module_spec)| (qualified_name, load_cfg(&module_spec)))
+        .map(|(identifier, finder_spec)| {
+            (
+                identifier.clone(),
+                convert_package_specs(OneOrMany::one(identifier), finder_spec),
+            )
+        })
+        .collect()
 }
 
 pub fn cfg_worklist<F: Filesystem>(
-    module_specs: HashMap<QualifiedName, ModuleSpec<F>>,
-    target_modules: HashSet<QualifiedName>,
+    specs: HashMap<Identifier, FinderSpec<Identifier, F>>,
+    target_modules: HashSet<Identifier>,
 ) -> Option<(
     Namespaces<QualifiedName, AbstractEnvironment>,
     HashMap<Arc<QualifiedName>, Cfg>,
 )> {
+    let module_specs = convert_specs(specs);
+
     let mut namespaces: Namespaces<QualifiedName, AbstractEnvironment> = Namespaces::new();
     let mut dependents: HashMap<
         NamespaceLocation<QualifiedName>,
@@ -211,14 +223,15 @@ pub fn cfg_worklist<F: Filesystem>(
     > = HashMap::new();
     let mut cfgs: HashMap<_, _> = target_modules
         .par_iter()
-        .flat_map(|qualified_name| {
-            import_module_spec(qualified_name, module_specs.get(qualified_name).unwrap())
-        })
-        .map(|(qualified_name, cfg)| {
-            (
-                Arc::new(qualified_name.clone()),
-                cfg.unwrap_or(Cfg::empty()),
-            )
+        .flat_map(|identifier| {
+            module_specs[identifier]
+                .par_iter()
+                .map(|(name, module_spec)| {
+                    (
+                        Arc::new(name.clone()),
+                        load_cfg(module_spec).unwrap_or(Cfg::empty()),
+                    )
+                })
         })
         .collect();
 
@@ -240,18 +253,18 @@ pub fn cfg_worklist<F: Filesystem>(
                 let mut current_cfgs: HashSet<QualifiedName> = HashSet::new();
 
                 for namespace_location in import_rx {
-                    let root_package = QualifiedName {
-                        identifiers: OneOrMany::one(
-                            namespace_location.module.identifiers.first().clone(),
-                        ),
-                    };
+                    let root_package = QualifiedName::new(OneOrMany::one(
+                        namespace_location.module.identifiers.first().clone(),
+                    ));
 
                     if cfgs_ref.contains_key(&root_package) || current_cfgs.contains(&root_package)
                     {
                         continue;
                     }
 
-                    let Some(module_spec) = module_specs_ref.get(&root_package) else {
+                    let Some(package_specs) =
+                        module_specs_ref.get(&root_package.identifiers.first())
+                    else {
                         continue;
                     };
 
@@ -259,20 +272,19 @@ pub fn cfg_worklist<F: Filesystem>(
 
                     let cfg_tx = cfg_tx.clone();
                     scope.spawn(move |_| {
-                        let module_cfgs: Vec<_> = import_module_spec(&root_package, module_spec)
-                            .map(|(qualified_name, cfg)| {
+                        package_specs
+                            .par_iter()
+                            .map(|(name, module_spec)| {
                                 (
-                                    Arc::new(qualified_name.clone()),
-                                    cfg.unwrap_or(Cfg::empty()),
+                                    Arc::new(name.clone()),
+                                    load_cfg(module_spec).unwrap_or(Cfg::empty()),
                                 )
                             })
-                            .collect();
-
-                        for (qualified_name, cfg) in module_cfgs {
-                            cfg_tx
-                                .send((qualified_name, cfg))
-                                .expect("Should be able to send imported cfg to main thread");
-                        }
+                            .for_each(|(qualified_name, cfg)| {
+                                cfg_tx
+                                    .send((qualified_name, cfg))
+                                    .expect("Should be able to send imported cfg to main thread");
+                            });
                     });
                 }
             });

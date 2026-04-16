@@ -1,10 +1,10 @@
 use crate::filesystem::{AbsolutePathBuf, Filesystem};
-pub use apy::OneOrMany;
-pub use apy::v1::{Identifier, QualifiedName};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::ffi::OsStr;
+use std::hash::Hash;
+use std::str::FromStr;
 use std::sync::Arc;
 
 pub const SOURCE_SUFFIX: &str = "py";
@@ -34,7 +34,6 @@ pub enum FileLoader<F: Filesystem> {
 #[derive(Clone, Debug)]
 pub struct ModuleSpec<F: Filesystem> {
     pub file_loader: FileLoader<F>,
-    pub submodule_specs: HashMap<QualifiedName, ModuleSpec<F>>,
     pub submodule_search_locations: Vec<AbsolutePathBuf>,
 }
 
@@ -42,7 +41,6 @@ impl<F: Filesystem> ModuleSpec<F> {
     pub fn new(file_loader: FileLoader<F>) -> Self {
         ModuleSpec {
             file_loader,
-            submodule_specs: HashMap::new(),
             submodule_search_locations: Vec::new(),
         }
     }
@@ -50,7 +48,6 @@ impl<F: Filesystem> ModuleSpec<F> {
     pub fn with_one_location(file_loader: FileLoader<F>, location: AbsolutePathBuf) -> Self {
         ModuleSpec {
             file_loader,
-            submodule_specs: HashMap::new(),
             submodule_search_locations: Vec::from([location]),
         }
     }
@@ -70,6 +67,20 @@ impl<F: Filesystem> ModuleSpec<F> {
                 FileLoader::ExtensionFileLoader { path, .. } => path.starts_with(directory),
                 FileLoader::NamespaceLoader => false,
             }
+        }
+    }
+}
+
+pub struct FinderSpec<I: Clone + Eq + Hash + Send + FromStr, F: Filesystem> {
+    pub module_spec: ModuleSpec<F>,
+    pub submodules: HashMap<I, FinderSpec<I, F>>,
+}
+
+impl<I: Clone + Eq + Hash + Send + FromStr, F: Filesystem> FinderSpec<I, F> {
+    pub fn new(module_spec: ModuleSpec<F>, submodules: HashMap<I, FinderSpec<I, F>>) -> Self {
+        FinderSpec {
+            module_spec,
+            submodules,
         }
     }
 }
@@ -99,10 +110,10 @@ impl<F: Filesystem> PathFinder<F> {
         &self.python_paths
     }
 
-    fn get_module_loader(
+    fn get_module_loader<I: Clone + Eq + Hash + Send + FromStr>(
         &self,
         candidate_module_path: &AbsolutePathBuf,
-    ) -> Option<(Identifier, FileLoader<F>)> {
+    ) -> Option<(I, FileLoader<F>)> {
         if !self.filesystem.is_file(candidate_module_path) {
             return None;
         }
@@ -113,7 +124,7 @@ impl<F: Filesystem> PathFinder<F> {
             return None;
         }
 
-        let identifier = Identifier::try_parse(file_prefix.to_str()?).ok()?;
+        let identifier = I::from_str(file_prefix.to_str()?).ok()?;
 
         let extension = candidate_module_path.extension()?;
 
@@ -134,16 +145,15 @@ impl<F: Filesystem> PathFinder<F> {
         Some((identifier, file_loader))
     }
 
-    fn get_package_loader(
+    fn get_package_loader<I: Clone + Eq + Hash + Send + FromStr>(
         &self,
         candidate_package_path: &AbsolutePathBuf,
-    ) -> Option<(Identifier, FileLoader<F>)> {
+    ) -> Option<(I, FileLoader<F>)> {
         if !self.filesystem.is_dir(candidate_package_path) {
             return None;
         }
 
-        let identifier =
-            Identifier::try_parse(candidate_package_path.file_name()?.to_str()?).ok()?;
+        let identifier = I::from_str(candidate_package_path.file_name()?.to_str()?).ok()?;
 
         let init_file_path = candidate_package_path
             .try_join(INIT_FILE_PREFIX)
@@ -172,30 +182,14 @@ impl<F: Filesystem> PathFinder<F> {
         Some((identifier, file_loader))
     }
 
-    fn get_submodule_specs(
+    fn get_search_locations_specs<
+        'a,
+        I: Clone + Eq + Hash + Send + FromStr,
+        L: ParallelIterator<Item = &'a AbsolutePathBuf>,
+    >(
         &self,
-        qualified_name: &QualifiedName,
-        module_spec: &ModuleSpec<F>,
-    ) -> HashMap<QualifiedName, ModuleSpec<F>> {
-        let mut search_location_specs: HashMap<QualifiedName, ModuleSpec<F>> = HashMap::new();
-
-        for (submodule_qualified_name, submodule_spec) in self.get_search_locations_specs(
-            Some(&qualified_name),
-            module_spec.submodule_search_locations.par_iter(),
-        ) {
-            search_location_specs
-                .entry(submodule_qualified_name)
-                .or_insert(submodule_spec);
-        }
-
-        search_location_specs
-    }
-
-    fn get_search_locations_specs<'a, I: ParallelIterator<Item = &'a AbsolutePathBuf>>(
-        &self,
-        package_name: Option<&QualifiedName>,
-        search_locations: I,
-    ) -> HashMap<QualifiedName, ModuleSpec<F>> {
+        search_locations: L,
+    ) -> HashMap<I, FinderSpec<I, F>> {
         let module_specs: Vec<_> = search_locations
             .flat_map(
                 |search_location| match self.filesystem.list_dir(search_location) {
@@ -204,36 +198,24 @@ impl<F: Filesystem> PathFinder<F> {
                 },
             )
             .filter_map(|candidate_path| {
-                let (identifier, module_spec) = if let Some((identifier, file_loader)) =
-                    self.get_module_loader(&candidate_path)
-                {
-                    (identifier, ModuleSpec::new(file_loader))
+                if let Some((identifier, file_loader)) = self.get_module_loader(&candidate_path) {
+                    Some((identifier, ModuleSpec::new(file_loader)))
                 } else if let Some((identifier, file_loader)) =
                     self.get_package_loader(&candidate_path)
                 {
-                    (
+                    Some((
                         identifier,
                         ModuleSpec::with_one_location(file_loader, candidate_path),
-                    )
+                    ))
                 } else {
-                    return None;
-                };
-
-                let qualified_name = if let Some(package_name) = package_name {
-                    let mut qualified_name = package_name.clone();
-                    qualified_name.identifiers.push(identifier);
-                    qualified_name
-                } else {
-                    QualifiedName::new(OneOrMany::one(identifier))
-                };
-
-                Some((qualified_name, module_spec))
+                    None
+                }
             })
             .collect();
 
-        let mut search_location_specs: HashMap<QualifiedName, ModuleSpec<F>> = HashMap::new();
-        for (qualified_name, module_spec) in module_specs {
-            match search_location_specs.entry(qualified_name) {
+        let mut search_location_specs: HashMap<I, ModuleSpec<F>> = HashMap::new();
+        for (identifier, module_spec) in module_specs {
+            match search_location_specs.entry(identifier) {
                 Entry::Occupied(mut spec_entry) => {
                     let previous_spec = spec_entry.get_mut();
 
@@ -259,23 +241,25 @@ impl<F: Filesystem> PathFinder<F> {
 
         search_location_specs
             .into_par_iter()
-            .filter_map(|(qualified_name, mut module_spec)| {
-                module_spec.submodule_specs =
-                    self.get_submodule_specs(&qualified_name, &module_spec);
+            .filter_map(|(identifier, module_spec)| {
+                let submodules = self
+                    .get_search_locations_specs(module_spec.submodule_search_locations.par_iter());
 
                 if matches!(module_spec.file_loader, FileLoader::NamespaceLoader)
-                    && module_spec.submodule_specs.is_empty()
+                    && submodules.is_empty()
                 {
                     return None;
                 }
 
-                Some((qualified_name, module_spec))
+                Some((identifier, FinderSpec::new(module_spec, submodules)))
             })
             .collect()
     }
 
-    pub fn get_all_specs(&self) -> HashMap<QualifiedName, ModuleSpec<F>> {
-        self.get_search_locations_specs(None, self.python_paths.par_iter())
+    pub fn get_all_specs<I: Clone + Eq + Hash + Send + FromStr>(
+        &self,
+    ) -> HashMap<I, FinderSpec<I, F>> {
+        self.get_search_locations_specs(self.python_paths.par_iter())
     }
 }
 
@@ -304,15 +288,22 @@ mod tests {
     fn test_list_modules() {
         let path_finder = new_path_finder();
 
-        let module_specs = path_finder.get_all_specs();
+        let module_specs: HashMap<String, _> = path_finder.get_all_specs();
 
         assert_eq!(
-            module_specs.keys().collect::<HashSet<&QualifiedName>>(),
+            module_specs.keys().collect::<HashSet<_>>(),
             HashSet::from([
-                &QualifiedName::parse("package"),
-                &QualifiedName::parse("hello"),
-                &QualifiedName::parse("calculator"),
+                &"package".to_owned(),
+                &"hello".to_owned(),
+                &"calculator".to_owned(),
             ])
         );
+        assert_eq!(
+            module_specs[&"package".to_owned()]
+                .submodules
+                .keys()
+                .collect::<HashSet<_>>(),
+            HashSet::from([&"submodule".to_owned()])
+        )
     }
 }
