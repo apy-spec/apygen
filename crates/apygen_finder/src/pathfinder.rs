@@ -7,13 +7,13 @@ use std::collections::hash_map::Entry;
 use std::ffi::OsStr;
 use std::sync::Arc;
 
-const SOURCE_SUFFIX: &str = "py";
+pub const SOURCE_SUFFIX: &str = "py";
 #[cfg(target_family = "windows")]
-const EXTENSION_SUFFIX: &str = "pyd";
+pub const EXTENSION_SUFFIX: &str = "pyd";
 #[cfg(target_family = "unix")]
-const EXTENSION_SUFFIX: &str = "so";
+pub const EXTENSION_SUFFIX: &str = "so";
 
-const INIT_FILE_PREFIX: &str = "__init__";
+pub const INIT_FILE_PREFIX: &str = "__init__";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FileLoader<F: Filesystem> {
