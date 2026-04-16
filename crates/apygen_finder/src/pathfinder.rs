@@ -99,22 +99,6 @@ impl<F: Filesystem> PathFinder<F> {
         &self.python_paths
     }
 
-    fn get_qualified_name(
-        package_identifiers: &[Identifier],
-        identifier: Identifier,
-    ) -> QualifiedName {
-        let identifiers = if let Ok(mut identifiers) =
-            OneOrMany::try_from_iter(package_identifiers.iter().cloned())
-        {
-            identifiers.push(identifier);
-            identifiers
-        } else {
-            OneOrMany::one(identifier)
-        };
-
-        QualifiedName::new(identifiers)
-    }
-
     fn get_module_loader(
         &self,
         candidate_module_path: &AbsolutePathBuf,
@@ -196,7 +180,7 @@ impl<F: Filesystem> PathFinder<F> {
         let mut search_location_specs: HashMap<QualifiedName, ModuleSpec<F>> = HashMap::new();
 
         for (submodule_qualified_name, submodule_spec) in self.get_search_locations_specs(
-            &qualified_name.identifiers,
+            Some(&qualified_name),
             module_spec.submodule_search_locations.par_iter(),
         ) {
             search_location_specs
@@ -209,7 +193,7 @@ impl<F: Filesystem> PathFinder<F> {
 
     fn get_search_locations_specs<'a, I: ParallelIterator<Item = &'a AbsolutePathBuf>>(
         &self,
-        package_identifiers: &[Identifier],
+        package_name: Option<&QualifiedName>,
         search_locations: I,
     ) -> HashMap<QualifiedName, ModuleSpec<F>> {
         let module_specs: Vec<_> = search_locations
@@ -235,7 +219,13 @@ impl<F: Filesystem> PathFinder<F> {
                     return None;
                 };
 
-                let qualified_name = Self::get_qualified_name(package_identifiers, identifier);
+                let qualified_name = if let Some(package_name) = package_name {
+                    let mut qualified_name = package_name.clone();
+                    qualified_name.identifiers.push(identifier);
+                    qualified_name
+                } else {
+                    QualifiedName::new(OneOrMany::one(identifier))
+                };
 
                 Some((qualified_name, module_spec))
             })
@@ -285,7 +275,7 @@ impl<F: Filesystem> PathFinder<F> {
     }
 
     pub fn get_all_specs(&self) -> HashMap<QualifiedName, ModuleSpec<F>> {
-        self.get_search_locations_specs(&[], self.python_paths.par_iter())
+        self.get_search_locations_specs(None, self.python_paths.par_iter())
     }
 }
 
