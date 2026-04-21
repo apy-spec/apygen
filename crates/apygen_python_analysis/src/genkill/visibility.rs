@@ -1,9 +1,9 @@
+use crate::abstract_environment::{QualifiedName, Visibility};
+use apygen_analysis::cfg::nodes::Stmt;
+use apygen_analysis::cfg::{Cfg, ProgramPoint, ProgramPointData};
+use apygen_analysis::namespace::Location;
 use std::collections::HashMap;
 use std::sync::Arc;
-use apygen_analysis::cfg::{Cfg, ProgramPointData};
-use apygen_analysis::cfg::nodes::Stmt;
-use apygen_analysis::namespace::Location;
-use crate::abstract_environment::{QualifiedName, Visibility};
 
 pub fn is_dunder_name(name: &str) -> bool {
     name.starts_with("__") && name.ends_with("__")
@@ -39,7 +39,6 @@ pub fn visibility_from_class_name(name: &str) -> Visibility {
     }
 }
 
-
 pub fn gen_visibility(
     cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
     location: &Location<QualifiedName>,
@@ -47,21 +46,15 @@ pub fn gen_visibility(
 ) -> Visibility {
     match visibility_from_class_name(name) {
         Visibility::Subclass => {
-            let data = cfgs
-                .get(&location.namespace_location.module)
-                .map(|cfg| {
-                    Some({
-                        if let Some(program_point_id) = location.namespace_location.program_point_id
-                        {
-                            cfg.sub_cfg(program_point_id)?
-                        } else {
-                            cfg
-                        }
-                    })
-                })
-                .flatten()
-                .map(|cfg| cfg.node_data(&location.program_point))
-                .flatten();
+            let Some(cfg) = cfgs.get(&location.namespace_location.module) else {
+                return Visibility::Internal;
+            };
+
+            let Some(program_point_id) = location.namespace_location.program_point_id else {
+                return Visibility::Internal;
+            };
+
+            let data = cfg.node_data(&ProgramPoint::Point(program_point_id));
 
             if matches!(
                 data,
