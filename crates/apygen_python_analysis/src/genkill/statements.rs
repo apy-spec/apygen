@@ -343,7 +343,11 @@ pub fn gen_parameter(
         parameter_type: Arc::new(ty),
         is_deprecated: false,
         kind,
-        is_optional: default.is_some(),
+        is_optional: default.is_some()
+            || matches!(
+                kind,
+                ParameterKind::VarPositional | ParameterKind::VarKeyword
+            ),
     })
 }
 
