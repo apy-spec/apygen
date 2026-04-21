@@ -457,10 +457,6 @@ pub fn convert_apy_v1(
     apy::v1::ApyV1::new().with_modules(
         cfgs.into_par_iter()
             .filter_map(|(module, _)| {
-                if !module.identifiers.first().starts_with("pynguin") {
-                    return None;
-                }
-
                 Some((module.as_ref().clone(), convert_module(context, &module)?))
             })
             .collect(),
