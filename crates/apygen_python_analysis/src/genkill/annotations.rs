@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, GetAttributeError, LiteralBigInteger, LiteralInteger,
-    LocalAttribute, QualifiedName, Type, TypeLiteral, TypeReference, TypeUnion, get_attribute,
+    AbstractEnvironment, Attribute, BUILTINS_MODULE, GetAttributeError, LiteralBigInteger,
+    LiteralInteger, LocalAttribute, QualifiedName, Type, TypeLiteral, TypeReference, TypeUnion,
 };
 use crate::analysis::cfg::nodes::{Expr, ExprSubscript, ExprUnaryOp, UnaryOp};
 use crate::analysis::namespace::{Location, NamespacesContext};
@@ -12,8 +12,43 @@ use crate::genkill::{ToQualifiedName, ToQualifiedNameError};
 use apy::OneOrMany;
 use apy::v1::Identifier;
 use apygen_analysis::cfg::nodes::{ExprBinOp, Operator};
+use apygen_analysis::namespace::NamespaceLocation;
 use std::sync::Arc;
 use thiserror::Error;
+
+pub fn get_attribute_with_module<'a>(
+    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    location: &Location<QualifiedName>,
+    name: &Identifier,
+) -> Result<(&'a Attribute, Arc<QualifiedName>), GetAttributeError> {
+    let Some(abstract_environment) = context.get_abstract_environment(location) else {
+        return Err(GetAttributeError::LocationNotFound(location.clone()));
+    };
+
+    if let Some(attribute) = abstract_environment.attributes.get(name) {
+        return Ok((attribute, location.namespace_location.module.clone()));
+    };
+
+    let builtins_name = Arc::new(QualifiedName::parse(BUILTINS_MODULE));
+    let builtins_namespace_location = NamespaceLocation::new(builtins_name.clone());
+
+    if location.namespace_location != builtins_namespace_location {
+        let Some(builtins_abstract_environment) =
+            context.get_abstract_environment(&Location::at_exit(builtins_namespace_location))
+        else {
+            return Err(GetAttributeError::LocationNotFound(location.clone()));
+        };
+
+        if let Some(builtins_attribute) = builtins_abstract_environment.attributes.get(name) {
+            return Ok((builtins_attribute, builtins_name.clone()));
+        };
+    }
+
+    Err(GetAttributeError::AttributeNotFound {
+        location: location.clone(),
+        identifier: name.clone(),
+    })
+}
 
 #[derive(Error, Debug)]
 pub enum GenAnnotationError {
@@ -34,11 +69,9 @@ fn resolve_with_module<'a>(
     location: &Location<QualifiedName>,
     identifier: &Identifier,
 ) -> Result<(&'a LocalAttribute, Arc<QualifiedName>), GenAnnotationError> {
-    match get_attribute(context, location, identifier)? {
-        Attribute::Local(local_attribute) => {
-            Ok((local_attribute, location.namespace_location.module.clone()))
-        }
-        Attribute::Imported(imported_attribute) => resolve_with_module(
+    match get_attribute_with_module(context, location, identifier)? {
+        (Attribute::Local(local_attribute), module) => Ok((local_attribute, module)),
+        (Attribute::Imported(imported_attribute), _) => resolve_with_module(
             context,
             &Location::from(imported_attribute.module.clone()),
             &imported_attribute.name,
