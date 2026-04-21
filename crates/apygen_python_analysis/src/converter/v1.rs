@@ -311,12 +311,17 @@ pub fn convert_type(
         Type::Intersection(_) => convert_type_intersection(),
         Type::Literal(type_literal) => match convert_type_literal(context, type_literal)? {
             ConvertedTypeLiteral::TypeReference(ty) => ty,
-            ConvertedTypeLiteral::PythonValue(type_argument) => {
-                return match type_argument {
+            ConvertedTypeLiteral::PythonValue(python_value) => {
+                return match python_value {
                     apy::v1::PythonValue::Other(apy::v1::OtherPythonValue::None) => {
                         Some(apy::v1::Type::Literal(apy::v1::TypeLiteral::None))
                     }
-                    _ => None,
+                    apy::v1::PythonValue::Other(apy::v1::OtherPythonValue::Ellipsis) => {
+                        Some(apy::v1::Type::Reference(convert_type_any()))
+                    }
+                    _ => {
+                        unreachable!("Only None and Ellipsis should be converted to Python values")
+                    }
                 };
             }
             ConvertedTypeLiteral::Function(_) => {
@@ -366,7 +371,10 @@ pub fn convert_attribute(
                 apy::v1::PythonValue::Other(apy::v1::OtherPythonValue::None) => {
                     apy::v1::Type::Literal(apy::v1::TypeLiteral::None)
                 }
-                _ => return None,
+                apy::v1::PythonValue::Other(apy::v1::OtherPythonValue::Ellipsis) => {
+                    apy::v1::Type::Reference(convert_type_any())
+                }
+                _ => unreachable!("Only None and Ellipsis should be converted to Python values"),
             },
             ConvertedTypeLiteral::Function(function) => {
                 return Some(apy::v1::Attribute::Function(
