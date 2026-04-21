@@ -825,14 +825,29 @@ pub fn get_attribute<'a>(
         return Err(GetAttributeError::LocationNotFound(location.clone()));
     };
 
-    let Some(attribute) = abstract_environment.attributes.get(name) else {
-        return Err(GetAttributeError::AttributeNotFound {
-            location: location.clone(),
-            identifier: name.clone(),
-        });
+    if let Some(attribute) = abstract_environment.attributes.get(name) {
+        return Ok(attribute);
     };
 
-    Ok(attribute)
+    let builtins_namespace_location =
+        NamespaceLocation::new(Arc::new(QualifiedName::parse(BUILTINS_MODULE)));
+
+    if location.namespace_location != builtins_namespace_location {
+        let Some(builtins_abstract_environment) =
+            context.get_abstract_environment(&Location::at_exit(builtins_namespace_location))
+        else {
+            return Err(GetAttributeError::LocationNotFound(location.clone()));
+        };
+
+        if let Some(builtins_attribute) = builtins_abstract_environment.attributes.get(name) {
+            return Ok(builtins_attribute);
+        };
+    }
+
+    Err(GetAttributeError::AttributeNotFound {
+        location: location.clone(),
+        identifier: name.clone(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

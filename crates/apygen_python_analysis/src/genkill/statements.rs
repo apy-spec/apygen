@@ -250,8 +250,14 @@ pub fn gen_import_from(
         let visibility = gen_visibility(cfgs, &location, &name);
         let identifier = Identifier::try_parse(alias.name.id.as_ref())?;
 
-        match get_attribute(context, &Location::from(module.clone()), &identifier) {
-            Ok(_) => {
+        let namespace_location = NamespaceLocation::from(module.clone());
+
+        match get_attribute(
+            context,
+            &Location::at_exit(namespace_location.clone()),
+            &identifier,
+        ) {
+            Ok(_) if namespace_location != location.namespace_location => {
                 target_abstract_environment.attributes.insert(
                     Arc::new(name),
                     Arc::new(Attribute::Imported(ImportedAttribute {
@@ -262,7 +268,7 @@ pub fn gen_import_from(
                     })),
                 );
             }
-            Err(_) => {
+            _ => {
                 let submodule = {
                     let mut identifiers = module.identifiers.clone();
                     identifiers.push(identifier);

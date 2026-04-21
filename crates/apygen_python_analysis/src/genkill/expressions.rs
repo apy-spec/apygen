@@ -2,7 +2,7 @@ pub mod calls;
 
 use crate::abstract_environment::{
     AbstractEnvironment, Exception, LiteralList, LiteralTuple, Type, TypeLiteral, TypeReference,
-    TypeUnion,
+    TypeUnion, get_attribute,
 };
 use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::{Location, NamespacesContext};
@@ -211,16 +211,14 @@ pub fn gen_name(
         return GenExprResult::unknown();
     };
 
-    if let Some(abstract_environment) = context.get_abstract_environment(environment_location) {
-        if let Some(attribute) = abstract_environment.attributes.get(&identifier) {
-            return if let Ok(local_attribute) = attribute.resolve(context) {
-                GenExprResult::new_total_pure_non_raising(
-                    local_attribute.attribute_type.as_ref().clone(),
-                )
-            } else {
-                GenExprResult::unknown()
-            };
-        }
+    if let Ok(attribute) = get_attribute(context, environment_location, &identifier) {
+        return if let Ok(local_attribute) = attribute.resolve(context) {
+            GenExprResult::new_total_pure_non_raising(
+                local_attribute.attribute_type.as_ref().clone(),
+            )
+        } else {
+            GenExprResult::unknown()
+        };
     }
 
     // TODO: Add non-local scopes
