@@ -50,11 +50,21 @@ impl AbsolutePathBuf {
         Self::try_from(std::env::current_dir()?)
     }
 
+    pub fn join<P: AsRef<Path>>(&self, path: P) -> Self {
+        self.try_join(path)
+            .expect("Joining should never fail if the path is valid and absolute")
+    }
+
     pub fn try_join<P: AsRef<Path>>(&self, path: P) -> Result<Self, Error> {
         Self::try_from(self.inner.join(path))
     }
 
-    pub(crate) fn try_with_extension<S: AsRef<OsStr>>(&self, extension: S) -> Result<Self, Error> {
+    pub fn with_extension<S: AsRef<OsStr>>(&self, extension: S) -> Self {
+        self.try_with_extension(extension)
+            .expect("Changing extension should never fail if the path is valid and absolute")
+    }
+
+    pub fn try_with_extension<S: AsRef<OsStr>>(&self, extension: S) -> Result<Self, Error> {
         Self::try_from(self.inner.with_extension(extension))
     }
 }

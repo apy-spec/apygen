@@ -14,14 +14,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let python_paths = vec![];
     let working_dir = AbsolutePathBuf::try_from(PathBuf::from("."))?;
 
-    let finder = PathFinder::new(Arc::new(LocalFilesystem), python_paths);
+    let finder = PathFinder::new(
+        Arc::new(LocalFilesystem),
+        python_paths,
+        Vec::new(),
+        Some(working_dir),
+        None,
+    );
 
-    let specs: HashMap<Identifier, _> = finder.get_all_specs();
+    let specs: HashMap<Identifier, _> = finder.get_specs();
 
     let target_modules: HashSet<_> = specs
         .par_iter()
         .filter_map(|(identifier, finder_spec)| {
-            if finder_spec.module_spec.is_inside(&working_dir) {
+            if finder
+                .working_directory()
+                .is_some_and(|working_directory| finder_spec.spec.is_inside(working_directory))
+            {
                 Some(identifier.clone())
             } else {
                 None

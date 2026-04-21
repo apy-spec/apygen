@@ -8,7 +8,7 @@ use apygen_analysis::namespace::{
     Location, NamespaceLocation, Namespaces, NamespacesContext, NamespacesProxy,
 };
 use apygen_finder::filesystem::{Error as FilesystemError, Filesystem};
-use apygen_finder::pathfinder::{FileLoader, FinderSpec, ModuleSpec};
+use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -151,6 +151,13 @@ pub fn worklist(
             })
             .collect();
     }
+
+    context
+        .abstract_environment_entry(Location {
+            namespace_location: namespace_location.clone(),
+            program_point: ProgramPoint::Exit,
+        })
+        .or_default();
 }
 
 #[derive(Debug, Error)]
@@ -163,28 +170,31 @@ pub enum ImportModuleError {
     NonSourceFileLoader,
 }
 
-pub fn load_cfg(module_spec: &ModuleSpec<impl Filesystem>) -> Result<Cfg, ImportModuleError> {
-    match &module_spec.file_loader {
-        FileLoader::SourceFileLoader { filesystem, path } => {
-            let source = filesystem.read_file(&path)?;
+pub fn load_cfg(spec: &Spec<impl Filesystem>) -> Result<Cfg, ImportModuleError> {
+    match spec {
+        Spec::Module(ModuleSpec {
+            kind: ModuleKind::Source,
+            file_loader,
+            ..
+        })
+        | Spec::Stub(StubSpec { file_loader, .. }) => {
+            let source = file_loader.read_file()?;
             Ok(Cfg::parse(&source).ok_or_else(|| ImportModuleError::CfgParseError(source))?)
         }
-        FileLoader::NamespaceLoader | FileLoader::ExtensionFileLoader { .. } => {
-            Err(ImportModuleError::NonSourceFileLoader)
-        }
+        _ => Err(ImportModuleError::NonSourceFileLoader),
     }
 }
 
 pub fn convert_specs<F: Filesystem>(
     specs: HashMap<Identifier, FinderSpec<Identifier, F>>,
-) -> HashMap<Identifier, HashMap<QualifiedName, ModuleSpec<F>>> {
+) -> HashMap<Identifier, HashMap<QualifiedName, Spec<F>>> {
     pub fn convert_package_specs<F: Filesystem>(
         package_identifiers: OneOrMany<Identifier>,
         finder_spec: FinderSpec<Identifier, F>,
-    ) -> HashMap<QualifiedName, ModuleSpec<F>> {
+    ) -> HashMap<QualifiedName, Spec<F>> {
         rayon::iter::once((
             QualifiedName::new(package_identifiers.clone()),
-            finder_spec.module_spec,
+            finder_spec.spec,
         ))
         .chain(finder_spec.submodules.into_par_iter().flat_map(
             |(submodule_identifier, submodule_spec)| {
