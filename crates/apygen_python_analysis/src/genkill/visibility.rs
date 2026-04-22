@@ -1,7 +1,7 @@
 use crate::abstract_environment::{QualifiedName, Visibility};
 use apygen_analysis::cfg::nodes::Stmt;
-use apygen_analysis::cfg::{Cfg, ProgramPoint, ProgramPointData};
-use apygen_analysis::namespace::Location;
+use apygen_analysis::cfg::{Cfg, NodeData, StatementData};
+use apygen_analysis::namespace::NamespaceLocation;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -41,24 +41,33 @@ pub fn visibility_from_class_name(name: &str) -> Visibility {
 
 pub fn gen_visibility(
     cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
-    location: &Location<QualifiedName>,
+    namespace_location: &NamespaceLocation<QualifiedName>,
     name: &str,
 ) -> Visibility {
     match visibility_from_class_name(name) {
         Visibility::Subclass => {
-            let Some(cfg) = cfgs.get(&location.namespace_location.module) else {
+            let Some(module_cfg) = cfgs.get(&namespace_location.module) else {
+                return Visibility::Internal;
+            };
+            let Some(parent_location) = namespace_location.parent_location() else {
+                return Visibility::Internal;
+            };
+            let Some(cfg) = parent_location.resolve(module_cfg) else {
                 return Visibility::Internal;
             };
 
-            let Some(program_point_id) = location.namespace_location.program_point_id else {
-                return Visibility::Internal;
-            };
-
-            let data = cfg.node_data(&ProgramPoint::Point(program_point_id));
+            let data = cfg
+                .node_data(
+                    &namespace_location
+                        .program_points
+                        .last()
+                        .expect("Program point not found"),
+                )
+                .expect("resolution failed");
 
             if matches!(
                 data,
-                Some(ProgramPointData {
+                NodeData::Statement(StatementData {
                     statement: Stmt::ClassDef(_),
                     ..
                 })

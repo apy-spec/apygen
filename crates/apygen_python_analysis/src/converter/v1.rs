@@ -107,8 +107,9 @@ pub fn convert_literal_function(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     literal_function: &LiteralFunction,
 ) -> Option<apy::v1::Function> {
-    let abstract_environment = context
-        .get_abstract_environment(&literal_function.value.location.as_sub_location_exit())?;
+    let abstract_environment = context.get_abstract_environment(&Location::at_exit(
+        literal_function.value.location.as_sub_location(),
+    ))?;
 
     let return_type = match abstract_environment.returned_value {
         Some(ref returned_value) => convert_type(context, returned_value)?,
@@ -141,8 +142,9 @@ pub fn convert_literal_class(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     literal_class: &LiteralClass,
 ) -> Option<apy::v1::Class> {
-    let abstract_environment =
-        context.get_abstract_environment(&literal_class.value.location.as_sub_location_exit())?;
+    let abstract_environment = context.get_abstract_environment(&Location::at_exit(
+        literal_class.value.location.as_sub_location(),
+    ))?;
 
     let return_type = match abstract_environment.returned_value {
         Some(ref returned_value) => convert_type(context, returned_value)?,

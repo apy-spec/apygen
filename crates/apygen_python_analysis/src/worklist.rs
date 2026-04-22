@@ -2,7 +2,7 @@ use crate::abstract_environment::AbstractEnvironment;
 use crate::genkill::statements::gen_statement;
 use apy::OneOrMany;
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::cfg::{Cfg, EdgeData, ProgramPoint};
+use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint};
 pub use apygen_analysis::lattice::Lattice;
 use apygen_analysis::namespace::{
     Location, NamespaceLocation, Namespaces, NamespacesContext, NamespacesProxy,
@@ -68,15 +68,7 @@ pub fn worklist(
 
     let cfg = cfgs
         .get(&namespace_location.module)
-        .map(|cfg| {
-            Some({
-                if let Some(program_point_id) = namespace_location.program_point_id {
-                    cfg.sub_cfg(program_point_id)?
-                } else {
-                    cfg
-                }
-            })
-        })
+        .map(|module_cfg| namespace_location.resolve(module_cfg))
         .flatten()
         .expect("Should exist since worklist is only called on modules in the project data");
 
@@ -90,7 +82,7 @@ pub fn worklist(
                     program_point,
                 };
 
-                let res_abstract_environments = if let Some(node_data) =
+                let res_abstract_environments = if let Some(NodeData::Statement(statement_data)) =
                     cfg.node_data(&program_point)
                 {
                     gen_statement(
@@ -99,7 +91,7 @@ pub fn worklist(
                         cfgs,
                         import_tx,
                         location,
-                        node_data.statement(),
+                        statement_data.statement(),
                     )
                     .unwrap()
                 } else {
@@ -107,7 +99,7 @@ pub fn worklist(
                 };
 
                 let mut worklist: HashSet<ProgramPoint> = HashSet::new();
-                for successor in cfg.successors(&program_point).cloned() {
+                for successor in cfg.successors(&program_point).unwrap().cloned() {
                     let successor_location = Location {
                         namespace_location: namespace_location.clone(),
                         program_point: successor,

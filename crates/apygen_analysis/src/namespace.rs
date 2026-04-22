@@ -1,4 +1,4 @@
-use crate::cfg::ProgramPoint;
+use crate::cfg::{Cfg, ProgramPoint};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fmt::{Debug, Display, Formatter};
@@ -8,38 +8,59 @@ use std::sync::Arc;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NamespaceLocation<M> {
     pub module: Arc<M>,
-    pub program_point_id: Option<usize>,
+    pub program_points: Arc<Vec<ProgramPoint>>,
 }
 
 impl<M> NamespaceLocation<M> {
     pub fn new(module: Arc<M>) -> Self {
         NamespaceLocation {
             module,
-            program_point_id: None,
+            program_points: Arc::new(Vec::new()),
         }
     }
 
     pub fn root_location(&self) -> Self {
-        NamespaceLocation {
-            module: self.module.clone(),
-            program_point_id: None,
+        Self::new(self.module.clone())
+    }
+
+    pub fn parent_location(&self) -> Option<Self> {
+        if self.program_points.is_empty() {
+            None
+        } else {
+            Some(NamespaceLocation {
+                module: self.module.clone(),
+                program_points: Arc::new(
+                    self.program_points[..self.program_points.len() - 1].to_vec(),
+                ),
+            })
         }
     }
 
-    pub fn sub_location(&self, id: usize) -> Self {
+    pub fn sub_location(&self, program_point: ProgramPoint) -> Self {
         NamespaceLocation {
             module: self.module.clone(),
-            program_point_id: Some(id),
+            program_points: Arc::new(
+                self.program_points
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(program_point))
+                    .collect(),
+            ),
         }
+    }
+
+    pub fn resolve<'a>(&self, cfg: &'a Cfg) -> Option<&'a Cfg> {
+        let mut cfg = cfg;
+        for program_point in self.program_points.as_ref() {
+            cfg = cfg.cfgs().get(program_point)?;
+        }
+        Some(cfg)
     }
 }
 
 impl<M> From<Arc<M>> for NamespaceLocation<M> {
     fn from(module: Arc<M>) -> Self {
-        NamespaceLocation {
-            module,
-            program_point_id: None,
-        }
+        NamespaceLocation::new(module)
     }
 }
 
@@ -51,11 +72,14 @@ impl<M> From<M> for NamespaceLocation<M> {
 
 impl<M: Display> Display for NamespaceLocation<M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if let Some(id) = self.program_point_id {
-            write!(f, "{}:{}", self.module, id)
-        } else {
-            write!(f, "{}", self.module)
+        write!(f, "{}:[", self.module)?;
+        for (i, program_point) in self.program_points.iter().enumerate() {
+            if i > 0 {
+                write!(f, " => ")?;
+            }
+            write!(f, "{}", program_point)?;
         }
+        write!(f, "]")
     }
 }
 
@@ -73,13 +97,8 @@ impl<M> Location<M> {
         }
     }
 
-    pub fn as_sub_location_exit(&self) -> Self {
-        Location {
-            namespace_location: self
-                .namespace_location
-                .sub_location(self.program_point.id()),
-            program_point: ProgramPoint::Exit,
-        }
+    pub fn as_sub_location(&self) -> NamespaceLocation<M> {
+        self.namespace_location.sub_location(self.program_point)
     }
 }
 

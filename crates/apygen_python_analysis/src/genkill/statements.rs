@@ -33,7 +33,7 @@ pub fn gen_assign(
         let target = AssignmentTarget::try_from(target);
 
         if let Ok(AssignmentTarget::Name(name)) = target {
-            let visibility = gen_visibility(cfgs, &location, &name);
+            let visibility = gen_visibility(cfgs, &location.namespace_location, &name);
 
             target_abstract_environment.attributes.insert(
                 Arc::new(name),
@@ -104,7 +104,7 @@ pub fn gen_ann_assign(
     let target = AssignmentTarget::try_from(stmt_ann_assign.target.as_ref());
 
     if let Ok(AssignmentTarget::Name(name)) = target {
-        let visibility = gen_visibility(cfgs, &location, &name);
+        let visibility = gen_visibility(cfgs, &location.namespace_location, &name);
 
         target_abstract_environment.attributes.insert(
             Arc::new(name),
@@ -160,7 +160,7 @@ pub fn gen_import(
             .next()
             .expect("OneOrMany always has at least one element");
 
-        let visibility = gen_visibility(cfgs, &location.clone(), &root_package);
+        let visibility = gen_visibility(cfgs, &location.namespace_location, &root_package);
 
         let mut submodules = imbl::OrdSet::new();
         if let Ok(submodule_identifiers) = OneOrMany::try_from_iter(identifier_iter) {
@@ -247,7 +247,7 @@ pub fn gen_import_from(
             continue;
         };
 
-        let visibility = gen_visibility(cfgs, &location, &name);
+        let visibility = gen_visibility(cfgs, &location.namespace_location, &name);
         let identifier = Identifier::try_parse(alias.name.id.as_ref())?;
 
         let namespace_location = NamespaceLocation::from(module.clone());
@@ -415,7 +415,7 @@ pub fn gen_function_def(
         )?);
     }
 
-    let visibility = gen_visibility(cfgs, &location, &name);
+    let visibility = gen_visibility(cfgs, &location.namespace_location, &name);
     target_abstract_environment.attributes.insert(
         Arc::new(name),
         Arc::new(Attribute::Local(LocalAttribute {
@@ -438,11 +438,7 @@ pub fn gen_function_def(
     dependents
         .entry(location.namespace_location.clone())
         .or_default()
-        .insert(
-            location
-                .namespace_location
-                .sub_location(location.program_point.id()),
-        );
+        .insert(location.as_sub_location());
 
     Ok(HashMap::from_iter([(
         EdgeData::Unconditional,
@@ -466,7 +462,7 @@ pub fn gen_class_def(
         .unwrap_or_default();
 
     let name = Identifier::try_parse(stmt_class_def.name.id.as_ref())?;
-    let visibility = gen_visibility(cfgs, &location, &name);
+    let visibility = gen_visibility(cfgs, &location.namespace_location, &name);
     target_abstract_environment.attributes.insert(
         Arc::new(name),
         Arc::new(Attribute::Local(LocalAttribute {
@@ -490,11 +486,7 @@ pub fn gen_class_def(
     dependents
         .entry(location.namespace_location.clone())
         .or_default()
-        .insert(
-            location
-                .namespace_location
-                .sub_location(location.program_point.id()),
-        );
+        .insert(location.as_sub_location());
 
     Ok(HashMap::from_iter([(
         EdgeData::Unconditional,
