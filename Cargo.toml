@@ -29,6 +29,7 @@ rayon = "^1.11.0"
 ordered-float = "^5.1.0"
 thiserror = "^2.0.18"
 serde_json = { version = "^1.0.149" }
+bitflags = { version = "^2.11.1" }
 
 [profile.release]
 debug = true

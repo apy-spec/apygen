@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 rstest = { workspace = true }
+bitflags = { workspace = true }
 ruff_python_parser = { workspace = true }
 ruff_source_file = { workspace = true }
 ruff_python_ast = { workspace = true }
