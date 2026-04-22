@@ -829,19 +829,19 @@ pub fn get_attribute<'a>(
         return Ok(attribute);
     };
 
+    if let Some(parent_namespace_location) = location.namespace_location.parent_location() {
+        return get_attribute(context, &Location::at_exit(parent_namespace_location), name);
+    }
+
     let builtins_namespace_location =
         NamespaceLocation::new(Arc::new(QualifiedName::parse(BUILTINS_MODULE)));
 
     if location.namespace_location != builtins_namespace_location {
-        let Some(builtins_abstract_environment) =
-            context.get_abstract_environment(&Location::at_exit(builtins_namespace_location))
-        else {
-            return Err(GetAttributeError::LocationNotFound(location.clone()));
-        };
-
-        if let Some(builtins_attribute) = builtins_abstract_environment.attributes.get(name) {
-            return Ok(builtins_attribute);
-        };
+        return get_attribute(
+            context,
+            &Location::at_exit(builtins_namespace_location),
+            name,
+        );
     }
 
     Err(GetAttributeError::AttributeNotFound {
