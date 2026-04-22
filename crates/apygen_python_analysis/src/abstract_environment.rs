@@ -829,25 +829,38 @@ pub fn get_attribute<'a>(
         return Ok(attribute);
     };
 
-    if let Some(parent_namespace_location) = location.namespace_location.parent_location() {
-        return get_attribute(context, &Location::at_exit(parent_namespace_location), name);
+    Err(GetAttributeError::AttributeNotFound {
+        location: location.clone(),
+        identifier: name.clone(),
+    })
+}
+
+pub fn resolve_local_attribute<'a>(
+    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    location: &Location<QualifiedName>,
+    name: &Identifier,
+) -> Result<&'a LocalAttribute, GetAttributeError> {
+    let err = match get_attribute(context, location, name) {
+        Ok(attribute) => return attribute.resolve(context),
+        Err(error) => error,
+    };
+
+    if let Some(parent_location) = location.namespace_location.parent_location() {
+        return resolve_local_attribute(context, &Location::at_exit(parent_location), name);
     }
 
     let builtins_namespace_location =
         NamespaceLocation::new(Arc::new(QualifiedName::parse(BUILTINS_MODULE)));
 
     if location.namespace_location != builtins_namespace_location {
-        return get_attribute(
+        return resolve_local_attribute(
             context,
             &Location::at_exit(builtins_namespace_location),
             name,
         );
     }
 
-    Err(GetAttributeError::AttributeNotFound {
-        location: location.clone(),
-        identifier: name.clone(),
-    })
+    Err(err)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -855,7 +868,7 @@ pub enum Diagnostic {
     InvalidAnnotation { location: Location<QualifiedName> },
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AbstractEnvironment {
     pub attributes: imbl::HashMap<Arc<Identifier>, Arc<Attribute>>,
     pub returned_value: Option<Type>,
