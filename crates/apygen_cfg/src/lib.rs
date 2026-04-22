@@ -280,15 +280,11 @@ impl<'text> CfgContext<'text> {
     }
 }
 
-fn map_with<I: IntoIterator<Item = T>, T, V: Clone>(
-    iter: I,
+fn map_with<T, V: Clone>(
+    iter: impl IntoIterator<Item = T>,
     value: V,
 ) -> impl Iterator<Item = (T, V)> {
     iter.into_iter().map(move |key| (key, value.clone()))
-}
-
-fn hashmap_from<K: Eq + Hash, V>(key: K, value: V) -> HashMap<K, V> {
-    HashMap::from_iter([(key, value)])
 }
 
 #[derive(Debug, Clone, Default)]
@@ -387,9 +383,9 @@ impl Cfg {
             .insert(edge_data);
     }
 
-    fn insert_node<I: IntoIterator<Item = (ProgramPoint, EdgeData)>>(
+    fn insert_node(
         &mut self,
-        previous_points: I,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
     ) -> &mut CfgNode {
         let mut predecessors = HashSet::new();
@@ -438,7 +434,7 @@ impl Cfg {
 
         let result_points = self.process_statements(
             context,
-            hashmap_from(ProgramPoint::Entry, EdgeData::Unconditional),
+            vec![(ProgramPoint::Entry, EdgeData::Unconditional)],
             statements,
         );
 
@@ -555,7 +551,7 @@ impl Cfg {
     fn process_statements(
         &mut self,
         context: &mut CfgContext,
-        mut previous_points: HashMap<ProgramPoint, EdgeData>,
+        mut previous_points: Vec<(ProgramPoint, EdgeData)>,
         statements: impl IntoIterator<Item = Stmt>,
     ) -> ResultPoints {
         let mut result_points = ResultPoints::default();
@@ -645,7 +641,7 @@ impl Cfg {
     fn process_generic_statement(
         &mut self,
         context: &mut CfgContext,
-        previous_points: HashMap<ProgramPoint, EdgeData>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
         stmt: Stmt,
     ) -> ResultPoints {
@@ -660,7 +656,7 @@ impl Cfg {
     fn process_function_statement(
         &mut self,
         context: &mut CfgContext,
-        previous_points: HashMap<ProgramPoint, EdgeData>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
         mut stmt_function_def: StmtFunctionDef,
     ) -> ResultPoints {
@@ -681,7 +677,7 @@ impl Cfg {
     fn process_class_statement(
         &mut self,
         context: &mut CfgContext,
-        previous_points: HashMap<ProgramPoint, EdgeData>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
         mut stmt_class_def: StmtClassDef,
     ) -> ResultPoints {
@@ -702,7 +698,7 @@ impl Cfg {
     fn process_return_statement(
         &mut self,
         context: &mut CfgContext,
-        previous_points: HashMap<ProgramPoint, EdgeData>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
         stmt_return: StmtReturn,
     ) -> ResultPoints {
@@ -717,7 +713,7 @@ impl Cfg {
     fn process_if_statement(
         &mut self,
         context: &mut CfgContext,
-        previous_points: HashMap<ProgramPoint, EdgeData>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
         mut stmt_if: StmtIf,
     ) -> ResultPoints {
@@ -725,7 +721,7 @@ impl Cfg {
 
         let mut result_points = self.process_statements(
             context,
-            hashmap_from(current_point, EdgeData::Conditional(true)),
+            vec![(current_point, EdgeData::Conditional(true))],
             stmt_if.body.drain(..),
         );
 
@@ -747,7 +743,7 @@ impl Cfg {
                 let elif_point = context.next_point();
                 result_points.merge_into(self.process_if_statement(
                     context,
-                    hashmap_from(current_point, EdgeData::Conditional(false)),
+                    vec![(current_point, EdgeData::Conditional(false))],
                     elif_point,
                     elif,
                 ));
@@ -758,7 +754,7 @@ impl Cfg {
                 );
                 result_points.merge_into(self.process_statements(
                     context,
-                    hashmap_from(current_point, EdgeData::Conditional(false)),
+                    vec![(current_point, EdgeData::Conditional(false))],
                     elif_else.body.drain(..),
                 ));
                 stmt_if.elif_else_clauses = vec![elif_else];
@@ -777,7 +773,7 @@ impl Cfg {
     fn process_loop_statement(
         &mut self,
         context: &mut CfgContext,
-        previous_points: HashMap<ProgramPoint, EdgeData>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
         mut stmt_loop: StmtLoop,
     ) -> ResultPoints {
@@ -785,7 +781,7 @@ impl Cfg {
 
         let mut result_points = self.process_statements(
             context,
-            hashmap_from(current_point, EdgeData::Conditional(true)),
+            vec![(current_point, EdgeData::Conditional(true))],
             stmt_loop.body_mut().drain(..),
         );
 
@@ -803,7 +799,7 @@ impl Cfg {
 
         result_points.merge_into(self.process_statements(
             context,
-            hashmap_from(current_point, EdgeData::Conditional(false)),
+            vec![(current_point, EdgeData::Conditional(false))],
             stmt_loop.orelse_mut().drain(..),
         ));
 
@@ -815,7 +811,7 @@ impl Cfg {
     fn process_with_statement(
         &mut self,
         context: &mut CfgContext,
-        previous_points: HashMap<ProgramPoint, EdgeData>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
         mut stmt_with: StmtWith,
     ) -> ResultPoints {
@@ -823,7 +819,7 @@ impl Cfg {
 
         let mut result_points = self.process_statements(
             context,
-            hashmap_from(current_point, EdgeData::Unconditional),
+            vec![(current_point, EdgeData::Unconditional)],
             stmt_with.body.drain(..),
         );
 
@@ -848,7 +844,7 @@ impl Cfg {
     fn process_match_statement(
         &mut self,
         context: &mut CfgContext,
-        previous_points: HashMap<ProgramPoint, EdgeData>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
         mut stmt_match: StmtMatch,
     ) -> ResultPoints {
@@ -859,7 +855,7 @@ impl Cfg {
         for (index, case) in stmt_match.cases.iter_mut().enumerate() {
             result_points.merge_into(self.process_statements(
                 context,
-                hashmap_from(current_point, EdgeData::Match(index)),
+                vec![(current_point, EdgeData::Match(index))],
                 case.body.drain(..),
             ));
         }
@@ -872,7 +868,7 @@ impl Cfg {
     fn process_raise_statement(
         &mut self,
         context: &mut CfgContext,
-        previous_points: HashMap<ProgramPoint, EdgeData>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
         stmt_raise: StmtRaise,
     ) -> ResultPoints {
@@ -885,7 +881,7 @@ impl Cfg {
     fn process_try_statement(
         &mut self,
         context: &mut CfgContext,
-        previous_points: HashMap<ProgramPoint, EdgeData>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
         mut stmt_try: StmtTry,
     ) -> ResultPoints {
@@ -893,17 +889,11 @@ impl Cfg {
 
         let mut result_points = self.process_statements(
             context,
-            hashmap_from(current_point, EdgeData::Unconditional),
+            vec![(current_point, EdgeData::Unconditional)],
             stmt_try.body.drain(..),
         );
-        let body_previous_points = result_points
-            .previous_points
-            .drain()
-            .collect::<HashMap<_, _>>();
-        let body_exception_points = result_points
-            .exception_points
-            .drain()
-            .collect::<HashSet<_>>();
+        let body_previous_points = result_points.previous_points.drain().collect();
+        let body_exception_points = result_points.exception_points.drain().collect::<Vec<_>>();
         result_points.merge_into(self.process_statements(
             context,
             body_previous_points,
@@ -916,7 +906,7 @@ impl Cfg {
                 .map(|exception_point| {
                     (*exception_point, EdgeData::Exception(current_point, index))
                 })
-                .collect::<HashMap<_, _>>();
+                .collect();
             result_points.merge_into(self.process_statements(
                 context,
                 handler_previous_points,
@@ -950,7 +940,7 @@ impl Cfg {
     fn process_break_statement(
         &mut self,
         context: &mut CfgContext,
-        previous_points: HashMap<ProgramPoint, EdgeData>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
         stmt_break: StmtBreak,
     ) -> ResultPoints {
@@ -963,7 +953,7 @@ impl Cfg {
     fn process_continue_statement(
         &mut self,
         context: &mut CfgContext,
-        previous_points: HashMap<ProgramPoint, EdgeData>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
         current_point: ProgramPoint,
         stmt_continue: StmtContinue,
     ) -> ResultPoints {
