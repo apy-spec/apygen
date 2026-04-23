@@ -54,7 +54,7 @@ impl StatementData {
 #[derive(Debug, Clone, Default)]
 pub enum NodeData {
     Statement(StatementData),
-    WithEnd(ProgramPoint),
+    StatementEnd(ProgramPoint),
     #[default]
     None,
 }
@@ -74,6 +74,10 @@ impl CfgNode {
             line_number: context.get_line_number(&statement_range),
             comments: context.comments_in_range(statement_range),
         });
+    }
+
+    fn set_statement_end(&mut self, statement_end: ProgramPoint) {
+        self.data = NodeData::StatementEnd(statement_end);
     }
 }
 
@@ -829,7 +833,8 @@ impl Cfg {
 
         let end_point = context.next_point();
 
-        self.insert_node(previous_points, end_point);
+        self.insert_node(previous_points, end_point)
+            .set_statement_end(current_point);
 
         self.set_statement(context, current_point, Stmt::With(stmt_with));
 
@@ -926,7 +931,8 @@ impl Cfg {
             stmt_try.finalbody.drain(..),
         );
 
-        self.insert_node(finally_result_points.previous_points.drain(), end_point);
+        self.insert_node(finally_result_points.previous_points.drain(), end_point)
+            .set_statement_end(current_point);
 
         self.set_statement(context, current_point, Stmt::Try(stmt_try));
 
@@ -1004,8 +1010,8 @@ impl Cfg {
                     };
                     format!("    \"{}\" [label=\"{}\"];\n", point, label)
                 }
-                NodeData::WithEnd(end_point) => {
-                    format!("    \"{}\" [label=\"with_end({})\"];\n", point, end_point)
+                NodeData::StatementEnd(end_point) => {
+                    format!("    \"{}\" [label=\"end({})\"];\n", point, end_point)
                 }
                 NodeData::None => format!("    \"{}\";\n", point),
             };
@@ -2398,7 +2404,7 @@ mod tests {
             "Entry";
             "Point(0)" [label="with"];
             "Point(1)" [label="assign"];
-            "Point(2)";
+            "Point(2)" [label="end(Point(0))"];
             "Exit";
             "Entry" -> "Point(0)";
             "Point(0)" -> "Point(1)";
@@ -2437,7 +2443,7 @@ mod tests {
             "Point(1)" [label="with"];
             "Point(2)" [label="if"];
             "Point(3)" [label="break"];
-            "Point(4)";
+            "Point(4)" [label="end(Point(1))"];
             "Point(5)" [label="assign"];
             "Exit";
             "Entry" -> "Point(0)";
@@ -2486,7 +2492,7 @@ mod tests {
             "Point(1)" [label="with"];
             "Point(2)" [label="if"];
             "Point(3)" [label="continue"];
-            "Point(4)";
+            "Point(4)" [label="end(Point(1))"];
             "Point(5)" [label="assign"];
             "Exit";
             "Entry" -> "Point(0)";
@@ -2531,7 +2537,7 @@ mod tests {
             "Point(0)" [label="with"];
             "Point(1)" [label="if"];
             "Point(2)" [label="return"];
-            "Point(3)";
+            "Point(3)" [label="end(Point(0))"];
             "Point(4)" [label="assign"];
             "Exit";
             "Entry" -> "Point(0)";
@@ -2573,7 +2579,7 @@ mod tests {
             "Point(0)" [label="with"];
             "Point(1)" [label="if"];
             "Point(2)" [label="raise"];
-            "Point(3)";
+            "Point(3)" [label="end(Point(0))"];
             "Point(4)" [label="assign"];
             "Exit";
             "Entry" -> "Point(0)";
@@ -2711,7 +2717,7 @@ mod tests {
             "Point(0)" [label="try"];
             "Point(1)" [label="assign"];
             "Point(2)" [label="expr"];
-            "Point(3)";
+            "Point(3)" [label="end(Point(0))"];
             "Exit";
             "Entry" -> "Point(0)";
             "Point(0)" -> "Point(1)";
@@ -2750,7 +2756,7 @@ mod tests {
             "Point(1)" [label="assign"];
             "Point(2)" [label="aug_assign"];
             "Point(3)" [label="expr"];
-            "Point(4)";
+            "Point(4)" [label="end(Point(0))"];
             "Exit";
             "Entry" -> "Point(0)";
             "Point(0)" -> "Point(1)";
@@ -2791,7 +2797,7 @@ mod tests {
             "Point(1)" [label="assign"];
             "Point(2)" [label="aug_assign"];
             "Point(3)" [label="expr"];
-            "Point(4)";
+            "Point(4)" [label="end(Point(0))"];
             "Exit";
             "Entry" -> "Point(0)";
             "Point(0)" -> "Point(1)";
@@ -2830,7 +2836,7 @@ mod tests {
             "Point(0)" [label="try"];
             "Point(1)" [label="assign"];
             "Point(2)" [label="expr"];
-            "Point(3)";
+            "Point(3)" [label="end(Point(0))"];
             "Point(4)" [label="aug_assign"];
             "Exit";
             "Entry" -> "Point(0)";
@@ -2940,7 +2946,7 @@ mod tests {
             "Point(26)" [label="if"];
             "Point(27)" [label="raise"];
             "Point(28)" [label="assign"];
-            "Point(29)";
+            "Point(29)" [label="end(Point(1))"];
             "Point(30)" [label="if"];
             "Point(31)" [label="return"];
             "Point(32)" [label="if"];
