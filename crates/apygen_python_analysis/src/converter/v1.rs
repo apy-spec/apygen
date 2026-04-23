@@ -111,10 +111,7 @@ pub fn convert_literal_function(
         literal_function.value.location.as_sub_location(),
     ))?;
 
-    let return_type = match abstract_environment.returned_value {
-        Some(ref returned_value) => convert_type(context, returned_value)?,
-        None => apy::v1::Type::Literal(apy::v1::TypeLiteral::None),
-    };
+    let return_type = convert_type(context, &abstract_environment.returned_value)?;
 
     let mut signature = apy::v1::Signature::new(return_type);
 
@@ -146,10 +143,7 @@ pub fn convert_literal_class(
         literal_class.value.location.as_sub_location(),
     ))?;
 
-    let return_type = match abstract_environment.returned_value {
-        Some(ref returned_value) => convert_type(context, returned_value)?,
-        None => apy::v1::Type::Literal(apy::v1::TypeLiteral::None),
-    };
+    let return_type = convert_type(context, &abstract_environment.returned_value)?;
 
     assert!(matches!(return_type, apy::v1::Type::Literal(_)));
 

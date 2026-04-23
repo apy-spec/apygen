@@ -67,9 +67,9 @@ pub fn gen_return(
 
     if let Some(value) = &stmt_return.value {
         let gen_result = gen_expr(context, &location, value);
-        target_abstract_environment.returned_value = Some(gen_result.value);
+        target_abstract_environment.returned_value = Arc::new(gen_result.value);
     } else {
-        target_abstract_environment.returned_value = None;
+        target_abstract_environment.returned_value = Arc::new(Type::new_literal(TypeLiteral::None));
     }
 
     Ok(HashMap::from_iter([(

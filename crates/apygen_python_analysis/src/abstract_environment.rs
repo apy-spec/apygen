@@ -868,10 +868,10 @@ pub enum Diagnostic {
     InvalidAnnotation { location: Location<QualifiedName> },
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AbstractEnvironment {
     pub attributes: imbl::HashMap<Arc<Identifier>, Arc<Attribute>>,
-    pub returned_value: Option<Type>,
+    pub returned_value: Arc<Type>,
     pub raised_exceptions: imbl::OrdSet<Exception>,
     pub is_partial: bool,
     pub is_pure: bool,
@@ -881,6 +881,19 @@ pub struct AbstractEnvironment {
 impl AbstractEnvironment {
     pub fn new() -> AbstractEnvironment {
         Self::default()
+    }
+}
+
+impl Default for AbstractEnvironment {
+    fn default() -> Self {
+        AbstractEnvironment {
+            attributes: imbl::HashMap::new(),
+            returned_value: Arc::new(Type::new_literal(TypeLiteral::None)),
+            raised_exceptions: imbl::OrdSet::new(),
+            is_partial: false,
+            is_pure: false,
+            diagnostics: imbl::HashSet::new(),
+        }
     }
 }
 
@@ -972,6 +985,20 @@ impl Lattice<QualifiedName> for AbstractEnvironment {
                 }
             }
         }
+
+        let mut return_type_union = TypeUnion::new();
+        return_type_union.add_type(new_abstract_environment.returned_value.clone());
+        return_type_union.add_type(other.returned_value.clone());
+        new_abstract_environment.returned_value = return_type_union.simplify();
+
+        new_abstract_environment
+            .raised_exceptions
+            .extend(other.raised_exceptions.clone());
+        new_abstract_environment.is_partial |= other.is_partial;
+        new_abstract_environment.is_pure &= other.is_pure;
+        new_abstract_environment
+            .diagnostics
+            .extend(other.diagnostics.clone());
 
         Ok(new_abstract_environment)
     }
