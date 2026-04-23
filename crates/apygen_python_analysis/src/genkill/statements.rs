@@ -1,7 +1,7 @@
 use crate::abstract_environment::{
     AbstractEnvironment, Attribute, ClassType, Diagnostic, FunctionType, ImportedAttribute,
     ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule, LocalAttribute,
-    Parameter, ParameterKind, Type, TypeLiteral, get_attribute, resolve_local_attribute,
+    Parameter, ParameterKind, Type, TypeLiteral, get_attribute,
 };
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{Cfg, EdgeData, nodes};
