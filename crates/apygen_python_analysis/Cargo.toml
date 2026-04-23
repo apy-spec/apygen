@@ -13,3 +13,4 @@ rayon = { workspace = true }
 ordered-float = { workspace = true }
 thiserror = { workspace = true }
 imbl = { workspace = true }
+log = { workspace = true }

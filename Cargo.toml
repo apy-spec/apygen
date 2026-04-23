@@ -30,6 +30,7 @@ ordered-float = "^5.1.0"
 thiserror = "^2.0.18"
 serde_json = { version = "^1.0.149" }
 bitflags = { version = "^2.11.1" }
+log = { version = "^0.4.29" }
 
 [profile.release]
 debug = true

@@ -9,6 +9,7 @@ use apygen_analysis::namespace::{
 };
 use apygen_finder::filesystem::{Error as FilesystemError, Filesystem};
 use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
+use log::{debug, trace};
 use rayon::prelude::*;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -315,6 +316,8 @@ pub fn cfg_worklist<F: Filesystem>(
         .map(|module| NamespaceLocation::from(module.clone()))
         .collect();
 
+    debug!("Worklist size: {}", cfg_worklist.len());
+
     let module_specs_ref = &module_specs;
     while !cfg_worklist.is_empty() {
         let (import_tx, import_rx) = channel::<NamespaceLocation<QualifiedName>>();
@@ -396,12 +399,20 @@ pub fn cfg_worklist<F: Filesystem>(
                     },
                     merge);
 
+            trace!("Processed worklists in workers");
+
             worklist_results
         });
 
+        trace!("Collected worklist results");
+
         cfgs.extend(cfg_rx);
 
+        trace!("Merged new cfgs");
+
         cfg_worklist = merge_with(&mut namespaces, &mut dependents, &cfgs, override_result);
+
+        debug!("Worklist size: {}", cfg_worklist.len());
     }
 
     Some((namespaces, cfgs))
