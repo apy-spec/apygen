@@ -285,7 +285,7 @@ pub fn convert_specs<F: Filesystem>(
 
 pub fn cfg_worklist<F: Filesystem>(
     specs: HashMap<Identifier, FinderSpec<Identifier, F>>,
-    target_modules: HashSet<Identifier>,
+    target_modules: &HashSet<Identifier>,
 ) -> Option<(
     Namespaces<QualifiedName, AbstractEnvironment>,
     HashMap<Arc<QualifiedName>, Cfg>,
