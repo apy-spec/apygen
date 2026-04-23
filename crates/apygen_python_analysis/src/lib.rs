@@ -49,7 +49,7 @@ pub fn analyse_workdir(
     debug!("Modules: {}", cfgs.len());
     debug!("Locations: {}", namespaces.locations.len());
 
-    let apy_v1 = convert_apy_v1(&namespaces, &cfgs);
+    let apy_v1 = convert_apy_v1(&namespaces, cfgs.keys().par_bridge());
 
     apy::Apy::V1(apy_v1)
 }

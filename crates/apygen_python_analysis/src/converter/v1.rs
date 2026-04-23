@@ -454,15 +454,14 @@ pub fn convert_module(
     )
 }
 
-pub fn convert_apy_v1(
+pub fn convert_apy_v1<'a>(
     context: &(impl NamespacesContext<QualifiedName, AbstractEnvironment> + Sync),
-    cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
+    target_modules: impl IntoParallelIterator<Item = &'a Arc<QualifiedName>>,
 ) -> apy::v1::ApyV1 {
     apy::v1::ApyV1::new().with_modules(
-        cfgs.into_par_iter()
-            .filter_map(|(module, _)| {
-                Some((module.as_ref().clone(), convert_module(context, &module)?))
-            })
+        target_modules
+            .into_par_iter()
+            .filter_map(|module| Some((module.as_ref().clone(), convert_module(context, &module)?)))
             .collect(),
     )
 }
