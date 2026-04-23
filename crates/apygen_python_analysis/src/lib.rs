@@ -44,7 +44,7 @@ pub fn analyse_workdir(
         })
         .collect();
 
-    let (namespaces, cfgs) = cfg_worklist(specs, target_modules).unwrap();
+    let (namespaces, cfgs) = cfg_worklist(specs, &target_modules).unwrap();
 
     debug!("Modules: {}", cfgs.len());
     debug!("Locations: {}", namespaces.locations.len());
