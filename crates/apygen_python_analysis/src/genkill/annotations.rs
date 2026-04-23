@@ -1,6 +1,7 @@
 use crate::abstract_environment::{
     AbstractEnvironment, Attribute, BUILTINS_MODULE, GetAttributeError, LiteralBigInteger,
-    LiteralInteger, LocalAttribute, QualifiedName, Type, TypeLiteral, TypeReference, TypeUnion,
+    LiteralInteger, LocalAttribute, QualifiedName, TYPING_MODULE, Type, TypeLiteral, TypeReference,
+    TypeUnion,
 };
 use crate::analysis::cfg::nodes::{Expr, ExprSubscript, ExprUnaryOp, UnaryOp};
 use crate::analysis::namespace::{Location, NamespacesContext};
@@ -155,9 +156,18 @@ pub fn gen_expr_qualified_name(
         }
     };
 
-    Ok(Type::Reference(
-        TypeReference::new(module, name).with_origin(origin),
-    ))
+    if module.join() != TYPING_MODULE || name.identifiers.len() != 1 {
+        return Ok(Type::Reference(
+            TypeReference::new(module, name).with_origin(origin),
+        ));
+    }
+
+    match name.identifiers.first().as_ref() {
+        "Any" => Ok(Type::Any),
+        _ => Ok(Type::Reference(
+            TypeReference::new(module, name).with_origin(origin),
+        )),
+    }
 }
 
 pub fn gen_expr_subscript(
