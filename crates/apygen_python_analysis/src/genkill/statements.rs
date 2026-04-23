@@ -1,7 +1,7 @@
 use crate::abstract_environment::{
     AbstractEnvironment, Attribute, ClassType, Diagnostic, FunctionType, ImportedAttribute,
     ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule, LocalAttribute,
-    Parameter, ParameterKind, Type, TypeLiteral, get_attribute,
+    Parameter, ParameterKind, Type, TypeLiteral, get_attribute, resolve_local_attribute,
 };
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{Cfg, EdgeData, nodes};
@@ -238,7 +238,7 @@ pub fn gen_import_from(
         }
     }
 
-    let module = Arc::new(qualified_name);
+    let namespace_location = NamespaceLocation::from(Arc::new(qualified_name));
 
     for alias in &stmt_import_from.names {
         let Ok(name) =
@@ -250,8 +250,6 @@ pub fn gen_import_from(
         let visibility = gen_visibility(cfgs, &location.namespace_location, &name);
         let identifier = Identifier::try_parse(alias.name.id.as_ref())?;
 
-        let namespace_location = NamespaceLocation::from(module.clone());
-
         match get_attribute(
             context,
             &Location::at_exit(namespace_location.clone()),
@@ -261,7 +259,7 @@ pub fn gen_import_from(
                 target_abstract_environment.attributes.insert(
                     Arc::new(name),
                     Arc::new(Attribute::Imported(ImportedAttribute {
-                        module: module.clone(),
+                        module: namespace_location.module.clone(),
                         visibility,
                         name: identifier,
                         is_deprecated: false,
@@ -270,7 +268,7 @@ pub fn gen_import_from(
             }
             _ => {
                 let submodule = {
-                    let mut identifiers = module.identifiers.clone();
+                    let mut identifiers = namespace_location.module.identifiers.clone();
                     identifiers.push(identifier);
                     Arc::new(QualifiedName { identifiers })
                 };
@@ -300,12 +298,11 @@ pub fn gen_import_from(
         };
     }
 
-    let module_location = NamespaceLocation::from(module);
     import_tx
-        .send(module_location.clone())
+        .send(namespace_location.clone())
         .expect("Should send module location to import channel");
     dependents
-        .entry(module_location)
+        .entry(namespace_location)
         .or_default()
         .insert(location.namespace_location);
 
