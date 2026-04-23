@@ -1,4 +1,4 @@
-use crate::abstract_environment::AbstractEnvironment;
+use crate::abstract_environment::{AbstractEnvironment, BUILTINS_MODULE};
 use crate::genkill::statements::gen_statement;
 use apy::OneOrMany;
 use apy::v1::{Identifier, QualifiedName};
@@ -309,6 +309,16 @@ pub fn cfg_worklist<F: Filesystem>(
                     )
                 })
         })
+        .chain(
+            module_specs[&Identifier::parse(BUILTINS_MODULE)]
+                .par_iter()
+                .map(|(name, module_spec)| {
+                    (
+                        Arc::new(name.clone()),
+                        load_cfg(module_spec).unwrap_or(Cfg::empty()),
+                    )
+                }),
+        )
         .collect();
 
     let mut cfg_worklist: HashSet<_> = cfgs
