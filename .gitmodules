@@ -1,3 +1,3 @@
 [submodule "crates/apygen/vendor/typeshed"]
-	path = crates/apygen/vendor/typeshed
+	path = vendor/typeshed
 	url = https://github.com/apy-spec/typeshed-vendored.git
