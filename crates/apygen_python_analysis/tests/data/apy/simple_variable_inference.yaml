@@ -1,0 +1,84 @@
+apy: 1.0.0
+modules:
+  simple_variable_inference:
+    summary: ""
+    description: ""
+    raises: []
+    partial: false
+    visibility: PUBLIC
+    attributes:
+      a:
+        kind: VARIABLE
+        type:
+          id: int
+          module: builtins
+          history_index: 0
+          arguments: []
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      b:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                bool: false
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      x:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "5"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      "y":
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "5"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      z:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "7"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+    typing_attributes:
+      {}

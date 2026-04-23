@@ -14,3 +14,8 @@ ordered-float = { workspace = true }
 thiserror = { workspace = true }
 imbl = { workspace = true }
 log = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }
+apy = { workspace = true, features = ["yaml"] }
+rstest = { workspace = true }
