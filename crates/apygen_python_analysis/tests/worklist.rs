@@ -43,7 +43,7 @@ pub fn analyse_directory(
 
     let specs: HashMap<Identifier, _> = finder.get_specs();
 
-    let (namespaces, cfgs) = cfg_worklist(
+    let (namespaces, _) = cfg_worklist(
         specs,
         &target_modules
             .iter()
