@@ -9,7 +9,7 @@ use apygen_analysis::namespace::{
 };
 use apygen_finder::filesystem::{Error as FilesystemError, Filesystem};
 use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
-use log::{debug, trace};
+use log::{debug, info};
 use rayon::prelude::*;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -327,8 +327,13 @@ pub fn cfg_worklist<F: Filesystem>(
         .collect();
 
     let module_specs_ref = &module_specs;
+    let mut iteration: usize = 0;
     while !cfg_worklist.is_empty() {
-        debug!("Worklist size: {}", cfg_worklist.len());
+        iteration += 1;
+        info!(
+            "Iteration {iteration} (Worklist size: {})",
+            cfg_worklist.len()
+        );
         let iteration_start = std::time::Instant::now();
 
         let (import_tx, import_rx) = channel::<NamespaceLocation<QualifiedName>>();
@@ -409,7 +414,7 @@ pub fn cfg_worklist<F: Filesystem>(
                     },
                     merge);
 
-            trace!(
+            debug!(
                 "Processed the worklists in workers (after {:?})",
                 iteration_start.elapsed()
             );
@@ -417,21 +422,21 @@ pub fn cfg_worklist<F: Filesystem>(
             worklist_results
         });
 
-        trace!(
+        debug!(
             "Waited for the workers to finish (after {:?})",
             iteration_start.elapsed()
         );
 
         cfgs.extend(cfg_rx);
 
-        trace!(
+        debug!(
             "Collected and merged the new cfgs (after {:?})",
             iteration_start.elapsed()
         );
 
         cfg_worklist = merge_with(&mut namespaces, &mut dependents, &cfgs, override_result);
 
-        trace!(
+        debug!(
             "Created the new worklist (after {:?})",
             iteration_start.elapsed()
         );
