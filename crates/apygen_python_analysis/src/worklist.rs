@@ -105,17 +105,18 @@ pub fn merge_with(
         changed_locations
             .par_iter()
             .flat_map(|(namespace_location, _)| {
-                dependents
-                    .get(namespace_location)
-                    .par_iter()
-                    .flat_map(|location_dependents| {
-                        location_dependents.par_iter().filter(|namespace_location| {
-                            cfgs.contains_key(&namespace_location.module)
-                        })
-                    })
-                    .chain(once(namespace_location))
+                once(namespace_location)
+                    .chain(
+                        dependents
+                            .get(namespace_location)
+                            .par_iter()
+                            .flat_map(|location_dependents| location_dependents.par_iter())
+                            .filter(|namespace_location| {
+                                cfgs.contains_key(&namespace_location.module)
+                            }),
+                    )
                     .cloned()
-                    .collect::<Vec<NamespaceLocation<_>>>()
+                    .collect::<Vec<_>>()
             }),
     );
 
