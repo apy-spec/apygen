@@ -10,6 +10,7 @@ use apygen_analysis::namespace::{
 use apygen_finder::filesystem::{Error as FilesystemError, Filesystem};
 use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
 use log::{debug, info};
+use rayon::iter::once;
 use rayon::prelude::*;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -69,47 +70,56 @@ pub fn merge_with(
 
     merge_dependents_with(dependents, worklist_result.dependents);
 
-    changed.extend(
+    changed.par_extend(
         cfgs.keys()
+            .par_bridge()
             .map(|module| NamespaceLocation::new(module.clone()))
             .chain(
                 dependents
                     .keys()
+                    .par_bridge()
                     .filter(|namespace_location| cfgs.contains_key(&namespace_location.module))
                     .cloned(),
             )
             .filter(|module| !namespaces.locations.contains_key(module)),
     );
 
-    for (location, namespace) in worklist_result.namespaces.locations {
-        let namespace_changed = match namespaces.locations.entry(location.clone()) {
-            Entry::Occupied(mut entry) => {
-                let occupied_namespace = entry.get_mut();
+    let changed_locations: Vec<_> = worklist_result
+        .namespaces
+        .locations
+        .into_par_iter()
+        .filter_map(|(location, namespace)| {
+            if let Some(occupied_namespace) = namespaces.locations.get(&location) {
                 if occupied_namespace.environments != namespace.environments {
-                    *occupied_namespace = namespace;
-                    true
+                    Some((location, namespace))
                 } else {
-                    false
+                    None
                 }
+            } else {
+                Some((location, namespace))
             }
-            Entry::Vacant(entry) => {
-                entry.insert(namespace);
-                true
-            }
-        };
+        })
+        .collect();
 
-        if namespace_changed {
-            if let Some(location_dependents) = dependents.get(&location) {
-                changed.extend(
-                    location_dependents
-                        .iter()
-                        .filter(|namespace_location| cfgs.contains_key(&namespace_location.module))
-                        .cloned(),
-                );
-            }
-            changed.insert(location);
-        }
-    }
+    changed.par_extend(
+        changed_locations
+            .par_iter()
+            .flat_map(|(namespace_location, _)| {
+                dependents
+                    .get(namespace_location)
+                    .par_iter()
+                    .flat_map(|location_dependents| {
+                        location_dependents.par_iter().filter(|namespace_location| {
+                            cfgs.contains_key(&namespace_location.module)
+                        })
+                    })
+                    .chain(once(namespace_location))
+                    .cloned()
+                    .collect::<Vec<NamespaceLocation<_>>>()
+            }),
+    );
+
+    namespaces.locations.extend(changed_locations);
 
     changed
 }
