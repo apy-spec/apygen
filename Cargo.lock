@@ -104,6 +104,7 @@ version = "0.1.0"
 dependencies = [
  "apy",
  "apygen_python_analysis",
+ "env_logger",
 ]
 
 [[package]]

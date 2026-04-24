@@ -3,6 +3,8 @@ use apygen_python_analysis::{AbsolutePathBuf, LocalFilesystem, analyse_workdir};
 use std::fs::File;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+
     let working_dir = AbsolutePathBuf::current_dir()?;
     let python_paths = vec![];
     let stubs_paths = vec![];

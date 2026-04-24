@@ -8,3 +8,4 @@ license.workspace = true
 [dependencies]
 apygen_python_analysis = { workspace = true }
 apy = { workspace = true, features = ["yaml"] }
+env_logger = { workspace = true }
