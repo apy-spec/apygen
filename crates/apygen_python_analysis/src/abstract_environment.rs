@@ -942,7 +942,13 @@ impl Lattice<QualifiedName> for AbstractEnvironment {
             }
         }
 
-        Ok(true)
+        Ok(self
+            .returned_value
+            .includes(context, &other.returned_value)?
+            && other.raised_exceptions.is_subset(&self.raised_exceptions)
+            && (self.is_partial || !other.is_partial)
+            && (!self.is_pure || other.is_pure)
+            && other.diagnostics.is_subset(&self.diagnostics))
     }
 
     fn join(
