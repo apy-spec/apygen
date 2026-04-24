@@ -326,10 +326,11 @@ pub fn cfg_worklist<F: Filesystem>(
         .map(|module| NamespaceLocation::from(module.clone()))
         .collect();
 
-    debug!("Worklist size: {}", cfg_worklist.len());
-
     let module_specs_ref = &module_specs;
     while !cfg_worklist.is_empty() {
+        debug!("Worklist size: {}", cfg_worklist.len());
+        let iteration_start = std::time::Instant::now();
+
         let (import_tx, import_rx) = channel::<NamespaceLocation<QualifiedName>>();
         let (cfg_tx, cfg_rx) = channel::<(Arc<QualifiedName>, Cfg)>();
 
@@ -408,20 +409,32 @@ pub fn cfg_worklist<F: Filesystem>(
                     },
                     merge);
 
-            trace!("Processed worklists in workers");
+            trace!(
+                "Processed the worklists in workers (after {:?})",
+                iteration_start.elapsed()
+            );
 
             worklist_results
         });
 
-        trace!("Collected worklist results");
+        trace!(
+            "Waited for the workers to finish (after {:?})",
+            iteration_start.elapsed()
+        );
 
         cfgs.extend(cfg_rx);
 
-        trace!("Merged new cfgs");
+        trace!(
+            "Collected and merged the new cfgs (after {:?})",
+            iteration_start.elapsed()
+        );
 
         cfg_worklist = merge_with(&mut namespaces, &mut dependents, &cfgs, override_result);
 
-        debug!("Worklist size: {}", cfg_worklist.len());
+        trace!(
+            "Created the new worklist (after {:?})",
+            iteration_start.elapsed()
+        );
     }
 
     Some((namespaces, cfgs))
