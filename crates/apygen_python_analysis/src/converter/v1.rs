@@ -7,11 +7,10 @@ use crate::abstract_environment::{
 };
 use crate::genkill::visibility::visibility_from_module_name;
 use apy;
-use apygen_analysis::cfg::Cfg;
 use apygen_analysis::namespace::{Location, NamespaceLocation, NamespacesContext};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub fn new_literal(arguments: Vec<apy::v1::TypeArgument>) -> apy::v1::TypeReference {
