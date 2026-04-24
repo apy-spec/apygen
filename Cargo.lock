@@ -88,7 +88,7 @@ dependencies = [
 [[package]]
 name = "apy"
 version = "0.1.0"
-source = "git+https://github.com/apy-spec/apy-rs.git#a7754495f794c932ba3837e6ec0f00cc381c8639"
+source = "git+https://github.com/apy-spec/apy-rs.git#ea4fa2a419871f47a31e30ff3d3f22ee3bf6f4a7"
 dependencies = [
  "serde",
  "serde-saphyr",
