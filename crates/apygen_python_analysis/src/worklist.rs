@@ -341,9 +341,8 @@ pub fn cfg_worklist<F: Filesystem>(
                 let mut current_cfgs: HashSet<QualifiedName> = HashSet::new();
 
                 for namespace_location in import_rx {
-                    let root_package = QualifiedName::new(OneOrMany::one(
-                        namespace_location.module.identifiers.first().clone(),
-                    ));
+                    let root_package =
+                        QualifiedName::from(namespace_location.module.identifiers.first().clone());
 
                     if cfgs_ref.contains_key(&root_package) || current_cfgs.contains(&root_package)
                     {
@@ -351,7 +350,7 @@ pub fn cfg_worklist<F: Filesystem>(
                     }
 
                     let Some(package_specs) =
-                        module_specs_ref.get(&root_package.identifiers.first())
+                        module_specs_ref.get(root_package.identifiers.first())
                     else {
                         continue;
                     };
