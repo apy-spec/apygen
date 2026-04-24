@@ -111,15 +111,6 @@ pub fn merge_with(
         }
     }
 
-    let changed_dependants = changed
-        .par_iter()
-        .filter_map(|namespace_location| dependents.get(namespace_location))
-        .flatten()
-        .filter(|namespace_location| namespaces.locations.contains_key(namespace_location))
-        .collect::<HashSet<_>>();
-
-    changed.retain(|namespace_location| !changed_dependants.contains(namespace_location));
-
     changed
 }
 
