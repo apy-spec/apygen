@@ -12,7 +12,7 @@ use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSp
 use log::{debug, info};
 use rayon::prelude::*;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc::{Sender, channel};
 use thiserror::Error;
@@ -132,7 +132,7 @@ pub fn worklist(
         .flatten()
         .expect("Should exist since worklist is only called on modules in the project data");
 
-    let mut worklist: HashSet<ProgramPoint> = HashSet::from_iter([ProgramPoint::Entry]);
+    let mut worklist: BTreeSet<ProgramPoint> = BTreeSet::from_iter([ProgramPoint::Entry]);
     while !worklist.is_empty() {
         worklist = worklist
             .into_iter()
@@ -158,7 +158,7 @@ pub fn worklist(
                     HashMap::from_iter([(EdgeData::Unconditional, AbstractEnvironment::default())])
                 };
 
-                let mut worklist: HashSet<ProgramPoint> = HashSet::new();
+                let mut worklist: BTreeSet<ProgramPoint> = BTreeSet::new();
                 for successor in cfg.successors(&program_point).unwrap().cloned() {
                     let successor_location = Location {
                         namespace_location: namespace_location.clone(),
