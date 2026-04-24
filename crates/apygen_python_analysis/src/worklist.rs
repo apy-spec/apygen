@@ -106,18 +106,10 @@ pub fn merge_with(
             .par_iter()
             .flat_map(|(namespace_location, _)| {
                 once(namespace_location)
-                    .chain(
-                        dependents
-                            .get(namespace_location)
-                            .par_iter()
-                            .flat_map(|location_dependents| location_dependents.par_iter())
-                            .filter(|namespace_location| {
-                                cfgs.contains_key(&namespace_location.module)
-                            }),
-                    )
-                    .cloned()
-                    .collect::<Vec<_>>()
-            }),
+                    .chain(dependents.get(namespace_location).into_par_iter().flatten())
+                    .filter(|namespace_location| cfgs.contains_key(&namespace_location.module))
+            })
+            .cloned(),
     );
 
     namespaces.locations.extend(changed_locations);
