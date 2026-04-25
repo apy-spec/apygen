@@ -241,13 +241,14 @@ pub fn cfg_worklist<F: Filesystem>(
             let (import_tx, import_rx) = channel::<NamespaceLocation<QualifiedName>>();
 
             scope.spawn(move |scope| {
-                let mut current_cfgs: HashSet<QualifiedName> = HashSet::new();
+                let mut current_cfgs: HashSet<Identifier> = HashSet::new();
 
                 for namespace_location in import_rx {
                     let root_package =
                         QualifiedName::from(namespace_location.module.identifiers.first().clone());
 
-                    if cfgs_ref.contains_key(&root_package) || current_cfgs.contains(&root_package)
+                    if cfgs_ref.contains_key(&root_package)
+                        || current_cfgs.contains(root_package.identifiers.first())
                     {
                         continue;
                     }
@@ -258,7 +259,7 @@ pub fn cfg_worklist<F: Filesystem>(
                         continue;
                     };
 
-                    current_cfgs.insert(root_package.clone());
+                    current_cfgs.insert(root_package.identifiers.first().clone());
 
                     let cfg_tx = cfg_tx.clone();
                     scope.spawn(move |_| {
