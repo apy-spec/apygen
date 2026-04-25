@@ -40,23 +40,6 @@ fn merge_dependents_with(
     }
 }
 
-pub fn merge(mut left: WorklistResult, right: WorklistResult) -> WorklistResult {
-    merge_dependents_with(&mut left.dependents, right.dependents);
-
-    for (location, namespace) in right.namespaces.locations {
-        match left.namespaces.locations.entry(location) {
-            Entry::Occupied(_) => {
-                panic!("Namespaces should not have overlapping locations");
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(namespace);
-            }
-        }
-    }
-
-    left
-}
-
 pub fn merge_with(
     namespaces: &mut Namespaces<QualifiedName, AbstractEnvironment>,
     dependents: &mut HashMap<
@@ -406,7 +389,13 @@ pub fn cfg_worklist<F: Filesystem>(
                         namespaces: Namespaces::new(),
                         dependents: HashMap::new(),
                     },
-                    merge);
+                    |mut left, right| {
+                        merge_dependents_with(&mut left.dependents, right.dependents);
+
+                        left.namespaces.locations.extend(right.namespaces.locations);
+
+                        left
+                    });
 
             debug!(
                 "Processed the worklists in workers (after {:?})",
