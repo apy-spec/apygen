@@ -392,9 +392,8 @@ pub fn cfg_worklist<F: Filesystem>(
 
         namespaces.locations.extend(changed_locations);
 
-        cfg_worklist.par_extend(
+        cfg_worklist.extend(
             cfgs.keys()
-                .par_bridge()
                 .map(|module| NamespaceLocation::new(module.clone()))
                 .filter(|module| !namespaces.locations.contains_key(module)),
         );
