@@ -1,0 +1,65 @@
+apy: 1.0.0
+modules:
+  int_literal_inference:
+    summary: ""
+    description: ""
+    raises: []
+    partial: false
+    visibility: PUBLIC
+    attributes:
+      assign:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "42"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_addition:
+        kind: VARIABLE
+        type:
+          id: Any
+          module: typing
+          history_index: 0
+          arguments: []
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_addition:
+        kind: VARIABLE
+        type:
+          id: Any
+          module: typing
+          history_index: 0
+          arguments: []
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_addition:
+        kind: VARIABLE
+        type:
+          id: Any
+          module: typing
+          history_index: 0
+          arguments: []
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+    typing_attributes:
+      {}

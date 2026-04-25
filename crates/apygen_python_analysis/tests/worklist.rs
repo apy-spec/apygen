@@ -59,6 +59,7 @@ pub fn analyse_directory(
 
 #[rstest]
 #[case::simple_variable_inference("simple_variable_inference")]
+#[case::int_literal_inference("int_literal_inference")]
 fn test_inference(#[case] module_name: String) {
     init_logger();
 
@@ -74,6 +75,11 @@ fn test_inference(#[case] module_name: String) {
         .join("tests/data/apy")
         .join(&module_name)
         .with_extension("yaml");
+    let mut expected_apy_file = File::create(&expected_apy_path).expect("APY file should exist");
+    actual_apy
+        .to_yaml_writer(&mut expected_apy_file)
+        .expect("APY file should be valid");
+
     let expected_apy_file = File::open(&expected_apy_path).expect("APY file should exist");
     let expected_apy =
         apy::Apy::from_yaml_reader(expected_apy_file).expect("APY file should be valid");
