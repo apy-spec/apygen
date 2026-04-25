@@ -18,88 +18,6 @@ use std::sync::Arc;
 use std::sync::mpsc::{Sender, channel};
 use thiserror::Error;
 
-pub struct WorklistResult {
-    pub namespaces: Namespaces<QualifiedName, AbstractEnvironment>,
-    pub dependents:
-        HashMap<NamespaceLocation<QualifiedName>, HashSet<NamespaceLocation<QualifiedName>>>,
-}
-
-fn merge_dependents_with(
-    left: &mut HashMap<NamespaceLocation<QualifiedName>, HashSet<NamespaceLocation<QualifiedName>>>,
-    right: HashMap<NamespaceLocation<QualifiedName>, HashSet<NamespaceLocation<QualifiedName>>>,
-) {
-    for (from, tos) in right {
-        match left.entry(from) {
-            Entry::Occupied(mut entry) => {
-                entry.get_mut().extend(tos);
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(tos);
-            }
-        }
-    }
-}
-
-pub fn merge_with(
-    namespaces: &mut Namespaces<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
-    worklist_result: WorklistResult,
-) -> HashSet<NamespaceLocation<QualifiedName>> {
-    let mut changed: HashSet<NamespaceLocation<QualifiedName>> = HashSet::new();
-
-    merge_dependents_with(dependents, worklist_result.dependents);
-
-    changed.par_extend(
-        cfgs.keys()
-            .par_bridge()
-            .map(|module| NamespaceLocation::new(module.clone()))
-            .chain(
-                dependents
-                    .keys()
-                    .par_bridge()
-                    .filter(|namespace_location| cfgs.contains_key(&namespace_location.module))
-                    .cloned(),
-            )
-            .filter(|module| !namespaces.locations.contains_key(module)),
-    );
-
-    let changed_locations: Vec<_> = worklist_result
-        .namespaces
-        .locations
-        .into_par_iter()
-        .filter_map(|(location, namespace)| {
-            if let Some(occupied_namespace) = namespaces.locations.get(&location) {
-                if occupied_namespace.environments != namespace.environments {
-                    Some((location, namespace))
-                } else {
-                    None
-                }
-            } else {
-                Some((location, namespace))
-            }
-        })
-        .collect();
-
-    changed.par_extend(
-        changed_locations
-            .par_iter()
-            .flat_map(|(namespace_location, _)| {
-                once(namespace_location)
-                    .chain(dependents.get(namespace_location).into_par_iter().flatten())
-                    .filter(|namespace_location| cfgs.contains_key(&namespace_location.module))
-            })
-            .cloned(),
-    );
-
-    namespaces.locations.extend(changed_locations);
-
-    changed
-}
-
 pub fn worklist(
     context: &mut impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     dependents: &mut HashMap<
@@ -318,8 +236,9 @@ pub fn cfg_worklist<F: Filesystem>(
 
         let cfgs_ref = &cfgs;
         let namespaces_ref = &namespaces;
+        let dependents_ref = &mut dependents;
 
-        let override_result = rayon::scope(move |scope| {
+        let changed_locations = rayon::scope(move |scope| {
             scope.spawn(move |scope| {
                 let mut current_cfgs: HashSet<QualifiedName> = HashSet::new();
 
@@ -359,50 +278,86 @@ pub fn cfg_worklist<F: Filesystem>(
                 }
             });
 
-            let worklist_results = cfg_worklist
+            debug!("Spawned import job (after {:?})", iteration_start.elapsed());
+
+            let (changed, worker_dependents): (Vec<_>, Vec<_>) = cfg_worklist
                 .into_par_iter()
                 .map(|namespace_location| {
-                    let mut context = NamespacesProxy::new(namespaces_ref);
+                    let mut context = NamespacesProxy::new(&namespaces_ref);
                     let mut dependents: HashMap<
                         NamespaceLocation<QualifiedName>,
                         HashSet<NamespaceLocation<QualifiedName>>,
                     > = HashMap::new();
 
-                    worklist(&mut context, &mut dependents, &cfgs_ref, &import_tx, namespace_location.clone());
-
-                    debug_assert!(
-                        context
-                            .override_namespaces
-                            .locations
-                            .contains_key(&namespace_location),
-                        "Worklist {:?} should have computed an environment for the exit point of the module",
-                        namespace_location
+                    worklist(
+                        &mut context,
+                        &mut dependents,
+                        &cfgs_ref,
+                        &import_tx,
+                        namespace_location.clone(),
                     );
 
-                    WorklistResult {
-                        namespaces: context.override_namespaces,
-                        dependents,
-                    }
+                    let namespace = context
+                        .override_namespaces
+                        .locations
+                        .remove(&namespace_location)
+                        .expect("Worklist should have computed this namespace");
+
+                    debug_assert!(
+                        context.override_namespaces.locations.is_empty(),
+                        "Worklist should only compute the namespace for the given location",
+                    );
+
+                    ((namespace_location, namespace), dependents)
                 })
-                .reduce(
-                    || WorklistResult {
-                        namespaces: Namespaces::new(),
-                        dependents: HashMap::new(),
-                    },
-                    |mut left, right| {
-                        merge_dependents_with(&mut left.dependents, right.dependents);
-
-                        left.namespaces.locations.extend(right.namespaces.locations);
-
-                        left
-                    });
+                .unzip();
 
             debug!(
-                "Processed the worklists in workers (after {:?})",
+                "Analysed the namespaces (after {:?})",
                 iteration_start.elapsed()
             );
 
-            worklist_results
+            scope.spawn(move |_| {
+                for new_dependents in worker_dependents {
+                    for (from, tos) in new_dependents {
+                        match dependents_ref.entry(from) {
+                            Entry::Occupied(mut entry) => {
+                                entry.get_mut().extend(tos);
+                            }
+                            Entry::Vacant(entry) => {
+                                entry.insert(tos);
+                            }
+                        }
+                    }
+                }
+            });
+
+            debug!(
+                "Spawned dependencies merge job (after {:?})",
+                iteration_start.elapsed()
+            );
+
+            let changed_locations: Vec<_> = changed
+                .into_par_iter()
+                .filter_map(|(location, namespace)| {
+                    if let Some(existing_namespace) = namespaces_ref.locations.get(&location) {
+                        if existing_namespace.environments != namespace.environments {
+                            Some((location, namespace))
+                        } else {
+                            None
+                        }
+                    } else {
+                        Some((location, namespace))
+                    }
+                })
+                .collect();
+
+            debug!(
+                "Collected the changed locations (after {:?})",
+                iteration_start.elapsed()
+            );
+
+            changed_locations
         });
 
         debug!(
@@ -417,7 +372,24 @@ pub fn cfg_worklist<F: Filesystem>(
             iteration_start.elapsed()
         );
 
-        cfg_worklist = merge_with(&mut namespaces, &mut dependents, &cfgs, override_result);
+        cfg_worklist = changed_locations
+            .par_iter()
+            .flat_map(|(namespace_location, _)| {
+                once(namespace_location)
+                    .chain(dependents.get(namespace_location).into_par_iter().flatten())
+                    .filter(|namespace_location| cfgs.contains_key(&namespace_location.module))
+            })
+            .cloned()
+            .collect();
+
+        namespaces.locations.extend(changed_locations);
+
+        cfg_worklist.par_extend(
+            cfgs.keys()
+                .par_bridge()
+                .map(|module| NamespaceLocation::new(module.clone()))
+                .filter(|module| !namespaces.locations.contains_key(module)),
+        );
 
         debug!(
             "Created the new worklist (after {:?})",
