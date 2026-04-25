@@ -231,7 +231,6 @@ pub fn cfg_worklist<F: Filesystem>(
         );
         let iteration_start = std::time::Instant::now();
 
-        let (import_tx, import_rx) = channel::<NamespaceLocation<QualifiedName>>();
         let (cfg_tx, cfg_rx) = channel::<(Arc<QualifiedName>, Cfg)>();
 
         let cfgs_ref = &cfgs;
@@ -239,6 +238,8 @@ pub fn cfg_worklist<F: Filesystem>(
         let dependents_ref = &mut dependents;
 
         let changed_locations = rayon::scope(move |scope| {
+            let (import_tx, import_rx) = channel::<NamespaceLocation<QualifiedName>>();
+
             scope.spawn(move |scope| {
                 let mut current_cfgs: HashSet<QualifiedName> = HashSet::new();
 
@@ -276,6 +277,11 @@ pub fn cfg_worklist<F: Filesystem>(
                             });
                     });
                 }
+
+                debug!(
+                    "Finished importing the cfgs (after {:?})",
+                    iteration_start.elapsed()
+                );
             });
 
             debug!("Spawned import job (after {:?})", iteration_start.elapsed());
@@ -311,6 +317,8 @@ pub fn cfg_worklist<F: Filesystem>(
                     ((namespace_location, namespace), dependents)
                 })
                 .unzip();
+
+            drop(import_tx);
 
             debug!(
                 "Analysed the namespaces (after {:?})",
