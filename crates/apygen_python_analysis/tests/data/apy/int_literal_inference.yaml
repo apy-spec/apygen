@@ -270,7 +270,7 @@ modules:
           history_index: 0
           arguments:
             - value:
-                int: "8"
+                float: "8.4"
         description: ""
         initialised: false
         readonly: false

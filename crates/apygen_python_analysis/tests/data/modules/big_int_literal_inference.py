@@ -12,17 +12,21 @@ static_multiplication = 64964554194941651 * 74964554194941651
 dynamic_multiplication = assign * 24964554194941651
 other_dynamic_multiplication = assign * static_subtraction
 
+static_exponentiation = 249645541 ** 34
+dynamic_exponentiation = static_subtraction ** 24
+other_dynamic_exponentiation = static_subtraction ** static_subtraction
+
 static_division = 204964554194941651 / 44964554194941651
 dynamic_division = assign / 24964554194941651
 other_dynamic_division = assign / static_division
 
+static_floor_division = 204964554194941651 // 34964554194941651
+dynamic_floor_division = assign // 24964554194941651
+other_dynamic_floor_division = assign // static_floor_division
+
 static_modulo = 104964554194941651 % 34964554194941651
 dynamic_modulo = assign % 54964554194941651
 other_dynamic_modulo = assign % static_modulo
-
-static_exponentiation = 249645541 ** 34
-dynamic_exponentiation = static_division ** 249
-other_dynamic_exponentiation = assign ** static_subtraction
 
 static_left_shift = 14964554194941651 << 349
 dynamic_left_shift = assign << 249
@@ -43,7 +47,3 @@ other_dynamic_bitwise_and = assign & static_bitwise_and
 static_bitwise_xor = 0b1011010000001010101010 ^ 0b1011010000001010101010
 dynamic_bitwise_xor = assign ^ 0b1011010000001010101010
 other_dynamic_bitwise_xor = assign ^ static_bitwise_xor
-
-static_floor_division = 204964554194941651 // 34964554194941651
-dynamic_floor_division = assign // 24964554194941651
-other_dynamic_floor_division = assign // static_floor_division

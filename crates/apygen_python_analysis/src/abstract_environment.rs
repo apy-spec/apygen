@@ -128,8 +128,12 @@ impl Exception {
         }
     }
 
+    pub fn builtins(name: &str) -> Self {
+        Exception::from_type(Type::Reference(TypeReference::builtins(name)))
+    }
+
     pub fn type_error() -> Self {
-        Exception::from_type(Type::Reference(TypeReference::builtins("TypeError")))
+        Exception::builtins("TypeError")
     }
 }
 

@@ -12,17 +12,21 @@ static_multiplication = 6 * 7
 dynamic_multiplication = assign * 2
 other_dynamic_multiplication = assign * static_multiplication
 
+static_exponentiation = 2 ** 3
+dynamic_exponentiation = assign ** 2
+other_dynamic_exponentiation = assign ** static_exponentiation
+
 static_division = 20 / 4
 dynamic_division = assign / 2
 other_dynamic_division = assign / static_division
 
+static_floor_division = 20 // 3
+dynamic_floor_division = assign // 2
+other_dynamic_floor_division = assign // static_floor_division
+
 static_modulo = 10 % 3
 dynamic_modulo = assign % 5
 other_dynamic_modulo = assign % static_modulo
-
-static_exponentiation = 2 ** 3
-dynamic_exponentiation = assign ** 2
-other_dynamic_exponentiation = assign ** static_exponentiation
 
 static_left_shift = 1 << 3
 dynamic_left_shift = assign << 2
@@ -43,7 +47,3 @@ other_dynamic_bitwise_and = assign & static_bitwise_and
 static_bitwise_xor = 0b1010 ^ 0b0101
 dynamic_bitwise_xor = assign ^ 0b0011
 other_dynamic_bitwise_xor = assign ^ static_bitwise_xor
-
-static_floor_division = 20 // 3
-dynamic_floor_division = assign // 2
-other_dynamic_floor_division = assign // static_floor_division

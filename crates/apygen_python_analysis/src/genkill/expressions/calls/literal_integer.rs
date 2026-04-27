@@ -1,9 +1,11 @@
 use crate::abstract_environment::{
-    Exception, LiteralBigInteger, LiteralBoolean, LiteralInteger, Type, TypeReference,
+    Exception, LiteralBigInteger, LiteralBoolean, LiteralFloat, LiteralInteger, Type,
 };
 use crate::genkill::expressions::GenExprResult;
 use apygen_analysis::cfg::nodes;
 use num_bigint::BigInt;
+use num_traits::CheckedEuclid;
+use ordered_float::OrderedFloat;
 
 pub fn as_boolean(literal_integer: &LiteralInteger) -> bool {
     literal_integer.value != 0
@@ -83,13 +85,29 @@ pub fn call_binary_op(
                 })
             }
         }
-        nodes::Operator::MatMult => return GenExprResult::raise(Exception::type_error()),
-        nodes::Operator::Div | nodes::Operator::FloorDiv => {
-            if right.value == 0 {
-                return GenExprResult::raise(Exception::from_type(Type::Reference(
-                    TypeReference::builtins("ZeroDivisionError"),
-                )));
+        nodes::Operator::Pow => {
+            let Ok(value) = u32::try_from(right.value) else {
+                return GenExprResult::unknown();
+            };
+
+            if let Some(power) = left.value.checked_pow(value) {
+                Type::new_integer_literal(LiteralInteger { value: power })
             } else {
+                Type::new_big_integer_literal(LiteralBigInteger {
+                    value: BigInt::from(left.value).pow(value),
+                })
+            }
+        }
+        nodes::Operator::Div => {
+            if right.value == 0 {
+                return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
+            }
+
+            if left
+                .value
+                .checked_rem(right.value)
+                .is_some_and(|remainder| remainder == 0)
+            {
                 if let Some(division) = left.value.checked_div(right.value) {
                     Type::new_integer_literal(LiteralInteger { value: division })
                 } else {
@@ -97,60 +115,69 @@ pub fn call_binary_op(
                         value: BigInt::from(left.value) / BigInt::from(right.value),
                     })
                 }
+            } else if BigInt::from(left.value)
+                .checked_rem_euclid(&BigInt::from(right.value))
+                .is_some_and(|remainder| remainder == BigInt::ZERO)
+            {
+                Type::new_big_integer_literal(LiteralBigInteger {
+                    value: BigInt::from(left.value) / BigInt::from(right.value),
+                })
+            } else {
+                Type::new_float_literal(LiteralFloat {
+                    value: OrderedFloat((left.value as f64) / (right.value as f64)),
+                })
+            }
+        }
+        nodes::Operator::FloorDiv => {
+            if right.value == 0 {
+                return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
+            }
+
+            if let Some(division) = left.value.checked_div(right.value) {
+                Type::new_integer_literal(LiteralInteger { value: division })
+            } else {
+                Type::new_big_integer_literal(LiteralBigInteger {
+                    value: BigInt::from(left.value) / BigInt::from(right.value),
+                })
             }
         }
         nodes::Operator::Mod => {
             if right.value == 0 {
-                return GenExprResult::raise(Exception::from_type(Type::Reference(
-                    TypeReference::builtins("ZeroDivisionError"),
-                )));
-            } else {
-                if let Some(division) = left.value.checked_rem(right.value) {
-                    Type::new_integer_literal(LiteralInteger { value: division })
-                } else {
-                    Type::new_big_integer_literal(LiteralBigInteger {
-                        value: BigInt::from(left.value) % BigInt::from(right.value),
-                    })
-                }
+                return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
             }
-        }
-        nodes::Operator::Pow => {
-            if let Ok(value) = u32::try_from(right.value) {
-                if let Some(power) = left.value.checked_pow(value) {
-                    Type::new_integer_literal(LiteralInteger { value: power })
-                } else {
-                    Type::new_big_integer_literal(LiteralBigInteger {
-                        value: BigInt::from(left.value).pow(value),
-                    })
-                }
+
+            if let Some(division) = left.value.checked_rem(right.value) {
+                Type::new_integer_literal(LiteralInteger { value: division })
             } else {
-                return GenExprResult::raise(Exception::from_type(Type::Any));
+                Type::new_big_integer_literal(LiteralBigInteger {
+                    value: BigInt::from(left.value) % BigInt::from(right.value),
+                })
             }
         }
         nodes::Operator::LShift => {
-            if let Ok(value) = u32::try_from(right.value) {
-                if let Some(shift_left) = left.value.checked_shl(value) {
-                    Type::new_integer_literal(LiteralInteger { value: shift_left })
-                } else {
-                    Type::new_big_integer_literal(LiteralBigInteger {
-                        value: BigInt::from(left.value) << value,
-                    })
-                }
+            let Ok(value) = u32::try_from(right.value) else {
+                return GenExprResult::unknown();
+            };
+
+            if let Some(shift_left) = left.value.checked_shl(value) {
+                Type::new_integer_literal(LiteralInteger { value: shift_left })
             } else {
-                return GenExprResult::raise(Exception::from_type(Type::Any));
+                Type::new_big_integer_literal(LiteralBigInteger {
+                    value: BigInt::from(left.value) << value,
+                })
             }
         }
         nodes::Operator::RShift => {
-            if let Ok(value) = u32::try_from(right.value) {
-                if let Some(shift_right) = left.value.checked_shr(value) {
-                    Type::new_integer_literal(LiteralInteger { value: shift_right })
-                } else {
-                    Type::new_big_integer_literal(LiteralBigInteger {
-                        value: BigInt::from(left.value) >> value,
-                    })
-                }
+            let Ok(value) = u32::try_from(right.value) else {
+                return GenExprResult::unknown();
+            };
+
+            if let Some(shift_right) = left.value.checked_shr(value) {
+                Type::new_integer_literal(LiteralInteger { value: shift_right })
             } else {
-                return GenExprResult::raise(Exception::from_type(Type::Any));
+                Type::new_big_integer_literal(LiteralBigInteger {
+                    value: BigInt::from(left.value) >> value,
+                })
             }
         }
         nodes::Operator::BitOr => Type::new_integer_literal(LiteralInteger {
@@ -162,5 +189,6 @@ pub fn call_binary_op(
         nodes::Operator::BitAnd => Type::new_integer_literal(LiteralInteger {
             value: left.value & right.value,
         }),
+        nodes::Operator::MatMult => return GenExprResult::raise(Exception::type_error()),
     })
 }

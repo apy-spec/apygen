@@ -59,55 +59,57 @@ pub fn call_binary_op(
         nodes::Operator::Mult => Type::new_big_integer_literal(LiteralBigInteger {
             value: &left.value * &right.value,
         }),
-        nodes::Operator::MatMult => return GenExprResult::raise(Exception::type_error()),
+        nodes::Operator::Pow => {
+            let Ok(value) = u32::try_from(&right.value) else {
+                return GenExprResult::unknown();
+            };
+
+            Type::new_big_integer_literal(LiteralBigInteger {
+                value: left.value.pow(value),
+            })
+        }
         nodes::Operator::Div => {
             if right.value == BigInt::ZERO {
                 return GenExprResult::raise(Exception::from_type(Type::Reference(
                     TypeReference::builtins("ZeroDivisionError"),
                 )));
-            } else {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: &left.value / &right.value,
-                })
             }
+
+            Type::new_big_integer_literal(LiteralBigInteger {
+                value: &left.value / &right.value,
+            })
         }
+        nodes::Operator::FloorDiv => Type::new_big_integer_literal(LiteralBigInteger {
+            value: &left.value / &right.value,
+        }),
         nodes::Operator::Mod => {
             if right.value == BigInt::ZERO {
                 return GenExprResult::raise(Exception::from_type(Type::Reference(
                     TypeReference::builtins("ZeroDivisionError"),
                 )));
-            } else {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: &left.value % &right.value,
-                })
             }
-        }
-        nodes::Operator::Pow => {
-            if let Ok(value) = u32::try_from(&right.value) {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: left.value.pow(value),
-                })
-            } else {
-                return GenExprResult::raise(Exception::from_type(Type::Any));
-            }
+
+            Type::new_big_integer_literal(LiteralBigInteger {
+                value: &left.value % &right.value,
+            })
         }
         nodes::Operator::LShift => {
-            if let Ok(value) = u32::try_from(&right.value) {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: &left.value << value,
-                })
-            } else {
-                return GenExprResult::raise(Exception::from_type(Type::Any));
-            }
+            let Ok(value) = u32::try_from(&right.value) else {
+                return GenExprResult::unknown();
+            };
+
+            Type::new_big_integer_literal(LiteralBigInteger {
+                value: &left.value << value,
+            })
         }
         nodes::Operator::RShift => {
-            if let Ok(value) = u32::try_from(&right.value) {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: &left.value >> value,
-                })
-            } else {
-                return GenExprResult::raise(Exception::from_type(Type::Any));
-            }
+            let Ok(value) = u32::try_from(&right.value) else {
+                return GenExprResult::unknown();
+            };
+
+            Type::new_big_integer_literal(LiteralBigInteger {
+                value: &left.value >> value,
+            })
         }
         nodes::Operator::BitOr => Type::new_big_integer_literal(LiteralBigInteger {
             value: &left.value | &right.value,
@@ -118,8 +120,6 @@ pub fn call_binary_op(
         nodes::Operator::BitAnd => Type::new_big_integer_literal(LiteralBigInteger {
             value: &left.value & &right.value,
         }),
-        nodes::Operator::FloorDiv => Type::new_big_integer_literal(LiteralBigInteger {
-            value: &left.value / &right.value,
-        }),
+        nodes::Operator::MatMult => return GenExprResult::raise(Exception::type_error()),
     })
 }
