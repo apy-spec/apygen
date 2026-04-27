@@ -133,6 +133,9 @@ pub fn call_binary_op(
         (TypeLiteral::BigInteger(left), TypeLiteral::BigInteger(right)) => {
             calls::literal_big_integer::call_binary_op(left, operator, right)
         }
+        (TypeLiteral::Boolean(left), TypeLiteral::Boolean(right)) => {
+            calls::literal_boolean::call_binary_op(left, operator, right)
+        }
         _ => GenExprResult::unknown(),
     }
 }

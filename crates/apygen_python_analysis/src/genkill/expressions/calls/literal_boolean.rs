@@ -1,4 +1,6 @@
 use crate::abstract_environment::{LiteralBoolean, LiteralInteger, Type};
+use crate::genkill::expressions::GenExprResult;
+use crate::genkill::expressions::calls;
 use apygen_analysis::cfg::nodes;
 
 pub fn as_boolean(literal_boolean: &LiteralBoolean) -> bool {
@@ -42,4 +44,20 @@ pub fn call_unary_op(literal_boolean: &LiteralBoolean, operator: nodes::UnaryOp)
         nodes::UnaryOp::UAdd => call_dunder_pos(literal_boolean),
         nodes::UnaryOp::USub => call_dunder_neg(literal_boolean),
     }
+}
+
+pub fn call_binary_op(
+    left: &LiteralBoolean,
+    operator: nodes::Operator,
+    right: &LiteralBoolean,
+) -> GenExprResult<Type> {
+    calls::literal_integer::call_binary_op(
+        &LiteralInteger {
+            value: if left.value { 1 } else { 0 },
+        },
+        operator,
+        &LiteralInteger {
+            value: if right.value { 1 } else { 0 },
+        },
+    )
 }
