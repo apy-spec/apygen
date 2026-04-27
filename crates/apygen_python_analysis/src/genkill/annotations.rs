@@ -235,11 +235,8 @@ pub fn gen_expr_unary_op(expression: &ExprUnaryOp) -> Result<Type, GenAnnotation
                 value: -value,
             })))
         }
-        TypeLiteral::BigInteger(LiteralBigInteger { positive, value }) => Ok(Type::new_literal(
-            TypeLiteral::BigInteger(LiteralBigInteger {
-                positive: !positive,
-                value: value.clone(),
-            }),
+        TypeLiteral::BigInteger(LiteralBigInteger { value }) => Ok(Type::new_literal(
+            TypeLiteral::BigInteger(LiteralBigInteger { value: -value }),
         )),
         _ => unreachable!("gen_expr_number_literal always returns a number literal"),
     }

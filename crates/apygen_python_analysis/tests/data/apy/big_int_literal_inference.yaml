@@ -1,0 +1,566 @@
+apy: 1.0.0
+modules:
+  big_int_literal_inference:
+    summary: ""
+    description: ""
+    raises: []
+    partial: false
+    visibility: PUBLIC
+    attributes:
+      assign:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "424964554194941651"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_addition:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "509929108389883302"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_bitwise_and:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "2687618"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_bitwise_or:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "424964554195203835"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_bitwise_xor:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "424964554192516217"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_division:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "17"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_exponentiation:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "818347651974035467503297424206899788054160511510766197370822842024033449101168638720817523081476039287721671031890017752304314136471348263332131897344"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_floor_division:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "17"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_left_shift:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "384433856109663892139190895909900898588655051372446077975009258720808017024635667071329370112"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_modulo:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "40212674830350094"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_multiplication:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "10609050644128839184479555294605801"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_right_shift:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "0"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_subtraction:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "370000000000000000"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_addition:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "1104893662584824953"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_bitwise_and:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "2687618"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_bitwise_or:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "424964554195203835"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_bitwise_xor:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "424964554194941651"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_division:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "106241138548735412"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_exponentiation:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "17743944876375289539091781984591146025320643045539005847420202916461621758961806941187433920892669179098009659126017291101440708341958624643204600567675269096131361474306933160308604968456398180681925150019099587335950343430516586073732351338508804026577288674882699419670901001885281976820621421485763938367291300621017500433870505610117954062910145764452729132868298937707546080873488031350554228660747429300187897422475321739896356902866659157294138565176588996746008272643194655296179029294630549555614822764058165202649130988757014520872182210899546744664088374013220205022470886614406034005030477714074272791902869181961311986595677177549663026051"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_floor_division:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "84992910838988330"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_left_shift:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "-2486309838410219520"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_modulo:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "40243155453839"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_multiplication:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "15723688505212841087"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_right_shift:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "3092024"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_subtraction:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "424964554194941614"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_addition:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "679929108389883302"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_bitwise_and:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "2949802"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_bitwise_or:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "2949802"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_bitwise_xor:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "0"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_division:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "4"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_exponentiation:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "3228565897507726331984968804102367519748968869055460776717675003381655125272273476449892209377117962974764892729384260335799422348627591281843596533257865521951035609823792590968320325710466833427523006477149445514133366464270127527898504413409450162689440906631102106694013996326671961"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_floor_division:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "5"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_left_shift:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "17160592167503547683340648176777760566865985889669896040306834555171896691161006481450539496302942063576415476081452122112"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_modulo:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "70891610116698"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_multiplication:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "4870038843696927374479555294605801"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_right_shift:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "0"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_subtraction:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "37"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+    typing_attributes:
+      {}

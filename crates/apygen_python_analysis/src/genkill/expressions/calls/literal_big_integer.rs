@@ -1,8 +1,12 @@
-use crate::abstract_environment::{LiteralBigInteger, LiteralBoolean, Type, TypeReference};
+use crate::abstract_environment::{
+    Exception, LiteralBigInteger, LiteralBoolean, Type, TypeReference,
+};
+use crate::genkill::expressions::GenExprResult;
 use apygen_analysis::cfg::nodes;
+use num_bigint::BigInt;
 
 pub fn as_boolean(literal_big_integer: &LiteralBigInteger) -> bool {
-    literal_big_integer.value.as_str() != "0"
+    literal_big_integer.value != BigInt::ZERO
 }
 
 pub fn call_dunder_bool(literal_big_integer: &LiteralBigInteger) -> Type {
@@ -23,8 +27,7 @@ pub fn call_dunder_pos(literal_big_integer: &LiteralBigInteger) -> Type {
 
 pub fn call_dunder_neg(literal_big_integer: &LiteralBigInteger) -> Type {
     Type::new_big_integer_literal(LiteralBigInteger {
-        value: literal_big_integer.value.clone(),
-        positive: !literal_big_integer.positive,
+        value: -literal_big_integer.value.clone(),
     })
 }
 
@@ -39,4 +42,84 @@ pub fn call_unary_op(literal_big_integer: &LiteralBigInteger, operator: nodes::U
         nodes::UnaryOp::UAdd => call_dunder_pos(literal_big_integer),
         nodes::UnaryOp::USub => call_dunder_neg(literal_big_integer),
     }
+}
+
+pub fn call_binary_op(
+    left: &LiteralBigInteger,
+    operator: nodes::Operator,
+    right: &LiteralBigInteger,
+) -> GenExprResult<Type> {
+    GenExprResult::new_total_pure_non_raising(match operator {
+        nodes::Operator::Add => Type::new_big_integer_literal(LiteralBigInteger {
+            value: &left.value + &right.value,
+        }),
+        nodes::Operator::Sub => Type::new_big_integer_literal(LiteralBigInteger {
+            value: &left.value - &right.value,
+        }),
+        nodes::Operator::Mult => Type::new_big_integer_literal(LiteralBigInteger {
+            value: &left.value * &right.value,
+        }),
+        nodes::Operator::MatMult => return GenExprResult::raise(Exception::type_error()),
+        nodes::Operator::Div => {
+            if right.value == BigInt::ZERO {
+                return GenExprResult::raise(Exception::from_type(Type::Reference(
+                    TypeReference::builtins("ZeroDivisionError"),
+                )));
+            } else {
+                Type::new_big_integer_literal(LiteralBigInteger {
+                    value: &left.value / &right.value,
+                })
+            }
+        }
+        nodes::Operator::Mod => {
+            if right.value == BigInt::ZERO {
+                return GenExprResult::raise(Exception::from_type(Type::Reference(
+                    TypeReference::builtins("ZeroDivisionError"),
+                )));
+            } else {
+                Type::new_big_integer_literal(LiteralBigInteger {
+                    value: &left.value % &right.value,
+                })
+            }
+        }
+        nodes::Operator::Pow => {
+            if let Ok(value) = u32::try_from(&right.value) {
+                Type::new_big_integer_literal(LiteralBigInteger {
+                    value: left.value.pow(value),
+                })
+            } else {
+                return GenExprResult::raise(Exception::from_type(Type::Any));
+            }
+        }
+        nodes::Operator::LShift => {
+            if let Ok(value) = u32::try_from(&right.value) {
+                Type::new_big_integer_literal(LiteralBigInteger {
+                    value: &left.value << value,
+                })
+            } else {
+                return GenExprResult::raise(Exception::from_type(Type::Any));
+            }
+        }
+        nodes::Operator::RShift => {
+            if let Ok(value) = u32::try_from(&right.value) {
+                Type::new_big_integer_literal(LiteralBigInteger {
+                    value: &left.value >> value,
+                })
+            } else {
+                return GenExprResult::raise(Exception::from_type(Type::Any));
+            }
+        }
+        nodes::Operator::BitOr => Type::new_big_integer_literal(LiteralBigInteger {
+            value: &left.value | &right.value,
+        }),
+        nodes::Operator::BitXor => Type::new_big_integer_literal(LiteralBigInteger {
+            value: &left.value ^ &right.value,
+        }),
+        nodes::Operator::BitAnd => Type::new_big_integer_literal(LiteralBigInteger {
+            value: &left.value & &right.value,
+        }),
+        nodes::Operator::FloorDiv => Type::new_big_integer_literal(LiteralBigInteger {
+            value: &left.value / &right.value,
+        }),
+    })
 }

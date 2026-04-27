@@ -6,6 +6,7 @@ pub use apy::v1::{
 };
 use apygen_analysis::cfg::ProgramPoint;
 use imbl;
+pub use num_bigint::BigInt;
 pub use ordered_float::OrderedFloat;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
@@ -210,8 +211,7 @@ pub struct LiteralInteger {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralBigInteger {
-    pub positive: bool,
-    pub value: Arc<String>,
+    pub value: BigInt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -361,11 +361,7 @@ impl Display for TypeLiteral {
                 write!(f, "builtins.Literal[{}]", literal_integer.value)
             }
             TypeLiteral::BigInteger(literal_big_integer) => {
-                if literal_big_integer.positive {
-                    write!(f, "builtins.Literal[{}]", literal_big_integer.value)
-                } else {
-                    write!(f, "builtins.Literal[-{}]", literal_big_integer.value)
-                }
+                write!(f, "builtins.Literal[{}]", literal_big_integer.value)
             }
             TypeLiteral::Boolean(literal_boolean) => {
                 write!(f, "builtins.Literal[{}]", literal_boolean.value)

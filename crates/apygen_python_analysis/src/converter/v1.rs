@@ -32,11 +32,7 @@ pub fn convert_literal_big_integer(
 ) -> apy::v1::TypeReference {
     new_literal(vec![apy::v1::TypeArgument::Value {
         value: apy::v1::PythonValue::Int {
-            int: if literal_big_integer.positive {
-                literal_big_integer.value.to_string()
-            } else {
-                format!("-{}", literal_big_integer.value)
-            },
+            int: literal_big_integer.value.to_string(),
         },
     }])
 }

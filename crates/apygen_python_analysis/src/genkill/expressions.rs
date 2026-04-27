@@ -12,7 +12,7 @@ use crate::genkill::literals::{
     gen_expr_none_literal, gen_expr_number_literal, gen_expr_string_literal,
 };
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::cfg::nodes::{Expr, ExprBinOp, ExprBoolOp, ExprName, ExprUnaryOp, Operator};
+use apygen_analysis::cfg::nodes::{Expr, ExprBinOp, ExprBoolOp, ExprName, ExprUnaryOp};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
