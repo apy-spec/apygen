@@ -25,10 +25,177 @@ modules:
       dynamic_addition:
         kind: VARIABLE
         type:
-          id: Any
-          module: typing
+          id: Literal
+          module: builtins
           history_index: 0
-          arguments: []
+          arguments:
+            - value:
+                int: "50"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_bitwise_and:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "2"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_bitwise_or:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "43"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_bitwise_xor:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "41"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_division:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "21"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_exponentiation:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "1764"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_floor_division:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "21"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_left_shift:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "168"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_modulo:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "2"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_multiplication:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "84"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_right_shift:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "21"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      dynamic_subtraction:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "37"
         description: ""
         initialised: false
         readonly: false
@@ -38,10 +205,177 @@ modules:
       other_dynamic_addition:
         kind: VARIABLE
         type:
-          id: Any
-          module: typing
+          id: Literal
+          module: builtins
           history_index: 0
-          arguments: []
+          arguments:
+            - value:
+                int: "109"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_bitwise_and:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "0"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_bitwise_or:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "47"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_bitwise_xor:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "37"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_division:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "8"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_exponentiation:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "9682651996416"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_floor_division:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "7"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_left_shift:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "10752"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_modulo:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "0"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_multiplication:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "1764"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_right_shift:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "2"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      other_dynamic_subtraction:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "36"
         description: ""
         initialised: false
         readonly: false
@@ -51,10 +385,177 @@ modules:
       static_addition:
         kind: VARIABLE
         type:
-          id: Any
-          module: typing
+          id: Literal
+          module: builtins
           history_index: 0
-          arguments: []
+          arguments:
+            - value:
+                int: "67"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_bitwise_and:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "0"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_bitwise_or:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "15"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_bitwise_xor:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "15"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_division:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "5"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_exponentiation:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "8"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_floor_division:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "6"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_left_shift:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "8"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_modulo:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "1"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_multiplication:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "42"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_right_shift:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "4"
+        description: ""
+        initialised: false
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      static_subtraction:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "6"
         description: ""
         initialised: false
         readonly: false

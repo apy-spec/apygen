@@ -1,8 +1,8 @@
 pub mod calls;
 
 use crate::abstract_environment::{
-    AbstractEnvironment, Exception, LiteralList, LiteralTuple, Type, TypeLiteral,
-    TypeReference, TypeUnion, resolve_local_attribute,
+    AbstractEnvironment, Exception, LiteralList, LiteralTuple, Type, TypeLiteral, TypeReference,
+    TypeUnion, resolve_local_attribute,
 };
 use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::{Location, NamespacesContext};
@@ -12,7 +12,7 @@ use crate::genkill::literals::{
     gen_expr_none_literal, gen_expr_number_literal, gen_expr_string_literal,
 };
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::cfg::nodes::{Expr, ExprBoolOp, ExprName, ExprUnaryOp};
+use apygen_analysis::cfg::nodes::{Expr, ExprBinOp, ExprBoolOp, ExprName, ExprUnaryOp, Operator};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -256,6 +256,26 @@ pub fn gen_bool_op(
     result
 }
 
+pub fn gen_bin_op(
+    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    environment_location: &Location<QualifiedName>,
+    expr_bin_op: &ExprBinOp,
+) -> GenExprResult<Type> {
+    let left_result = gen_expr(context, environment_location, &expr_bin_op.left);
+    let right_result = gen_expr(context, environment_location, &expr_bin_op.right);
+
+    match (left_result.value, right_result.value) {
+        (Type::Literal(left), Type::Literal(right)) => calls::type_literal::call_binary_op(
+            context,
+            environment_location,
+            left.as_ref(),
+            expr_bin_op.op,
+            right.as_ref(),
+        ),
+        _ => GenExprResult::unknown(),
+    }
+}
+
 pub fn gen_unary_op(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     environment_location: &Location<QualifiedName>,
@@ -282,7 +302,7 @@ pub fn gen_expr(
             return gen_bool_op(context, environment_location, expr_bool_op);
         }
         Expr::Named(_) => return GenExprResult::unknown(),
-        Expr::BinOp(_) => return GenExprResult::unknown(),
+        Expr::BinOp(expr_bin_op) => return gen_bin_op(context, environment_location, expr_bin_op),
         Expr::UnaryOp(expr_unary_op) => {
             return gen_unary_op(context, environment_location, expr_unary_op);
         }
