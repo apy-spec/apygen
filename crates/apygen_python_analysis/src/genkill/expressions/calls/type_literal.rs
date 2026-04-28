@@ -129,6 +129,9 @@ pub fn call_binary_op(
         (TypeLiteral::Float(left), TypeLiteral::Float(right)) => {
             calls::literal_float::call_binary_op(left, operator, right)
         }
+        (TypeLiteral::Complex(left), TypeLiteral::Complex(right)) => {
+            calls::literal_complex::call_binary_op(left, operator, right)
+        }
         _ => GenExprResult::unknown(),
     }
 }
