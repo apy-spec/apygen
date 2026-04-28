@@ -1,8 +1,11 @@
-use crate::abstract_environment::{Exception, LiteralBoolean, LiteralInteger, Type};
+use crate::abstract_environment::{Exception, LiteralBoolean, LiteralFloat, LiteralInteger, Type};
 use crate::genkill::expressions::GenExprResult;
+use crate::genkill::expressions::calls;
 use apygen_analysis::cfg::nodes;
 use num_bigint::BigInt;
-use num_traits::Pow;
+use num_rational::{BigRational, Rational64};
+use num_traits::{Pow, ToPrimitive};
+use ordered_float::OrderedFloat;
 
 pub fn as_boolean(literal_integer: &LiteralInteger) -> bool {
     match literal_integer {
@@ -54,28 +57,67 @@ pub fn call_binary_op(
         nodes::Operator::Sub => Type::new_integer_literal(left - right),
         nodes::Operator::Mult => Type::new_integer_literal(left * right),
         nodes::Operator::Pow => {
-            match right {
+            let big_right = match right {
                 LiteralInteger::Int(small_right) => {
                     if let Ok(small_right) = usize::try_from(*small_right) {
-                        Type::new_integer_literal(left.pow(small_right))
-                    } else {
-                        // TODO: this should call the float implementation of Pow
-                        return GenExprResult::unknown();
+                        return GenExprResult::new_total_pure_non_raising(
+                            Type::new_integer_literal(left.pow(small_right)),
+                        );
                     }
+                    &BigInt::from(*small_right)
                 }
-                LiteralInteger::BigInt(big_right) => {
-                    if let Some(big_right) = big_right.to_biguint() {
-                        Type::new_integer_literal(left.pow(big_right))
-                    } else {
-                        // TODO: this should call the float implementation of Pow
-                        return GenExprResult::unknown();
-                    }
-                }
+                LiteralInteger::BigInt(big_right) => big_right,
+            };
+
+            if let Some(big_right) = big_right.to_biguint() {
+                Type::new_integer_literal(left.pow(big_right))
+            } else if let (Some(left_float), Some(right_float)) = (left.to_f64(), right.to_f64()) {
+                // Handle negative powers
+                return calls::literal_float::call_binary_op(
+                    &LiteralFloat {
+                        value: OrderedFloat(left_float),
+                    },
+                    nodes::Operator::Pow,
+                    &LiteralFloat {
+                        value: OrderedFloat(right_float),
+                    },
+                );
+            } else {
+                return GenExprResult::unknown();
             }
         }
         nodes::Operator::Div => {
-            // TODO: this should call the float implementation of Div
-            return GenExprResult::unknown();
+            if right.is_zero() {
+                return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
+            }
+
+            let (left, right) = match (left, right) {
+                (LiteralInteger::Int(left), LiteralInteger::Int(right)) => {
+                    if let Some(result) = Rational64::new(*left, *right).to_f64() {
+                        return GenExprResult::new_total_pure_non_raising(Type::new_float_literal(
+                            LiteralFloat {
+                                value: OrderedFloat(result),
+                            },
+                        ));
+                    }
+                    (&BigInt::from(*left), &BigInt::from(*right))
+                }
+                (LiteralInteger::Int(left), LiteralInteger::BigInt(right)) => {
+                    (&BigInt::from(*left), right)
+                }
+                (LiteralInteger::BigInt(left), LiteralInteger::Int(right)) => {
+                    (left, &BigInt::from(*right))
+                }
+                (LiteralInteger::BigInt(left), LiteralInteger::BigInt(right)) => (left, right),
+            };
+
+            let Some(result) = BigRational::new(left.clone(), right.clone()).to_f64() else {
+                return GenExprResult::unknown();
+            };
+
+            Type::new_float_literal(LiteralFloat {
+                value: OrderedFloat(result),
+            })
         }
         nodes::Operator::FloorDiv => {
             if right.is_zero() {

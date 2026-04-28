@@ -8,7 +8,7 @@ use apygen_analysis::cfg::ProgramPoint;
 use imbl;
 pub use num_bigint::BigInt;
 use num_bigint::BigUint;
-use num_traits::{Pow, checked_pow};
+use num_traits::{Pow, ToPrimitive, checked_pow};
 pub use ordered_float::OrderedFloat;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
@@ -227,8 +227,8 @@ impl LiteralInteger {
 
     pub fn is_positive(&self) -> bool {
         match self {
-            LiteralInteger::Int(n) => *n >= 0,
-            LiteralInteger::BigInt(n) => n >= &BigInt::ZERO,
+            LiteralInteger::Int(n) => *n > 0,
+            LiteralInteger::BigInt(n) => n > &BigInt::ZERO,
         }
     }
 
@@ -478,6 +478,38 @@ impl Not for &LiteralInteger {
     type Output = LiteralInteger;
 
     impl_literal_integer_not_method!();
+}
+
+macro_rules! impl_literal_integer_to_primitive {
+    ($($method:ident -> $ty:ty),* $(,)?) => {
+        $(
+            fn $method(&self) -> Option<$ty> {
+                match self {
+                    LiteralInteger::Int(n) => n.$method(),
+                    LiteralInteger::BigInt(n) => n.$method(),
+                }
+            }
+        )*
+    };
+}
+
+impl ToPrimitive for LiteralInteger {
+    impl_literal_integer_to_primitive!(
+        to_isize -> isize,
+        to_i8 -> i8,
+        to_i16 -> i16,
+        to_i32 -> i32,
+        to_i64 -> i64,
+        to_i128 -> i128,
+        to_usize -> usize,
+        to_u8 -> u8,
+        to_u16 -> u16,
+        to_u32 -> u32,
+        to_u64 -> u64,
+        to_u128 -> u128,
+        to_f32 -> f32,
+        to_f64 -> f64,
+    );
 }
 
 impl Display for LiteralInteger {

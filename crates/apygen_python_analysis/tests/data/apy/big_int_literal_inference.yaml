@@ -85,10 +85,12 @@ modules:
       dynamic_division:
         kind: VARIABLE
         type:
-          id: Any
-          module: typing
+          id: Literal
+          module: builtins
           history_index: 0
-          arguments: []
+          arguments:
+            - value:
+                float: "17.02271752487567"
         description: ""
         initialised: false
         readonly: false
@@ -441,10 +443,12 @@ modules:
       static_division:
         kind: VARIABLE
         type:
-          id: Any
-          module: typing
+          id: Literal
+          module: builtins
           history_index: 0
-          arguments: []
+          arguments:
+            - value:
+                float: "4.558358419530364"
         description: ""
         initialised: false
         readonly: false
