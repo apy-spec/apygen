@@ -39,30 +39,12 @@ pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
 
 pub fn as_type_reference(type_literal: &TypeLiteral) -> TypeReference {
     match type_literal {
-        TypeLiteral::Integer(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            QualifiedName::parse("int"),
-        ),
-        TypeLiteral::Boolean(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            QualifiedName::parse("bool"),
-        ),
-        TypeLiteral::Float(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            QualifiedName::parse("float"),
-        ),
-        TypeLiteral::Complex(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            QualifiedName::parse("complex"),
-        ),
-        TypeLiteral::String(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            QualifiedName::parse("str"),
-        ),
-        TypeLiteral::Bytes(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            QualifiedName::parse("bytes"),
-        ),
+        TypeLiteral::Integer(_) => TypeReference::builtins("int"),
+        TypeLiteral::Boolean(_) => TypeReference::builtins("bool"),
+        TypeLiteral::Float(_) => TypeReference::builtins("float"),
+        TypeLiteral::Complex(_) => TypeReference::builtins("complex"),
+        TypeLiteral::String(_) => TypeReference::builtins("str"),
+        TypeLiteral::Bytes(_) => TypeReference::builtins("bytes"),
         TypeLiteral::None => TypeReference::new(
             Arc::new(QualifiedName::parse(TYPES_MODULE)),
             QualifiedName::parse("NoneType"),
@@ -71,31 +53,16 @@ pub fn as_type_reference(type_literal: &TypeLiteral) -> TypeReference {
             Arc::new(QualifiedName::parse(TYPES_MODULE)),
             QualifiedName::parse("EllipsisType"),
         ),
-        TypeLiteral::List(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            QualifiedName::parse("list"),
-        ),
-        TypeLiteral::Tuple(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            QualifiedName::parse("tuple"),
-        ),
-        TypeLiteral::Dict(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            QualifiedName::parse("dict"),
-        ),
+        TypeLiteral::List(_) => TypeReference::builtins("list"),
+        TypeLiteral::Tuple(_) => TypeReference::builtins("tuple"),
+        TypeLiteral::Dict(_) => TypeReference::builtins("dict"),
         TypeLiteral::Function(_) => TypeReference::new(
             Arc::new(QualifiedName::parse(TYPES_MODULE)),
             QualifiedName::parse("FunctionType"),
         ),
-        TypeLiteral::Class(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            QualifiedName::parse("type"),
-        ),
+        TypeLiteral::Class(_) => TypeReference::builtins("type"),
         TypeLiteral::TypeAlias(literal_type_alias) => match literal_type_alias.value.kind {
-            TypeAliasKind::Type | TypeAliasKind::String => TypeReference::new(
-                Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                QualifiedName::parse("type"),
-            ),
+            TypeAliasKind::Type | TypeAliasKind::String => TypeReference::builtins("type"),
             TypeAliasKind::Statement => TypeReference::new(
                 Arc::new(QualifiedName::parse(TYPING_MODULE)),
                 QualifiedName::parse("TypeAliasType"),
