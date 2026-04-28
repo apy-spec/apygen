@@ -1,7 +1,6 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, BUILTINS_MODULE, GetAttributeError, LiteralBigInteger,
-    LiteralInteger, LocalAttribute, QualifiedName, TYPING_MODULE, Type, TypeLiteral, TypeReference,
-    TypeUnion,
+    AbstractEnvironment, Attribute, BUILTINS_MODULE, GetAttributeError, LocalAttribute,
+    QualifiedName, TYPING_MODULE, Type, TypeLiteral, TypeReference, TypeUnion,
 };
 use crate::analysis::cfg::nodes::{Expr, ExprSubscript, ExprUnaryOp, UnaryOp};
 use crate::analysis::namespace::{Location, NamespacesContext};
@@ -230,14 +229,9 @@ pub fn gen_expr_unary_op(expression: &ExprUnaryOp) -> Result<Type, GenAnnotation
     };
 
     match number_literal.as_ref() {
-        TypeLiteral::Integer(LiteralInteger { value }) => {
-            Ok(Type::new_literal(TypeLiteral::Integer(LiteralInteger {
-                value: -value,
-            })))
+        TypeLiteral::Integer(literal_integer) => {
+            Ok(Type::new_literal(TypeLiteral::Integer(-literal_integer)))
         }
-        TypeLiteral::BigInteger(LiteralBigInteger { value }) => Ok(Type::new_literal(
-            TypeLiteral::BigInteger(LiteralBigInteger { value: -value }),
-        )),
         _ => unreachable!("gen_expr_number_literal always returns a number literal"),
     }
 }

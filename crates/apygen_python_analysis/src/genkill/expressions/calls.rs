@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 
-pub mod literal_big_integer;
 pub mod literal_boolean;
 pub mod literal_bytes;
 pub mod literal_complex;

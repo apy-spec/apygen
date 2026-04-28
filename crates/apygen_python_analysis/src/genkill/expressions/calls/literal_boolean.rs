@@ -19,22 +19,20 @@ pub fn call_not(literal_boolean: &LiteralBoolean) -> Type {
     })
 }
 
+pub fn as_integer(literal_boolean: &LiteralBoolean) -> i64 {
+    if literal_boolean.value { 1 } else { 0 }
+}
+
 pub fn call_dunder_pos(literal_boolean: &LiteralBoolean) -> Type {
-    Type::new_integer_literal(LiteralInteger {
-        value: if literal_boolean.value { 1 } else { 0 },
-    })
+    Type::new_integer_literal(LiteralInteger::Int(as_integer(literal_boolean)))
 }
 
 pub fn call_dunder_neg(literal_boolean: &LiteralBoolean) -> Type {
-    Type::new_integer_literal(LiteralInteger {
-        value: if literal_boolean.value { -1 } else { 0 },
-    })
+    Type::new_integer_literal(LiteralInteger::Int(-as_integer(literal_boolean)))
 }
 
 pub fn call_dunder_invert(literal_boolean: &LiteralBoolean) -> Type {
-    Type::new_integer_literal(LiteralInteger {
-        value: if literal_boolean.value { -2 } else { -1 },
-    })
+    Type::new_integer_literal(LiteralInteger::Int(!as_integer(literal_boolean)))
 }
 
 pub fn call_unary_op(literal_boolean: &LiteralBoolean, operator: nodes::UnaryOp) -> Type {
@@ -52,12 +50,8 @@ pub fn call_binary_op(
     right: &LiteralBoolean,
 ) -> GenExprResult<Type> {
     calls::literal_integer::call_binary_op(
-        &LiteralInteger {
-            value: if left.value { 1 } else { 0 },
-        },
+        &LiteralInteger::Int(as_integer(left)),
         operator,
-        &LiteralInteger {
-            value: if right.value { 1 } else { 0 },
-        },
+        &LiteralInteger::Int(as_integer(right)),
     )
 }

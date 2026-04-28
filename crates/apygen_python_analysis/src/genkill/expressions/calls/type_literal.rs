@@ -13,9 +13,6 @@ pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
         TypeLiteral::Integer(literal_integer) => {
             Some(calls::literal_integer::as_boolean(literal_integer))
         }
-        TypeLiteral::BigInteger(literal_big_integer) => {
-            Some(calls::literal_big_integer::as_boolean(literal_big_integer))
-        }
         TypeLiteral::Boolean(literal_boolean) => {
             Some(calls::literal_boolean::as_boolean(literal_boolean))
         }
@@ -43,10 +40,6 @@ pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
 pub fn as_type_reference(type_literal: &TypeLiteral) -> TypeReference {
     match type_literal {
         TypeLiteral::Integer(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            QualifiedName::parse("int"),
-        ),
-        TypeLiteral::BigInteger(_) => TypeReference::new(
             Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
             QualifiedName::parse("int"),
         ),
@@ -130,9 +123,6 @@ pub fn call_binary_op(
         (TypeLiteral::Integer(left), TypeLiteral::Integer(right)) => {
             calls::literal_integer::call_binary_op(left, operator, right)
         }
-        (TypeLiteral::BigInteger(left), TypeLiteral::BigInteger(right)) => {
-            calls::literal_big_integer::call_binary_op(left, operator, right)
-        }
         (TypeLiteral::Boolean(left), TypeLiteral::Boolean(right)) => {
             calls::literal_boolean::call_binary_op(left, operator, right)
         }
@@ -147,9 +137,6 @@ pub fn call_unary_op(type_literal: &TypeLiteral, operator: nodes::UnaryOp) -> Ge
     GenExprResult::new_total_pure_non_raising(match type_literal {
         TypeLiteral::Integer(literal_integer) => {
             calls::literal_integer::call_unary_op(literal_integer, operator)
-        }
-        TypeLiteral::BigInteger(literal_big_integer) => {
-            calls::literal_big_integer::call_unary_op(literal_big_integer, operator)
         }
         TypeLiteral::Boolean(literal_boolean) => {
             calls::literal_boolean::call_unary_op(literal_boolean, operator)

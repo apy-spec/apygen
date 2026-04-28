@@ -1,14 +1,14 @@
-use crate::abstract_environment::{
-    Exception, LiteralBigInteger, LiteralBoolean, LiteralFloat, LiteralInteger, Type,
-};
+use crate::abstract_environment::{Exception, LiteralBoolean, LiteralInteger, Type};
 use crate::genkill::expressions::GenExprResult;
 use apygen_analysis::cfg::nodes;
 use num_bigint::BigInt;
-use num_traits::CheckedEuclid;
-use ordered_float::OrderedFloat;
+use num_traits::Pow;
 
 pub fn as_boolean(literal_integer: &LiteralInteger) -> bool {
-    literal_integer.value != 0
+    match literal_integer {
+        LiteralInteger::Int(value) => *value != 0,
+        LiteralInteger::BigInt(value) => value != &BigInt::ZERO,
+    }
 }
 
 pub fn call_dunder_bool(literal_integer: &LiteralInteger) -> Type {
@@ -24,21 +24,15 @@ pub fn call_not(literal_integer: &LiteralInteger) -> Type {
 }
 
 pub fn call_dunder_pos(literal_integer: &LiteralInteger) -> Type {
-    Type::new_integer_literal(LiteralInteger {
-        value: literal_integer.value,
-    })
+    Type::new_integer_literal(literal_integer.clone())
 }
 
 pub fn call_dunder_neg(literal_integer: &LiteralInteger) -> Type {
-    Type::new_integer_literal(LiteralInteger {
-        value: -literal_integer.value,
-    })
+    Type::new_integer_literal(-literal_integer)
 }
 
 pub fn call_dunder_invert(literal_integer: &LiteralInteger) -> Type {
-    Type::new_integer_literal(LiteralInteger {
-        value: !literal_integer.value, // Equivalent of ~ in Rust is ! for integers
-    })
+    Type::new_integer_literal(!literal_integer)
 }
 
 pub fn call_unary_op(literal_integer: &LiteralInteger, operator: nodes::UnaryOp) -> Type {
@@ -56,139 +50,78 @@ pub fn call_binary_op(
     right: &LiteralInteger,
 ) -> GenExprResult<Type> {
     GenExprResult::new_total_pure_non_raising(match operator {
-        nodes::Operator::Add => {
-            if let Some(addition) = left.value.checked_add(right.value) {
-                Type::new_integer_literal(LiteralInteger { value: addition })
-            } else {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: BigInt::from(left.value) + BigInt::from(right.value),
-                })
-            }
-        }
-        nodes::Operator::Sub => {
-            if let Some(subtraction) = left.value.checked_sub(right.value) {
-                Type::new_integer_literal(LiteralInteger { value: subtraction })
-            } else {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: BigInt::from(left.value) - BigInt::from(right.value),
-                })
-            }
-        }
-        nodes::Operator::Mult => {
-            if let Some(multiplication) = left.value.checked_mul(right.value) {
-                Type::new_integer_literal(LiteralInteger {
-                    value: multiplication,
-                })
-            } else {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: BigInt::from(left.value) * BigInt::from(right.value),
-                })
-            }
-        }
+        nodes::Operator::Add => Type::new_integer_literal(left + right),
+        nodes::Operator::Sub => Type::new_integer_literal(left - right),
+        nodes::Operator::Mult => Type::new_integer_literal(left * right),
         nodes::Operator::Pow => {
-            let Ok(value) = u32::try_from(right.value) else {
-                return GenExprResult::unknown();
-            };
-
-            if let Some(power) = left.value.checked_pow(value) {
-                Type::new_integer_literal(LiteralInteger { value: power })
-            } else {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: BigInt::from(left.value).pow(value),
-                })
+            match right {
+                LiteralInteger::Int(small_right) => {
+                    if let Ok(small_right) = usize::try_from(*small_right) {
+                        Type::new_integer_literal(left.pow(small_right))
+                    } else {
+                        // TODO: this should call the float implementation of Pow
+                        return GenExprResult::unknown();
+                    }
+                }
+                LiteralInteger::BigInt(big_right) => {
+                    if let Some(big_right) = big_right.to_biguint() {
+                        Type::new_integer_literal(left.pow(big_right))
+                    } else {
+                        // TODO: this should call the float implementation of Pow
+                        return GenExprResult::unknown();
+                    }
+                }
             }
         }
         nodes::Operator::Div => {
-            if right.value == 0 {
-                return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
-            }
-
-            if left
-                .value
-                .checked_rem(right.value)
-                .is_some_and(|remainder| remainder == 0)
-            {
-                if let Some(division) = left.value.checked_div(right.value) {
-                    Type::new_integer_literal(LiteralInteger { value: division })
-                } else {
-                    Type::new_big_integer_literal(LiteralBigInteger {
-                        value: BigInt::from(left.value) / BigInt::from(right.value),
-                    })
-                }
-            } else if BigInt::from(left.value)
-                .checked_rem_euclid(&BigInt::from(right.value))
-                .is_some_and(|remainder| remainder == BigInt::ZERO)
-            {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: BigInt::from(left.value) / BigInt::from(right.value),
-                })
-            } else {
-                Type::new_float_literal(LiteralFloat {
-                    value: OrderedFloat((left.value as f64) / (right.value as f64)),
-                })
-            }
+            // TODO: this should call the float implementation of Div
+            return GenExprResult::unknown();
         }
         nodes::Operator::FloorDiv => {
-            if right.value == 0 {
+            if right.is_zero() {
                 return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
             }
 
-            if let Some(division) = left.value.checked_div(right.value) {
-                Type::new_integer_literal(LiteralInteger { value: division })
-            } else {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: BigInt::from(left.value) / BigInt::from(right.value),
-                })
-            }
+            Type::new_integer_literal(left / right)
         }
         nodes::Operator::Mod => {
-            if right.value == 0 {
+            if right.is_zero() {
                 return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
             }
 
-            if let Some(division) = left.value.checked_rem(right.value) {
-                Type::new_integer_literal(LiteralInteger { value: division })
-            } else {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: BigInt::from(left.value) % BigInt::from(right.value),
-                })
-            }
+            Type::new_integer_literal(left % right)
         }
-        nodes::Operator::LShift => {
-            let Ok(value) = u32::try_from(right.value) else {
+        nodes::Operator::LShift => match right {
+            LiteralInteger::Int(small_right) => {
+                if let Ok(small_right) = usize::try_from(*small_right) {
+                    Type::new_integer_literal(left << small_right)
+                } else if let Ok(small_right) = isize::try_from(*small_right) {
+                    Type::new_integer_literal(left << small_right)
+                } else {
+                    return GenExprResult::unknown();
+                }
+            }
+            LiteralInteger::BigInt(_) => {
                 return GenExprResult::unknown();
-            };
-
-            if let Some(shift_left) = left.value.checked_shl(value) {
-                Type::new_integer_literal(LiteralInteger { value: shift_left })
-            } else {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: BigInt::from(left.value) << value,
-                })
             }
-        }
-        nodes::Operator::RShift => {
-            let Ok(value) = u32::try_from(right.value) else {
+        },
+        nodes::Operator::RShift => match right {
+            LiteralInteger::Int(small_right) => {
+                if let Ok(small_right) = usize::try_from(*small_right) {
+                    Type::new_integer_literal(left >> small_right)
+                } else if let Ok(small_right) = isize::try_from(*small_right) {
+                    Type::new_integer_literal(left >> small_right)
+                } else {
+                    return GenExprResult::unknown();
+                }
+            }
+            LiteralInteger::BigInt(_) => {
                 return GenExprResult::unknown();
-            };
-
-            if let Some(shift_right) = left.value.checked_shr(value) {
-                Type::new_integer_literal(LiteralInteger { value: shift_right })
-            } else {
-                Type::new_big_integer_literal(LiteralBigInteger {
-                    value: BigInt::from(left.value) >> value,
-                })
             }
-        }
-        nodes::Operator::BitOr => Type::new_integer_literal(LiteralInteger {
-            value: left.value | right.value,
-        }),
-        nodes::Operator::BitXor => Type::new_integer_literal(LiteralInteger {
-            value: left.value ^ right.value,
-        }),
-        nodes::Operator::BitAnd => Type::new_integer_literal(LiteralInteger {
-            value: left.value & right.value,
-        }),
+        },
+        nodes::Operator::BitOr => Type::new_integer_literal(left | right),
+        nodes::Operator::BitXor => Type::new_integer_literal(left ^ right),
+        nodes::Operator::BitAnd => Type::new_integer_literal(left & right),
         nodes::Operator::MatMult => return GenExprResult::raise(Exception::type_error()),
     })
 }

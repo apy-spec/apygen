@@ -1,9 +1,9 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, BUILTINS_MODULE, LiteralBigInteger, LiteralBoolean,
-    LiteralBytes, LiteralClass, LiteralComplex, LiteralDict, LiteralFloat, LiteralFunction,
-    LiteralGeneric, LiteralImportedModule, LiteralInteger, LiteralList, LiteralString,
-    LiteralTuple, LiteralTypeAlias, QualifiedName, TYPES_MODULE, TYPING_MODULE, Type, TypeLiteral,
-    TypeReference, TypeUnion,
+    AbstractEnvironment, Attribute, BUILTINS_MODULE, LiteralBoolean, LiteralBytes, LiteralClass,
+    LiteralComplex, LiteralDict, LiteralFloat, LiteralFunction, LiteralGeneric,
+    LiteralImportedModule, LiteralInteger, LiteralList, LiteralString, LiteralTuple,
+    LiteralTypeAlias, QualifiedName, TYPES_MODULE, TYPING_MODULE, Type, TypeLiteral, TypeReference,
+    TypeUnion,
 };
 use crate::genkill::visibility::visibility_from_module_name;
 use apy;
@@ -22,17 +22,7 @@ pub fn new_literal(arguments: Vec<apy::v1::TypeArgument>) -> apy::v1::TypeRefere
 pub fn convert_literal_integer(literal_integer: &LiteralInteger) -> apy::v1::TypeReference {
     new_literal(vec![apy::v1::TypeArgument::Value {
         value: apy::v1::PythonValue::Int {
-            int: literal_integer.value.to_string(),
-        },
-    }])
-}
-
-pub fn convert_literal_big_integer(
-    literal_big_integer: &LiteralBigInteger,
-) -> apy::v1::TypeReference {
-    new_literal(vec![apy::v1::TypeArgument::Value {
-        value: apy::v1::PythonValue::Int {
-            int: literal_big_integer.value.to_string(),
+            int: literal_integer.to_string(),
         },
     }])
 }
@@ -191,9 +181,6 @@ pub fn convert_type_literal(
     Some(match type_literal {
         TypeLiteral::Integer(literal_integer) => {
             ConvertedTypeLiteral::TypeReference(convert_literal_integer(literal_integer))
-        }
-        TypeLiteral::BigInteger(literal_big_integer) => {
-            ConvertedTypeLiteral::TypeReference(convert_literal_big_integer(literal_big_integer))
         }
         TypeLiteral::Boolean(literal_boolean) => {
             ConvertedTypeLiteral::TypeReference(convert_literal_boolean(literal_boolean))

@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
-    LiteralBigInteger, LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger,
-    LiteralString, OrderedFloat, Type, TypeLiteral,
+    LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger, LiteralString,
+    OrderedFloat, Type, TypeLiteral,
 };
 use crate::analysis::cfg::nodes::{
     ExprBooleanLiteral, ExprBytesLiteral, ExprNumberLiteral, ExprStringLiteral, Number,
@@ -28,22 +28,20 @@ pub fn gen_expr_bytes_literal(expression: &ExprBytesLiteral) -> Type {
 pub fn gen_expr_number_literal(expression: &ExprNumberLiteral) -> Type {
     match &expression.value {
         Number::Int(int) => Type::new_literal(match int.as_i64() {
-            Some(value) => TypeLiteral::Integer(LiteralInteger { value }),
-            None => TypeLiteral::BigInteger(LiteralBigInteger {
-                value: {
-                    let base = int.to_string();
+            Some(value) => TypeLiteral::Integer(LiteralInteger::Int(value)),
+            None => TypeLiteral::Integer(LiteralInteger::BigInt({
+                let base = int.to_string();
 
-                    if base.starts_with("0x") || base.starts_with("0X") {
-                        BigInt::from_str_radix(&base[2..], 16).unwrap()
-                    } else if base.starts_with("0o") || base.starts_with("0O") {
-                        BigInt::from_str_radix(&base[2..], 8).unwrap()
-                    } else if base.starts_with("0b") || base.starts_with("0B") {
-                        BigInt::from_str_radix(&base[2..], 2).unwrap()
-                    } else {
-                        BigInt::from_str_radix(&base, 10).unwrap()
-                    }
-                },
-            }),
+                if base.starts_with("0x") || base.starts_with("0X") {
+                    BigInt::from_str_radix(&base[2..], 16).unwrap()
+                } else if base.starts_with("0o") || base.starts_with("0O") {
+                    BigInt::from_str_radix(&base[2..], 8).unwrap()
+                } else if base.starts_with("0b") || base.starts_with("0B") {
+                    BigInt::from_str_radix(&base[2..], 2).unwrap()
+                } else {
+                    BigInt::from_str_radix(&base, 10).unwrap()
+                }
+            })),
         }),
         Number::Float(float) => Type::new_literal(TypeLiteral::Float(LiteralFloat {
             value: OrderedFloat(*float),
