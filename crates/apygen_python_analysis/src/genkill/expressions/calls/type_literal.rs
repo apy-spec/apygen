@@ -28,7 +28,7 @@ pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
         TypeLiteral::Ellipsis => Some(calls::literal_ellipsis::as_boolean()),
         TypeLiteral::List(list) => Some(!list.value.is_empty()),
         TypeLiteral::Tuple(tuple) => Some(!tuple.value.is_empty()),
-        TypeLiteral::Dict(dict) => Some(!dict.value.is_empty()),
+        TypeLiteral::Dict(dict) => Some(!dict.values.is_empty()),
         TypeLiteral::Function(_) => None,
         TypeLiteral::Class(_) => None,
         TypeLiteral::TypeAlias(_) => None,

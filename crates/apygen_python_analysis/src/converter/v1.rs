@@ -46,8 +46,8 @@ pub fn convert_literal_float(literal_float: &LiteralFloat) -> apy::v1::TypeRefer
 pub fn convert_literal_complex(literal_complex: &LiteralComplex) -> apy::v1::TypeReference {
     new_literal(vec![apy::v1::TypeArgument::Value {
         value: apy::v1::PythonValue::Complex {
-            real: literal_complex.real.to_string(),
-            imaginary: literal_complex.imaginary.to_string(),
+            real: literal_complex.value.re.to_string(),
+            imaginary: literal_complex.value.im.to_string(),
         },
     }])
 }

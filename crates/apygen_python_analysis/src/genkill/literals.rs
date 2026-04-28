@@ -1,11 +1,12 @@
 use crate::abstract_environment::{
     LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger, LiteralString,
-    OrderedFloat, Type, TypeLiteral,
+    Type, TypeLiteral,
 };
 use crate::analysis::cfg::nodes::{
     ExprBooleanLiteral, ExprBytesLiteral, ExprNumberLiteral, ExprStringLiteral, Number,
 };
 use num_bigint::BigInt;
+use num_complex::Complex64;
 use num_traits::Num;
 use std::sync::Arc;
 
@@ -43,12 +44,11 @@ pub fn gen_expr_number_literal(expression: &ExprNumberLiteral) -> Type {
                 }
             })),
         }),
-        Number::Float(float) => Type::new_literal(TypeLiteral::Float(LiteralFloat {
-            value: OrderedFloat(*float),
-        })),
+        Number::Float(float) => {
+            Type::new_literal(TypeLiteral::Float(LiteralFloat { value: *float }))
+        }
         Number::Complex { real, imag } => Type::new_literal(TypeLiteral::Complex(LiteralComplex {
-            real: OrderedFloat(*real),
-            imaginary: OrderedFloat(*imag),
+            value: Complex64::new(*real, *imag),
         })),
     }
 }

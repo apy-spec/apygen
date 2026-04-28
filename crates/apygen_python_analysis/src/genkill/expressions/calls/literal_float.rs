@@ -2,7 +2,6 @@ use crate::abstract_environment::{Exception, LiteralBoolean, LiteralFloat, Type}
 use crate::genkill::expressions::GenExprResult;
 use apygen_analysis::cfg::nodes;
 use num_traits::Pow;
-use ordered_float::OrderedFloat;
 
 pub fn as_boolean(literal_float: &LiteralFloat) -> bool {
     literal_float.value != 0.0
@@ -79,7 +78,7 @@ pub fn call_binary_op(
             }
 
             Type::new_float_literal(LiteralFloat {
-                value: OrderedFloat((left.value / right.value).floor()),
+                value: (left.value / right.value).floor(),
             })
         }
         nodes::Operator::Mod => {

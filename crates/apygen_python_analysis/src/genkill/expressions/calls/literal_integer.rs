@@ -5,7 +5,6 @@ use apygen_analysis::cfg::nodes;
 use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
 use num_traits::{Pow, ToPrimitive};
-use ordered_float::OrderedFloat;
 
 pub fn as_boolean(literal_integer: &LiteralInteger) -> bool {
     match literal_integer {
@@ -75,11 +74,11 @@ pub fn call_binary_op(
                 // Handle negative powers
                 return calls::literal_float::call_binary_op(
                     &LiteralFloat {
-                        value: OrderedFloat(left_float),
+                        value: left_float,
                     },
                     nodes::Operator::Pow,
                     &LiteralFloat {
-                        value: OrderedFloat(right_float),
+                        value: right_float,
                     },
                 );
             } else {
@@ -93,11 +92,9 @@ pub fn call_binary_op(
 
             let (left, right) = match (left, right) {
                 (LiteralInteger::Int(left), LiteralInteger::Int(right)) => {
-                    if let Some(result) = Rational64::new(*left, *right).to_f64() {
+                    if let Some(value) = Rational64::new(*left, *right).to_f64() {
                         return GenExprResult::new_total_pure_non_raising(Type::new_float_literal(
-                            LiteralFloat {
-                                value: OrderedFloat(result),
-                            },
+                            LiteralFloat { value },
                         ));
                     }
                     (&BigInt::from(*left), &BigInt::from(*right))
@@ -111,13 +108,11 @@ pub fn call_binary_op(
                 (LiteralInteger::BigInt(left), LiteralInteger::BigInt(right)) => (left, right),
             };
 
-            let Some(result) = BigRational::new(left.clone(), right.clone()).to_f64() else {
+            let Some(value) = BigRational::new(left.clone(), right.clone()).to_f64() else {
                 return GenExprResult::unknown();
             };
 
-            Type::new_float_literal(LiteralFloat {
-                value: OrderedFloat(result),
-            })
+            Type::new_float_literal(LiteralFloat { value })
         }
         nodes::Operator::FloorDiv => {
             if right.is_zero() {

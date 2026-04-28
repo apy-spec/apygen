@@ -8,8 +8,9 @@ use apygen_analysis::cfg::ProgramPoint;
 use imbl;
 pub use num_bigint::BigInt;
 use num_bigint::BigUint;
+use num_complex::Complex64;
 use num_traits::{Pow, ToPrimitive, checked_pow};
-pub use ordered_float::OrderedFloat;
+use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 use std::sync::Arc;
@@ -526,15 +527,78 @@ pub struct LiteralBoolean {
     pub value: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone)]
 pub struct LiteralFloat {
-    pub value: OrderedFloat<f64>,
+    pub value: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+impl LiteralFloat {
+    pub fn new(value: f64) -> Self {
+        LiteralFloat { value }
+    }
+}
+
+// LiteralFloat is metadata about a float literal so we can implement Eq and Ord.
+impl PartialEq<Self> for LiteralFloat {
+    fn eq(&self, other: &Self) -> bool {
+        if self.value.is_nan() {
+            other.value.is_nan()
+        } else {
+            self.value == other.value
+        }
+    }
+}
+
+impl Eq for LiteralFloat {}
+
+impl PartialOrd<Self> for LiteralFloat {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LiteralFloat {
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.value < other.value {
+            Ordering::Less
+        } else if self.value > other.value {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct LiteralComplex {
-    pub real: OrderedFloat<f64>,
-    pub imaginary: OrderedFloat<f64>,
+    pub value: Complex64,
+}
+
+// LiteralComplex is metadata about a complex literal so we can implement Eq and Ord.
+impl PartialEq for LiteralComplex {
+    fn eq(&self, other: &Self) -> bool {
+        LiteralFloat::new(self.value.re) == LiteralFloat::new(other.value.re)
+            && LiteralFloat::new(self.value.im) == LiteralFloat::new(other.value.im)
+    }
+}
+
+impl Eq for LiteralComplex {}
+
+impl PartialOrd for LiteralComplex {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LiteralComplex {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match LiteralFloat::new(self.value.re).cmp(&LiteralFloat::new(other.value.re)) {
+            Ordering::Equal => {
+                LiteralFloat::new(self.value.im).cmp(&LiteralFloat::new(other.value.im))
+            }
+            ordering => ordering,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -578,13 +642,60 @@ impl StructuralDepth for LiteralTuple {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TypeLiteralKey {
+    Integer(LiteralInteger),
+    Boolean(LiteralBoolean),
+    Float(LiteralFloat),
+    Complex(LiteralComplex),
+    String(LiteralString),
+    Bytes(LiteralBytes),
+
+    None,
+    Ellipsis,
+
+    Tuple(LiteralTuple),
+
+    Function(LiteralFunction),
+    Class(LiteralClass),
+    TypeAlias(LiteralTypeAlias),
+    Generic(LiteralGeneric),
+    ImportedModule(LiteralImportedModule),
+}
+
+impl StructuralDepth for TypeLiteralKey {
+    fn depth(&self) -> usize {
+        match self {
+            TypeLiteralKey::Integer(_)
+            | TypeLiteralKey::Boolean(_)
+            | TypeLiteralKey::Float(_)
+            | TypeLiteralKey::Complex(_)
+            | TypeLiteralKey::String(_)
+            | TypeLiteralKey::Bytes(_)
+            | TypeLiteralKey::None
+            | TypeLiteralKey::Ellipsis
+            | TypeLiteralKey::ImportedModule(_) => 0,
+            TypeLiteralKey::Tuple(literal_tuple) => literal_tuple.depth(),
+            TypeLiteralKey::Function(literal_function) => literal_function.value.depth(),
+            TypeLiteralKey::Class(literal_class) => literal_class.value.depth(),
+            TypeLiteralKey::TypeAlias(literal_type_alias) => literal_type_alias.value.depth(),
+            TypeLiteralKey::Generic(literal_generic) => literal_generic.value.depth(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralDict {
-    pub value: imbl::OrdMap<Arc<TypeLiteral>, Arc<TypeLiteral>>,
+    pub values: imbl::Vector<(Arc<TypeLiteralKey>, Arc<TypeLiteral>)>,
 }
 
 impl StructuralDepth for LiteralDict {
     fn depth(&self) -> usize {
-        1 + iter_depth(self.value.keys()).max(iter_depth(self.value.values()))
+        1 + self
+            .values
+            .iter()
+            .map(|(k, v)| k.depth().max(v.depth()))
+            .max()
+            .unwrap_or(0)
     }
 }
 
@@ -672,17 +783,17 @@ impl Display for TypeLiteral {
                 write!(f, "builtins.Literal[{}]", literal_float.value)
             }
             TypeLiteral::Complex(literal_complex) => {
-                if literal_complex.imaginary >= OrderedFloat(0.0) {
+                if literal_complex.value.im >= 0.0 {
                     write!(
                         f,
                         "apy_extensions.Literal[{}+{}j]",
-                        literal_complex.real, literal_complex.imaginary
+                        literal_complex.value.re, literal_complex.value.im
                     )
                 } else {
                     write!(
                         f,
                         "apy_extensions.Literal[{}{}j]",
-                        literal_complex.real, literal_complex.imaginary
+                        literal_complex.value.re, literal_complex.value.im
                     )
                 }
             }
@@ -720,9 +831,9 @@ impl Display for TypeLiteral {
                 f,
                 "apy_extensions.Literal[{{{}}}]",
                 literal_dict
-                    .value
+                    .values
                     .iter()
-                    .map(|(key, value)| format!("{}: {}", key, value))
+                    .map(|(key, value)| format!("{:?}: {}", key, value))
                     .collect::<Vec<_>>()
                     .join(", ")
             ),

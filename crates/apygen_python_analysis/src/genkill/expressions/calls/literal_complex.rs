@@ -1,9 +1,10 @@
 use crate::abstract_environment::{Exception, LiteralBoolean, LiteralComplex, Type};
 use crate::genkill::expressions::GenExprResult;
 use apygen_analysis::cfg::nodes;
+use num_complex::Complex64;
 
 pub fn as_boolean(literal_complex: &LiteralComplex) -> bool {
-    literal_complex.real != 0.0 || literal_complex.imaginary != 0.0
+    literal_complex.value.re != 0.0 || literal_complex.value.im != 0.0
 }
 
 pub fn call_dunder_bool(literal_complex: &LiteralComplex) -> Type {
@@ -24,8 +25,7 @@ pub fn call_dunder_pos(literal_complex: &LiteralComplex) -> Type {
 
 pub fn call_dunder_neg(literal_complex: &LiteralComplex) -> Type {
     Type::new_complex_literal(LiteralComplex {
-        real: -literal_complex.real,
-        imaginary: -literal_complex.imaginary,
+        value: Complex64::new(-literal_complex.value.re, -literal_complex.value.im),
     })
 }
 
