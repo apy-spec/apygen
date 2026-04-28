@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, BUILTINS_MODULE, TYPES_MODULE, TYPING_MODULE, Type, TypeAliasKind,
-    TypeLiteral, TypeReference,
+    AbstractEnvironment, TYPES_MODULE, TYPING_MODULE, Type, TypeAliasKind, TypeLiteral,
+    TypeReference,
 };
 use crate::genkill::expressions::{GenExprResult, calls};
 use apy::v1::QualifiedName;
