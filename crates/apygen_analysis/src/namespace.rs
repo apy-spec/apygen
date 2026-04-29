@@ -72,14 +72,16 @@ impl<M> From<M> for NamespaceLocation<M> {
 
 impl<M: Display> Display for NamespaceLocation<M> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:[", self.module)?;
-        for (i, program_point) in self.program_points.iter().enumerate() {
-            if i > 0 {
-                write!(f, " => ")?;
+        write!(f, "{}", self.module)?;
+
+        if !self.program_points.is_empty() {
+            write!(f, "@")?;
+            for program_point in self.program_points.iter() {
+                write!(f, "{}", program_point)?;
             }
-            write!(f, "{}", program_point)?;
         }
-        write!(f, "]")
+
+        Ok(())
     }
 }
 
@@ -111,6 +113,12 @@ impl<M> From<Arc<M>> for Location<M> {
 impl<M> From<M> for Location<M> {
     fn from(module: M) -> Self {
         Self::from(Arc::new(module))
+    }
+}
+
+impl<M: Display> Display for Location<M> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.namespace_location, self.program_point)
     }
 }
 

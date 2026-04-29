@@ -3,10 +3,9 @@ use crate::abstract_environment::{
     TypeReference,
 };
 use crate::genkill::expressions::{self, GenExprResult};
-use apy::v1::QualifiedName;
+use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::nodes;
 use apygen_analysis::namespace::{Location, NamespacesContext};
-use std::sync::Arc;
 
 pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
     match type_literal {
@@ -50,35 +49,35 @@ pub fn as_type_reference(type_literal: &TypeLiteral) -> TypeReference {
         TypeLiteral::String(_) => TypeReference::builtins("str"),
         TypeLiteral::Bytes(_) => TypeReference::builtins("bytes"),
         TypeLiteral::None => TypeReference::new(
-            Arc::new(QualifiedName::parse(TYPES_MODULE)),
-            QualifiedName::parse("NoneType"),
+            Location::from(QualifiedName::parse(TYPES_MODULE)),
+            Identifier::parse("NoneType"),
         ),
         TypeLiteral::Ellipsis => TypeReference::new(
-            Arc::new(QualifiedName::parse(TYPES_MODULE)),
-            QualifiedName::parse("EllipsisType"),
+            Location::from(QualifiedName::parse(TYPES_MODULE)),
+            Identifier::parse("EllipsisType"),
         ),
         TypeLiteral::List(_) => TypeReference::builtins("list"),
         TypeLiteral::Tuple(_) => TypeReference::builtins("tuple"),
         TypeLiteral::Dict(_) => TypeReference::builtins("dict"),
         TypeLiteral::Function(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(TYPES_MODULE)),
-            QualifiedName::parse("FunctionType"),
+            Location::from(QualifiedName::parse(TYPES_MODULE)),
+            Identifier::parse("FunctionType"),
         ),
         TypeLiteral::Class(_) => TypeReference::builtins("type"),
         TypeLiteral::TypeAlias(literal_type_alias) => match literal_type_alias.value.kind {
             TypeAliasKind::Type | TypeAliasKind::String => TypeReference::builtins("type"),
             TypeAliasKind::Statement => TypeReference::new(
-                Arc::new(QualifiedName::parse(TYPING_MODULE)),
-                QualifiedName::parse("TypeAliasType"),
+                Location::from(QualifiedName::parse(TYPING_MODULE)),
+                Identifier::parse("TypeAliasType"),
             ),
         },
         TypeLiteral::Generic(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(TYPING_MODULE)),
-            QualifiedName::parse("TypeVar"),
+            Location::from(QualifiedName::parse(TYPING_MODULE)),
+            Identifier::parse("TypeVar"),
         ),
         TypeLiteral::ImportedModule(_) => TypeReference::new(
-            Arc::new(QualifiedName::parse(TYPES_MODULE)),
-            QualifiedName::parse("ModuleType"),
+            Location::from(QualifiedName::parse(TYPES_MODULE)),
+            Identifier::parse("ModuleType"),
         ),
     }
 }

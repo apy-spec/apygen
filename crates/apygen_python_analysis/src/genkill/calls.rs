@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use apy::v1::{Identifier, ParameterKind};
+use apy::v1::{Identifier, ParameterKind, QualifiedName};
 use thiserror::Error;
-use crate::abstract_environment::{LiteralString, LiteralTuple, Parameter, Type, TypeLiteral, TypeReference, TypeUnion};
+use apygen_analysis::namespace::{Location, NamespaceLocation, NamespacesContext};
+use crate::abstract_environment::{get_attribute, AbstractEnvironment, LiteralString, LiteralTuple, Parameter, Type, TypeLiteral, TypeReference, TypeUnion};
+use crate::genkill::expressions::GenExprResult;
 
 #[derive(Error, Debug)]
 pub enum BindError {

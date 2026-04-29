@@ -4,7 +4,6 @@ pub use apy::OneOrMany;
 pub use apy::v1::{
     GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName, Visibility,
 };
-use apygen_analysis::cfg::ProgramPoint;
 use imbl;
 pub use num_bigint::BigInt;
 use num_bigint::BigUint;
@@ -868,26 +867,24 @@ impl Display for TypeLiteral {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypeReference {
-    pub module: Arc<QualifiedName>,
-    pub name: QualifiedName,
+    pub origin: Location<QualifiedName>,
+    pub name: Identifier,
     pub arguments: imbl::Vector<Arc<Type>>,
-    pub origin: ProgramPoint,
 }
 
 impl TypeReference {
-    pub fn new(module: Arc<QualifiedName>, name: QualifiedName) -> Self {
+    pub fn new(origin: Location<QualifiedName>, name: Identifier) -> Self {
         TypeReference {
-            module,
+            origin,
             name,
             arguments: imbl::Vector::new(),
-            origin: ProgramPoint::Exit,
         }
     }
 
     pub fn builtins(name: &str) -> Self {
         TypeReference::new(
-            Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            QualifiedName::parse(name),
+            Location::from(QualifiedName::parse(BUILTINS_MODULE)),
+            Identifier::parse(name),
         )
     }
 
@@ -899,13 +896,18 @@ impl TypeReference {
         TypeReference::builtins("tuple").with_arguments(element_types.into_iter().collect())
     }
 
-    pub fn with_arguments(mut self, arguments: imbl::Vector<Arc<Type>>) -> Self {
-        self.arguments = arguments;
+    pub fn with_origin(mut self, origin: Location<QualifiedName>) -> Self {
+        self.origin = origin;
         self
     }
 
-    pub fn with_origin(mut self, origin: ProgramPoint) -> Self {
-        self.origin = origin;
+    pub fn with_name(mut self, name: Identifier) -> Self {
+        self.name = name;
+        self
+    }
+
+    pub fn with_arguments(mut self, arguments: imbl::Vector<Arc<Type>>) -> Self {
+        self.arguments = arguments;
         self
     }
 }
@@ -918,21 +920,20 @@ impl StructuralDepth for TypeReference {
 
 impl Display for TypeReference {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if self.arguments.is_empty() {
-            write!(f, "{}.{}", self.module, self.name)
-        } else {
-            write!(
-                f,
-                "{}.{}[{}]",
-                self.module,
-                self.name,
-                self.arguments
-                    .iter()
-                    .map(|arg| arg.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
+        write!(f, "({}).{}", self.origin, self.name)?;
+
+        if !self.arguments.is_empty() {
+            write!(f, "[")?;
+            for (i, argument) in self.arguments.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", argument)?;
+            }
+            write!(f, "]")?;
         }
+
+        Ok(())
     }
 }
 

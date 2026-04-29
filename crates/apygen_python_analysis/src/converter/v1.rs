@@ -245,8 +245,14 @@ pub fn convert_type_no_return() -> apy::v1::TypeReference {
 }
 
 pub fn convert_type_reference(type_reference: &TypeReference) -> apy::v1::TypeReference {
-    apy::v1::TypeReference::new(type_reference.name.clone())
-        .with_module(Some(type_reference.module.as_ref().clone()))
+    apy::v1::TypeReference::new(QualifiedName::from(type_reference.name.clone())).with_module(Some(
+        type_reference
+            .origin
+            .namespace_location
+            .module
+            .as_ref()
+            .clone(),
+    ))
 }
 
 pub fn convert_type_union(
