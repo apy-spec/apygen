@@ -265,10 +265,12 @@ modules:
       other_dynamic_division:
         kind: VARIABLE
         type:
-          id: Any
-          module: typing
+          id: Literal
+          module: builtins
           history_index: 0
-          arguments: []
+          arguments:
+            - value:
+                float: "8.4"
         description: ""
         initialised: false
         readonly: false
