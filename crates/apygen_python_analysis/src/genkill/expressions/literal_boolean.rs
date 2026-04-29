@@ -1,6 +1,6 @@
 use crate::abstract_environment::{LiteralBoolean, LiteralInteger, Type};
+use crate::genkill::expressions;
 use crate::genkill::expressions::GenExprResult;
-use crate::genkill::expressions::calls;
 use apygen_analysis::cfg::nodes;
 
 pub fn as_boolean(literal_boolean: &LiteralBoolean) -> bool {
@@ -49,7 +49,7 @@ pub fn call_binary_op(
     operator: nodes::Operator,
     right: &LiteralBoolean,
 ) -> GenExprResult<Type> {
-    calls::literal_integer::call_binary_op(
+    expressions::literal_integer::call_binary_op(
         &LiteralInteger::Int(as_integer(left)),
         operator,
         &LiteralInteger::Int(as_integer(right)),

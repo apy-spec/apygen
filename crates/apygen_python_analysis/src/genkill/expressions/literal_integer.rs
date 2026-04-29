@@ -1,6 +1,6 @@
 use crate::abstract_environment::{Exception, LiteralBoolean, LiteralFloat, LiteralInteger, Type};
+use crate::genkill::expressions;
 use crate::genkill::expressions::GenExprResult;
-use crate::genkill::expressions::calls;
 use apygen_analysis::cfg::nodes;
 use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
@@ -80,7 +80,7 @@ pub fn call_binary_op(
                 Type::new_integer_literal(left.pow(big_right))
             } else if let (Some(left_float), Some(right_float)) = (left.to_f64(), right.to_f64()) {
                 // Handle negative powers
-                return calls::literal_float::call_binary_op(
+                return expressions::literal_float::call_binary_op(
                     &LiteralFloat { value: left_float },
                     nodes::Operator::Pow,
                     &LiteralFloat { value: right_float },
