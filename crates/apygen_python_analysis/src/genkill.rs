@@ -4,6 +4,7 @@ pub mod expressions;
 pub mod literals;
 pub mod statements;
 pub mod visibility;
+pub mod calls;
 
 use crate::abstract_environment::Identifier;
 use crate::analysis::cfg::nodes::{Expr, ExprAttribute, ExprName};
