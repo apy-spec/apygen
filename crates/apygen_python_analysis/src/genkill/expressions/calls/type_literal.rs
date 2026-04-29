@@ -127,6 +127,15 @@ pub fn call_binary_op(
         (TypeLiteral::Complex(left), TypeLiteral::Complex(right)) => {
             calls::literal_complex::call_binary_op(left, operator, right)
         }
+        (TypeLiteral::String(left), TypeLiteral::String(right)) => {
+            calls::literal_string::call_binary_op(left, operator, right)
+        }
+        (TypeLiteral::String(left), TypeLiteral::Integer(right)) => {
+            calls::literal_string::repeat_string(left, right)
+        }
+        (TypeLiteral::Integer(left), TypeLiteral::String(right)) => {
+            calls::literal_string::repeat_string(right, left)
+        }
         _ => GenExprResult::unknown(),
     }
 }
