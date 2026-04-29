@@ -93,8 +93,36 @@ pub fn call_binary_op(
         (TypeLiteral::Boolean(left), TypeLiteral::Boolean(right)) => {
             calls::literal_boolean::call_binary_op(left, operator, right)
         }
+        (TypeLiteral::Float(left), TypeLiteral::Integer(right)) => {
+            if let Some(right_float) = right.to_literal_float() {
+                calls::literal_float::call_binary_op(left, operator, &right_float)
+            } else {
+                GenExprResult::unknown()
+            }
+        }
+        (TypeLiteral::Integer(left), TypeLiteral::Float(right)) => {
+            if let Some(left_float) = left.to_literal_float() {
+                calls::literal_float::call_binary_op(&left_float, operator, right)
+            } else {
+                GenExprResult::unknown()
+            }
+        }
         (TypeLiteral::Float(left), TypeLiteral::Float(right)) => {
             calls::literal_float::call_binary_op(left, operator, right)
+        }
+        (TypeLiteral::Complex(left), TypeLiteral::Float(right)) => {
+            if let Some(right_complex) = right.to_literal_complex() {
+                calls::literal_complex::call_binary_op(left, operator, &right_complex)
+            } else {
+                GenExprResult::unknown()
+            }
+        }
+        (TypeLiteral::Float(left), TypeLiteral::Complex(right)) => {
+            if let Some(left_complex) = left.to_literal_complex() {
+                calls::literal_complex::call_binary_op(&left_complex, operator, right)
+            } else {
+                GenExprResult::unknown()
+            }
         }
         (TypeLiteral::Complex(left), TypeLiteral::Complex(right)) => {
             calls::literal_complex::call_binary_op(left, operator, right)

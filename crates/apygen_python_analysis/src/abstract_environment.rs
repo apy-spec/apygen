@@ -239,6 +239,10 @@ impl LiteralInteger {
             LiteralInteger::BigInt(n) => n < &BigInt::ZERO,
         }
     }
+
+    pub fn to_literal_float(&self) -> Option<LiteralFloat> {
+        Some(LiteralFloat::new(self.to_f64()?))
+    }
 }
 
 macro_rules! impl_literal_integer_binop_method {
@@ -535,6 +539,12 @@ pub struct LiteralFloat {
 impl LiteralFloat {
     pub fn new(value: f64) -> Self {
         LiteralFloat { value }
+    }
+
+    pub fn to_literal_complex(&self) -> Option<LiteralComplex> {
+        Some(LiteralComplex {
+            value: Complex64::new(self.value, 0.0),
+        })
     }
 }
 

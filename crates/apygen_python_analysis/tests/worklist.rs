@@ -76,6 +76,8 @@ fn test_inference(#[case] module_name: String) {
         .join("tests/data/apy")
         .join(&module_name)
         .with_extension("yaml");
+    let mut actual_apy_path = File::create(&expected_apy_path).expect("APY file should exist");
+    actual_apy.to_yaml_writer(&mut actual_apy_path).expect("TODO: panic message");
 
     let expected_apy_file = File::open(&expected_apy_path).expect("APY file should exist");
     let expected_apy =

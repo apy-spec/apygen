@@ -13,6 +13,14 @@ pub fn as_boolean(literal_integer: &LiteralInteger) -> bool {
     }
 }
 
+pub fn call_dunder_float(literal_integer: &LiteralInteger) -> GenExprResult<Type> {
+    if let Some(literal_float) = literal_integer.to_literal_float() {
+        GenExprResult::new_total_pure_non_raising(Type::new_float_literal(literal_float))
+    } else {
+        GenExprResult::unknown()
+    }
+}
+
 pub fn call_dunder_bool(literal_integer: &LiteralInteger) -> Type {
     Type::new_boolean_literal(LiteralBoolean {
         value: as_boolean(literal_integer),
@@ -73,13 +81,9 @@ pub fn call_binary_op(
             } else if let (Some(left_float), Some(right_float)) = (left.to_f64(), right.to_f64()) {
                 // Handle negative powers
                 return calls::literal_float::call_binary_op(
-                    &LiteralFloat {
-                        value: left_float,
-                    },
+                    &LiteralFloat { value: left_float },
                     nodes::Operator::Pow,
-                    &LiteralFloat {
-                        value: right_float,
-                    },
+                    &LiteralFloat { value: right_float },
                 );
             } else {
                 return GenExprResult::unknown();
