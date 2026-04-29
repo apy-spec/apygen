@@ -1039,6 +1039,10 @@ impl Type {
         Type::Literal(Arc::new(TypeLiteral::String(literal_string)))
     }
 
+    pub fn new_bytes_literal(literal_bytes: LiteralBytes) -> Self {
+        Type::Literal(Arc::new(TypeLiteral::Bytes(literal_bytes)))
+    }
+
     pub fn new_boolean_literal(literal_boolean: LiteralBoolean) -> Self {
         Type::Literal(Arc::new(TypeLiteral::Boolean(literal_boolean)))
     }
