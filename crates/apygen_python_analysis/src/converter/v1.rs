@@ -2,7 +2,7 @@ use crate::abstract_environment::{
     AbstractEnvironment, Attribute, BUILTINS_MODULE, LiteralBoolean, LiteralBytes, LiteralClass,
     LiteralComplex, LiteralDict, LiteralFloat, LiteralFunction, LiteralGeneric,
     LiteralImportedModule, LiteralInteger, LiteralList, LiteralString, LiteralTuple,
-    LiteralTypeAlias, QualifiedName, TYPES_MODULE, TYPING_MODULE, Type, TypeLiteral, TypeReference,
+    LiteralTypeAlias, QualifiedName, TYPES_MODULE, TYPING_MODULE, Type, TypeLiteral, TypeInstance,
     TypeUnion,
 };
 use crate::genkill::visibility::visibility_from_module_name;
@@ -244,9 +244,9 @@ pub fn convert_type_no_return() -> apy::v1::TypeReference {
         .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE)))
 }
 
-pub fn convert_type_reference(type_reference: &TypeReference) -> apy::v1::TypeReference {
-    apy::v1::TypeReference::new(QualifiedName::from(type_reference.name.clone())).with_module(Some(
-        type_reference
+pub fn convert_type_instance(type_instance: &TypeInstance) -> apy::v1::TypeReference {
+    apy::v1::TypeReference::new(QualifiedName::from(type_instance.name.clone())).with_module(Some(
+        type_instance
             .origin
             .namespace_location
             .module
@@ -290,7 +290,7 @@ pub fn convert_type(
         Type::Any => convert_type_any(),
         Type::Never => convert_type_never(),
         Type::NoReturn => convert_type_no_return(),
-        Type::Reference(type_reference) => convert_type_reference(type_reference),
+        Type::Instance(type_instance) => convert_type_instance(type_instance),
         Type::Union(type_union) => convert_type_union(context, type_union)?,
         Type::Intersection(_) => convert_type_intersection(),
         Type::Literal(type_literal) => match convert_type_literal(context, type_literal)? {
@@ -342,8 +342,8 @@ pub fn convert_attribute(
         Type::Any => apy::v1::Type::Reference(convert_type_any()),
         Type::Never => apy::v1::Type::Reference(convert_type_never()),
         Type::NoReturn => apy::v1::Type::Reference(convert_type_no_return()),
-        Type::Reference(type_reference) => {
-            apy::v1::Type::Reference(convert_type_reference(type_reference))
+        Type::Instance(type_instance) => {
+            apy::v1::Type::Reference(convert_type_instance(type_instance))
         }
         Type::Union(type_union) => {
             apy::v1::Type::Reference(convert_type_union(context, type_union)?)

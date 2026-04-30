@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
     AbstractEnvironment, GetAttributeError, LocalAttribute, QualifiedName, TYPING_MODULE, Type,
-    TypeLiteral, TypeReference, TypeUnion, resolve_local_attribute,
+    TypeLiteral, TypeInstance, TypeUnion, resolve_local_attribute,
 };
 use crate::analysis::cfg::nodes::{Expr, ExprSubscript, ExprUnaryOp, UnaryOp};
 use crate::analysis::namespace::{Location, NamespacesContext};
@@ -88,12 +88,12 @@ pub fn gen_expr_qualified_name(
     if origin.namespace_location.module.identifiers.first() != TYPING_MODULE
         || !origin.namespace_location.program_points.is_empty()
     {
-        return Ok(Type::Reference(TypeReference::new(origin, name.clone())));
+        return Ok(Type::Instance(TypeInstance::new(origin, name.clone())));
     }
 
     match name.as_ref() {
         "Any" => Ok(Type::Any),
-        _ => Ok(Type::Reference(TypeReference::new(origin, name.clone()))),
+        _ => Ok(Type::Instance(TypeInstance::new(origin, name.clone()))),
     }
 }
 
@@ -102,7 +102,7 @@ pub fn gen_expr_subscript(
     location: &Location<QualifiedName>,
     expression: &ExprSubscript,
 ) -> Result<Type, GenAnnotationError> {
-    let Type::Reference(mut type_reference) =
+    let Type::Instance(mut type_instance) =
         gen_annotation(context, location, expression.value.as_ref())?
     else {
         return Err(GenAnnotationError::InvalidAnnotation {
@@ -113,12 +113,12 @@ pub fn gen_expr_subscript(
     let slice = expression.slice.as_ref();
 
     match slice {
-        Expr::EllipsisLiteral(_) => type_reference
+        Expr::EllipsisLiteral(_) => type_instance
             .arguments
             .push_back(Arc::new(gen_expr_ellipsis_literal())),
         Expr::Tuple(expr_tuple) => {
             for tuple_expression in &expr_tuple.elts {
-                type_reference
+                type_instance
                     .arguments
                     .push_back(Arc::new(match tuple_expression {
                         Expr::EllipsisLiteral(_) => gen_expr_ellipsis_literal(),
@@ -126,12 +126,12 @@ pub fn gen_expr_subscript(
                     }));
             }
         }
-        _ => type_reference
+        _ => type_instance
             .arguments
             .push_back(Arc::new(gen_annotation(context, location, slice)?)),
     };
 
-    Ok(Type::Reference(type_reference))
+    Ok(Type::Instance(type_instance))
 }
 
 pub fn gen_expr_unary_op(expression: &ExprUnaryOp) -> Result<Type, GenAnnotationError> {

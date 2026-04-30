@@ -1,10 +1,10 @@
+use crate::abstract_environment::{
+    LiteralString, LiteralTuple, Parameter, Type, TypeInstance, TypeLiteral, TypeUnion,
+};
+use apy::v1::{Identifier, ParameterKind};
 use std::collections::HashMap;
 use std::sync::Arc;
-use apy::v1::{Identifier, ParameterKind, QualifiedName};
 use thiserror::Error;
-use apygen_analysis::namespace::{Location, NamespaceLocation, NamespacesContext};
-use crate::abstract_environment::{get_attribute, AbstractEnvironment, LiteralString, LiteralTuple, Parameter, Type, TypeLiteral, TypeReference, TypeUnion};
-use crate::genkill::expressions::GenExprResult;
 
 #[derive(Error, Debug)]
 pub enum BindError {
@@ -79,8 +79,8 @@ impl Arguments {
                         imbl::vector![var_positional_arguments.simplify()]
                     };
 
-                    let ty = Arc::new(Type::Reference(
-                        TypeReference::builtins("tuple").with_arguments(arguments),
+                    let ty = Arc::new(Type::Instance(
+                        TypeInstance::builtins("tuple").with_arguments(arguments),
                     ));
 
                     bindings.insert(&parameter.name, ty);
@@ -119,8 +119,8 @@ impl Arguments {
                         imbl::vector![str_literal, var_keyword_arguments.simplify()]
                     };
 
-                    let ty = Arc::new(Type::Reference(
-                        TypeReference::builtins("dict").with_arguments(arguments),
+                    let ty = Arc::new(Type::Instance(
+                        TypeInstance::builtins("dict").with_arguments(arguments),
                     ));
 
                     bindings.insert(&parameter.name, ty);

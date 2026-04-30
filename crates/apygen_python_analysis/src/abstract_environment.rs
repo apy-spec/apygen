@@ -132,7 +132,7 @@ impl Exception {
     }
 
     pub fn builtins(name: &str) -> Self {
-        Exception::from_type(Type::Reference(TypeReference::builtins(name)))
+        Exception::from_type(Type::Instance(TypeInstance::builtins(name)))
     }
 
     pub fn type_error() -> Self {
@@ -866,15 +866,15 @@ impl Display for TypeLiteral {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TypeReference {
+pub struct TypeInstance {
     pub origin: Location<QualifiedName>,
     pub name: Identifier,
     pub arguments: imbl::Vector<Arc<Type>>,
 }
 
-impl TypeReference {
+impl TypeInstance {
     pub fn new(origin: Location<QualifiedName>, name: Identifier) -> Self {
-        TypeReference {
+        TypeInstance {
             origin,
             name,
             arguments: imbl::Vector::new(),
@@ -882,18 +882,18 @@ impl TypeReference {
     }
 
     pub fn builtins(name: &str) -> Self {
-        TypeReference::new(
+        TypeInstance::new(
             Location::from(QualifiedName::parse(BUILTINS_MODULE)),
             Identifier::parse(name),
         )
     }
 
     pub fn builtins_list(element_type: Arc<Type>) -> Self {
-        TypeReference::builtins("list").with_arguments(imbl::vector![element_type])
+        TypeInstance::builtins("list").with_arguments(imbl::vector![element_type])
     }
 
     pub fn builtins_tuple<I: IntoIterator<Item = Arc<Type>>>(element_types: I) -> Self {
-        TypeReference::builtins("tuple").with_arguments(element_types.into_iter().collect())
+        TypeInstance::builtins("tuple").with_arguments(element_types.into_iter().collect())
     }
 
     pub fn with_origin(mut self, origin: Location<QualifiedName>) -> Self {
@@ -912,13 +912,13 @@ impl TypeReference {
     }
 }
 
-impl StructuralDepth for TypeReference {
+impl StructuralDepth for TypeInstance {
     fn depth(&self) -> usize {
         1 + self.arguments.depth()
     }
 }
 
-impl Display for TypeReference {
+impl Display for TypeInstance {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "({}).{}", self.origin, self.name)?;
 
@@ -1013,7 +1013,7 @@ pub enum Type {
     Any,
     Never,
     NoReturn,
-    Reference(TypeReference),
+    Instance(TypeInstance),
     Union(TypeUnion),
     Intersection(imbl::OrdSet<Arc<Type>>),
     Literal(Arc<TypeLiteral>),
@@ -1072,7 +1072,7 @@ impl Type {
             Type::Any => Ok(true),
             Type::Never => Ok(false),
             Type::NoReturn => Ok(false),
-            Type::Reference { .. } => Ok(true),
+            Type::Instance { .. } => Ok(true),
             Type::Union(type_union) => Ok(type_union.contains(&Arc::new(other.clone()))),
             Type::Intersection(type_intersection) => {
                 if let Type::Intersection(other_type_intersection) = other {
@@ -1090,7 +1090,7 @@ impl StructuralDepth for Type {
     fn depth(&self) -> usize {
         match self {
             Type::Any | Type::Never | Type::NoReturn => 0,
-            Type::Reference(type_reference) => type_reference.depth(),
+            Type::Instance(type_instance) => type_instance.depth(),
             Type::Union(type_union) => type_union.depth(),
             Type::Intersection(type_intersection) => type_intersection.depth(),
             Type::Literal(type_literal) => type_literal.depth(),
@@ -1104,7 +1104,7 @@ impl Display for Type {
             Type::Any => write!(f, "Any"),
             Type::Never => write!(f, "Never"),
             Type::NoReturn => write!(f, "NoReturn"),
-            Type::Reference(type_reference) => write!(f, "{}", type_reference),
+            Type::Instance(type_instance) => write!(f, "{}", type_instance),
             Type::Union(type_union) => write!(f, "{}", type_union),
             Type::Intersection(_) => write!(f, "Intersection"),
             Type::Literal(type_literal) => write!(f, "{}", type_literal),

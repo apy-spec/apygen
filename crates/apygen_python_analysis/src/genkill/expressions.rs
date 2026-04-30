@@ -9,7 +9,7 @@ pub mod literal_string;
 pub mod type_literal;
 
 use crate::abstract_environment::{
-    AbstractEnvironment, Exception, LiteralList, LiteralTuple, Type, TypeLiteral, TypeReference,
+    AbstractEnvironment, Exception, LiteralList, LiteralTuple, Type, TypeLiteral, TypeInstance,
     TypeUnion, resolve_local_attribute,
 };
 use crate::analysis::cfg::nodes;
@@ -76,7 +76,7 @@ pub fn gen_bool_value(ty: &Type) -> Option<bool> {
         Type::Any => None,
         Type::Never => None,
         Type::NoReturn => None,
-        Type::Reference { .. } => None,
+        Type::Instance { .. } => None,
         Type::Union(_) => None,
         Type::Intersection(_) => None,
         Type::Literal(literal_value) => as_boolean(literal_value.as_ref()),
@@ -126,7 +126,7 @@ pub fn gen_expr_list(
                 value: literal_values,
             }))
         } else {
-            Type::Reference(TypeReference::builtins_list(Arc::new(Type::new_union(
+            Type::Instance(TypeInstance::builtins_list(Arc::new(Type::new_union(
                 literal_values
                     .into_iter()
                     .map(|literal_value| Arc::new(Type::Literal(literal_value)))
@@ -163,7 +163,7 @@ pub fn gen_expr_set(
                 value: literal_values,
             }))
         } else {
-            Type::Reference(TypeReference::builtins_list(Arc::new(Type::new_union(
+            Type::Instance(TypeInstance::builtins_list(Arc::new(Type::new_union(
                 literal_values
                     .into_iter()
                     .map(|literal_value| Arc::new(Type::Literal(literal_value)))
@@ -200,7 +200,7 @@ pub fn gen_expr_tuple(
                     value: tuple_values,
                 }))
             } else {
-                Type::Reference(TypeReference::builtins_tuple(
+                Type::Instance(TypeInstance::builtins_tuple(
                     tuple_types.into_iter().map(|ty| Arc::new(ty)),
                 ))
             };
@@ -293,7 +293,7 @@ pub fn gen_unary_op(
         Type::Any => Type::Any,
         Type::Never => Type::Never,
         Type::NoReturn => Type::NoReturn,
-        Type::Reference { .. } => Type::Any,
+        Type::Instance { .. } => Type::Any,
         Type::Union(_) => Type::Any,
         Type::Intersection(_) => Type::Any,
         Type::Literal(type_literal) => call_unary_op(type_literal.as_ref(), expr_unary_op.op).value,

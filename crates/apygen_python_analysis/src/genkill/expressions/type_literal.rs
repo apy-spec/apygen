@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
     AbstractEnvironment, TYPES_MODULE, TYPING_MODULE, Type, TypeAliasKind, TypeLiteral,
-    TypeReference,
+    TypeInstance,
 };
 use crate::genkill::expressions::{self, GenExprResult};
 use apy::v1::{Identifier, QualifiedName};
@@ -40,42 +40,42 @@ pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
     }
 }
 
-pub fn as_type_reference(type_literal: &TypeLiteral) -> TypeReference {
+pub fn as_type_instance(type_literal: &TypeLiteral) -> TypeInstance {
     match type_literal {
-        TypeLiteral::Integer(_) => TypeReference::builtins("int"),
-        TypeLiteral::Boolean(_) => TypeReference::builtins("bool"),
-        TypeLiteral::Float(_) => TypeReference::builtins("float"),
-        TypeLiteral::Complex(_) => TypeReference::builtins("complex"),
-        TypeLiteral::String(_) => TypeReference::builtins("str"),
-        TypeLiteral::Bytes(_) => TypeReference::builtins("bytes"),
-        TypeLiteral::None => TypeReference::new(
+        TypeLiteral::Integer(_) => TypeInstance::builtins("int"),
+        TypeLiteral::Boolean(_) => TypeInstance::builtins("bool"),
+        TypeLiteral::Float(_) => TypeInstance::builtins("float"),
+        TypeLiteral::Complex(_) => TypeInstance::builtins("complex"),
+        TypeLiteral::String(_) => TypeInstance::builtins("str"),
+        TypeLiteral::Bytes(_) => TypeInstance::builtins("bytes"),
+        TypeLiteral::None => TypeInstance::new(
             Location::from(QualifiedName::parse(TYPES_MODULE)),
             Identifier::parse("NoneType"),
         ),
-        TypeLiteral::Ellipsis => TypeReference::new(
+        TypeLiteral::Ellipsis => TypeInstance::new(
             Location::from(QualifiedName::parse(TYPES_MODULE)),
             Identifier::parse("EllipsisType"),
         ),
-        TypeLiteral::List(_) => TypeReference::builtins("list"),
-        TypeLiteral::Tuple(_) => TypeReference::builtins("tuple"),
-        TypeLiteral::Dict(_) => TypeReference::builtins("dict"),
-        TypeLiteral::Function(_) => TypeReference::new(
+        TypeLiteral::List(_) => TypeInstance::builtins("list"),
+        TypeLiteral::Tuple(_) => TypeInstance::builtins("tuple"),
+        TypeLiteral::Dict(_) => TypeInstance::builtins("dict"),
+        TypeLiteral::Function(_) => TypeInstance::new(
             Location::from(QualifiedName::parse(TYPES_MODULE)),
             Identifier::parse("FunctionType"),
         ),
-        TypeLiteral::Class(_) => TypeReference::builtins("type"),
+        TypeLiteral::Class(_) => TypeInstance::builtins("type"),
         TypeLiteral::TypeAlias(literal_type_alias) => match literal_type_alias.value.kind {
-            TypeAliasKind::Type | TypeAliasKind::String => TypeReference::builtins("type"),
-            TypeAliasKind::Statement => TypeReference::new(
+            TypeAliasKind::Type | TypeAliasKind::String => TypeInstance::builtins("type"),
+            TypeAliasKind::Statement => TypeInstance::new(
                 Location::from(QualifiedName::parse(TYPING_MODULE)),
                 Identifier::parse("TypeAliasType"),
             ),
         },
-        TypeLiteral::Generic(_) => TypeReference::new(
+        TypeLiteral::Generic(_) => TypeInstance::new(
             Location::from(QualifiedName::parse(TYPING_MODULE)),
             Identifier::parse("TypeVar"),
         ),
-        TypeLiteral::ImportedModule(_) => TypeReference::new(
+        TypeLiteral::ImportedModule(_) => TypeInstance::new(
             Location::from(QualifiedName::parse(TYPES_MODULE)),
             Identifier::parse("ModuleType"),
         ),
