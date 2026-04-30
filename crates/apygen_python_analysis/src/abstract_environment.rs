@@ -69,7 +69,7 @@ impl<S: StructuralDepth + Ord> StructuralDepth for imbl::OrdSet<S> {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Parameter {
-    pub name: Identifier,
+    pub name: Arc<Identifier>,
 
     pub kind: ParameterKind,
 
@@ -1060,7 +1060,7 @@ impl Type {
         Type::Intersection(imbl::OrdSet::from_iter(types.into_iter()))
     }
 
-    fn includes<'a>(
+    pub fn includes<'a>(
         &'a self,
         context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
         other: &'a Self,
@@ -1257,16 +1257,19 @@ pub fn get_attribute<'a>(
 
 pub fn resolve_local_attribute<'a>(
     context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    location: &Location<QualifiedName>,
+    location: Location<QualifiedName>,
     name: &Identifier,
-) -> Result<&'a LocalAttribute, GetAttributeError> {
-    let err = match get_attribute(context, location, name) {
-        Ok(attribute) => return attribute.resolve(context),
+) -> Result<(Location<QualifiedName>, &'a LocalAttribute), GetAttributeError> {
+    let err = match get_attribute(context, &location, name) {
+        Ok(attribute) => {
+            let local_attribute = attribute.resolve(context)?;
+            return Ok((location, local_attribute));
+        }
         Err(error) => error,
     };
 
     if let Some(parent_location) = location.namespace_location.parent_location() {
-        return resolve_local_attribute(context, &Location::at_exit(parent_location), name);
+        return resolve_local_attribute(context, Location::at_exit(parent_location), name);
     }
 
     let builtins_namespace_location =
@@ -1275,7 +1278,7 @@ pub fn resolve_local_attribute<'a>(
     if location.namespace_location != builtins_namespace_location {
         return resolve_local_attribute(
             context,
-            &Location::at_exit(builtins_namespace_location),
+            Location::at_exit(builtins_namespace_location),
             name,
         );
     }

@@ -2,6 +2,7 @@ use crate::abstract_environment::{
     LiteralString, LiteralTuple, Parameter, Type, TypeInstance, TypeLiteral, TypeUnion,
 };
 use apy::v1::{Identifier, ParameterKind};
+use imbl;
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
@@ -25,39 +26,30 @@ pub enum BindError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Arguments {
     pub positional: Vec<Arc<Type>>,
-    pub keyword: HashMap<Identifier, Arc<Type>>,
+    pub keyword: HashMap<Arc<Identifier>, Arc<Type>>,
 }
 
 impl Arguments {
-    pub fn bind<'a>(
+    pub fn bind(
         &self,
-        method: bool,
-        parameters: &'a Vec<Parameter>,
-    ) -> Result<HashMap<&'a Identifier, Arc<Type>>, BindError> {
-        let mut bindings: HashMap<&Identifier, Arc<Type>> = HashMap::new();
+        parameters: &imbl::Vector<Parameter>,
+    ) -> Result<HashMap<Arc<Identifier>, Arc<Type>>, BindError> {
+        let mut bindings: HashMap<Arc<Identifier>, Arc<Type>> = HashMap::new();
         let mut positional_iter = self.positional.iter().cloned();
-        let mut skip = method;
         for parameter in parameters {
-            if skip {
-                if self.positional.is_empty() {
-                    return Err(BindError::MissingPositionalArgument);
-                }
-                skip = false;
-                continue;
-            }
             match parameter.kind {
                 ParameterKind::PositionalOnly => {
                     if let Some(argument) = positional_iter.next() {
-                        bindings.insert(&parameter.name, argument);
+                        bindings.insert(parameter.name.clone(), argument);
                     } else {
                         return Err(BindError::MissingPositionalArgument);
                     }
                 }
                 ParameterKind::PositionalOrKeyword => {
                     if let Some(argument) = positional_iter.next() {
-                        bindings.insert(&parameter.name, argument.clone());
+                        bindings.insert(parameter.name.clone(), argument.clone());
                     } else if let Some(argument) = self.keyword.get(&parameter.name) {
-                        bindings.insert(&parameter.name, argument.clone());
+                        bindings.insert(parameter.name.clone(), argument.clone());
                     } else {
                         return Err(BindError::MissingPositionalOrKeywordArgument);
                     }
@@ -83,7 +75,7 @@ impl Arguments {
                         TypeInstance::builtins("tuple").with_arguments(arguments),
                     ));
 
-                    bindings.insert(&parameter.name, ty);
+                    bindings.insert(parameter.name.clone(), ty);
                 }
                 ParameterKind::KeywordOnly => {
                     if bindings.contains_key(&parameter.name) {
@@ -91,7 +83,7 @@ impl Arguments {
                     }
 
                     if let Some(argument) = self.keyword.get(&parameter.name) {
-                        bindings.insert(&parameter.name, argument.clone());
+                        bindings.insert(parameter.name.clone(), argument.clone());
                     } else {
                         return Err(BindError::MissingKeywordArgument);
                     }
@@ -123,7 +115,7 @@ impl Arguments {
                         TypeInstance::builtins("dict").with_arguments(arguments),
                     ));
 
-                    bindings.insert(&parameter.name, ty);
+                    bindings.insert(parameter.name.clone(), ty);
                 }
             }
         }

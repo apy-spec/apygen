@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
     AbstractEnvironment, GetAttributeError, LocalAttribute, QualifiedName, TYPING_MODULE, Type,
-    TypeLiteral, TypeInstance, TypeUnion, resolve_local_attribute,
+    TypeInstance, TypeLiteral, TypeUnion, resolve_local_attribute,
 };
 use crate::analysis::cfg::nodes::{Expr, ExprSubscript, ExprUnaryOp, UnaryOp};
 use crate::analysis::namespace::{Location, NamespacesContext};
@@ -32,15 +32,15 @@ fn get_type_attribute<'a>(
     context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     location: &Location<QualifiedName>,
     identifiers: &'a [Identifier],
-) -> Result<(&'a Identifier, &'a LocalAttribute), GenAnnotationError> {
+) -> Result<(Location<QualifiedName>, &'a Identifier, &'a LocalAttribute), GenAnnotationError> {
     let (identifier, attribute_identifiers) = identifiers
         .split_first()
         .expect("identifiers should not be empty");
 
-    let local_attribute = resolve_local_attribute(context, location, identifier)?;
+    let (origin, local_attribute) = resolve_local_attribute(context, location.clone(), identifier)?;
 
     if attribute_identifiers.is_empty() {
-        return Ok((identifier, local_attribute));
+        return Ok((origin, identifier, local_attribute));
     };
 
     let Type::Literal(literal_value) = local_attribute.attribute_type.as_ref() else {
@@ -65,7 +65,7 @@ pub fn gen_expr_qualified_name(
     location: &Location<QualifiedName>,
     qualified_name: QualifiedName,
 ) -> Result<Type, GenAnnotationError> {
-    let (name, local_attribute) =
+    let (origin, name, local_attribute) =
         get_type_attribute(context, location, &qualified_name.identifiers)?;
 
     let Type::Literal(literal_value) = local_attribute.attribute_type.as_ref() else {
@@ -74,15 +74,13 @@ pub fn gen_expr_qualified_name(
         });
     };
 
-    let origin = match literal_value.as_ref() {
-        TypeLiteral::Class(class_type) => class_type.value.location.clone(),
-        TypeLiteral::TypeAlias(type_alias_type) => type_alias_type.value.location.clone(),
-        TypeLiteral::Generic(generic_type) => generic_type.value.location.clone(),
-        _ => {
-            return Err(GenAnnotationError::InvalidAnnotation {
-                reason: "The base is not a type".to_owned(),
-            });
-        }
+    if !matches!(
+        literal_value.as_ref(),
+        TypeLiteral::Class(_) | TypeLiteral::TypeAlias(_) | TypeLiteral::Generic(_)
+    ) {
+        return Err(GenAnnotationError::InvalidAnnotation {
+            reason: "The base is not a type".to_owned(),
+        });
     };
 
     if origin.namespace_location.module.identifiers.first() != TYPING_MODULE

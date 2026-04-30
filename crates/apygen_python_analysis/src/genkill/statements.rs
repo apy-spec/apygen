@@ -18,6 +18,11 @@ use std::sync::mpsc::Sender;
 
 pub fn gen_assign(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    dependents: &mut HashMap<
+        NamespaceLocation<QualifiedName>,
+        HashSet<NamespaceLocation<QualifiedName>>,
+    >,
+    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
     cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
     location: Location<QualifiedName>,
     stmt_assign: &nodes::StmtAssign,
@@ -27,7 +32,8 @@ pub fn gen_assign(
         .cloned()
         .unwrap_or_default();
 
-    let gen_result = gen_expr(context, &location, &stmt_assign.value).map(|ty| Arc::new(ty));
+    let gen_result =
+        gen_expr(context, dependents, calls, &location, &stmt_assign.value).map(|ty| Arc::new(ty));
 
     for target in &stmt_assign.targets {
         let target = AssignmentTarget::try_from(target);
@@ -57,6 +63,11 @@ pub fn gen_assign(
 
 pub fn gen_return(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    dependents: &mut HashMap<
+        NamespaceLocation<QualifiedName>,
+        HashSet<NamespaceLocation<QualifiedName>>,
+    >,
+    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
     location: Location<QualifiedName>,
     stmt_return: &nodes::StmtReturn,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
@@ -66,7 +77,7 @@ pub fn gen_return(
         .unwrap_or_default();
 
     if let Some(value) = &stmt_return.value {
-        let gen_result = gen_expr(context, &location, value);
+        let gen_result = gen_expr(context, dependents, calls, &location, value);
         target_abstract_environment.returned_value = Arc::new(gen_result.value);
     } else {
         target_abstract_environment.returned_value = Arc::new(Type::new_literal(TypeLiteral::None));
@@ -80,6 +91,11 @@ pub fn gen_return(
 
 pub fn gen_ann_assign(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    dependents: &mut HashMap<
+        NamespaceLocation<QualifiedName>,
+        HashSet<NamespaceLocation<QualifiedName>>,
+    >,
+    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
     cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
     location: Location<QualifiedName>,
     stmt_ann_assign: &nodes::StmtAnnAssign,
@@ -314,6 +330,11 @@ pub fn gen_import_from(
 
 pub fn gen_parameter(
     context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    dependents: &mut HashMap<
+        NamespaceLocation<QualifiedName>,
+        HashSet<NamespaceLocation<QualifiedName>>,
+    >,
+    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
     location: &Location<QualifiedName>,
     parameter: &nodes::Parameter,
     kind: ParameterKind,
@@ -326,7 +347,7 @@ pub fn gen_parameter(
 
     let ty = match default {
         Some(default) => {
-            let default_ty = gen_expr(context, location, default.as_ref()).value;
+            let default_ty = gen_expr(context, dependents, calls, location, default.as_ref()).value;
             match annotation_ty {
                 Some(annotation_ty) => annotation_ty,
                 None => default_ty,
@@ -336,7 +357,7 @@ pub fn gen_parameter(
     };
 
     Ok(Parameter {
-        name: Identifier::try_parse(parameter.name.id.as_ref())?,
+        name: Arc::new(Identifier::try_parse(parameter.name.id.as_ref())?),
         parameter_type: Arc::new(ty),
         is_deprecated: false,
         kind,
@@ -354,6 +375,7 @@ pub fn gen_function_def(
         NamespaceLocation<QualifiedName>,
         HashSet<NamespaceLocation<QualifiedName>>,
     >,
+    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
     cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
     location: Location<QualifiedName>,
     stmt_function_def: &nodes::StmtFunctionDef,
@@ -369,6 +391,8 @@ pub fn gen_function_def(
     for positional_parameter in &stmt_function_def.parameters.posonlyargs {
         parameters.push(gen_parameter(
             context,
+            dependents,
+            calls,
             &location,
             &positional_parameter.parameter,
             ParameterKind::PositionalOnly,
@@ -378,6 +402,8 @@ pub fn gen_function_def(
     for positional_or_keyword_parameter in &stmt_function_def.parameters.args {
         parameters.push(gen_parameter(
             context,
+            dependents,
+            calls,
             &location,
             &positional_or_keyword_parameter.parameter,
             ParameterKind::PositionalOrKeyword,
@@ -387,6 +413,8 @@ pub fn gen_function_def(
     if let Some(var_positional_parameter) = &stmt_function_def.parameters.vararg {
         parameters.push(gen_parameter(
             context,
+            dependents,
+            calls,
             &location,
             &var_positional_parameter,
             ParameterKind::VarPositional,
@@ -396,6 +424,8 @@ pub fn gen_function_def(
     for keyword_parameter in &stmt_function_def.parameters.kwonlyargs {
         parameters.push(gen_parameter(
             context,
+            dependents,
+            calls,
             &location,
             &keyword_parameter.parameter,
             ParameterKind::KeywordOnly,
@@ -405,6 +435,8 @@ pub fn gen_function_def(
     if let Some(var_keyword_parameter) = &stmt_function_def.parameters.kwarg {
         parameters.push(gen_parameter(
             context,
+            dependents,
+            calls,
             &location,
             &var_keyword_parameter,
             ParameterKind::VarKeyword,
@@ -491,12 +523,13 @@ pub fn gen_class_def(
     )]))
 }
 
-pub fn gen_statement(
+pub fn gen_statement<'a>(
     context: &mut impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     dependents: &mut HashMap<
         NamespaceLocation<QualifiedName>,
         HashSet<NamespaceLocation<QualifiedName>>,
     >,
+    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
     cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
     import_tx: &Sender<NamespaceLocation<QualifiedName>>,
     location: Location<QualifiedName>,
@@ -504,10 +537,12 @@ pub fn gen_statement(
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     match statement {
         Stmt::AnnAssign(stmt_ann_assign) => {
-            gen_ann_assign(context, cfgs, location, &stmt_ann_assign)
+            gen_ann_assign(context, dependents, calls, cfgs, location, &stmt_ann_assign)
         }
-        Stmt::Return(stmt_return) => gen_return(context, location, &stmt_return),
-        Stmt::Assign(stmt_assign) => gen_assign(context, cfgs, location, &stmt_assign),
+        Stmt::Return(stmt_return) => gen_return(context, dependents, calls, location, &stmt_return),
+        Stmt::Assign(stmt_assign) => {
+            gen_assign(context, dependents, calls, cfgs, location, &stmt_assign)
+        }
         Stmt::Import(stmt_import) => {
             gen_import(context, dependents, cfgs, import_tx, location, &stmt_import)
         }
@@ -519,9 +554,14 @@ pub fn gen_statement(
             location,
             &stmt_import_from,
         ),
-        Stmt::FunctionDef(stmt_function_def) => {
-            gen_function_def(context, dependents, cfgs, location, &stmt_function_def)
-        }
+        Stmt::FunctionDef(stmt_function_def) => gen_function_def(
+            context,
+            dependents,
+            calls,
+            cfgs,
+            location,
+            &stmt_function_def,
+        ),
         Stmt::ClassDef(stmt_class_def) => {
             gen_class_def(context, dependents, cfgs, location, &stmt_class_def)
         }

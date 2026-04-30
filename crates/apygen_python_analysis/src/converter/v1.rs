@@ -104,7 +104,7 @@ pub fn convert_literal_function(
     for parameter in &literal_function.value.parameters {
         parameters.push(
             apy::v1::Parameter::new(
-                parameter.name.clone(),
+                parameter.name.as_ref().clone(),
                 parameter.kind,
                 convert_type(context, &parameter.parameter_type)?,
             )

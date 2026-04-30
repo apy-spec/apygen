@@ -1,4 +1,4 @@
-use crate::abstract_environment::{AbstractEnvironment, BUILTINS_MODULE};
+use crate::abstract_environment::{AbstractEnvironment, BUILTINS_MODULE, Type, TypeUnion};
 use crate::genkill::statements::gen_statement;
 use apy::OneOrMany;
 use apy::v1::{Identifier, QualifiedName};
@@ -18,12 +18,13 @@ use std::sync::Arc;
 use std::sync::mpsc::{Sender, channel};
 use thiserror::Error;
 
-pub fn worklist(
+pub fn worklist<'a>(
     context: &mut impl NamespacesContext<QualifiedName, AbstractEnvironment>,
     dependents: &mut HashMap<
         NamespaceLocation<QualifiedName>,
         HashSet<NamespaceLocation<QualifiedName>>,
     >,
+    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
     cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
     import_tx: &Sender<NamespaceLocation<QualifiedName>>,
     namespace_location: NamespaceLocation<QualifiedName>,
@@ -52,6 +53,7 @@ pub fn worklist(
                     gen_statement(
                         context,
                         dependents,
+                        calls,
                         cfgs,
                         import_tx,
                         location,
@@ -178,7 +180,7 @@ pub fn convert_specs<F: Filesystem>(
         .collect()
 }
 
-pub fn cfg_worklist<F: Filesystem>(
+pub fn cfg_worklist<'a, F: Filesystem>(
     specs: HashMap<Identifier, FinderSpec<Identifier, F>>,
     target_modules: &HashSet<Identifier>,
 ) -> Option<(
@@ -192,6 +194,9 @@ pub fn cfg_worklist<F: Filesystem>(
         NamespaceLocation<QualifiedName>,
         HashSet<NamespaceLocation<QualifiedName>>,
     > = HashMap::new();
+    let mut calls: HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>> =
+        HashMap::new();
+
     let mut cfgs: HashMap<_, _> = target_modules
         .par_iter()
         .flat_map(|identifier| {
@@ -232,10 +237,13 @@ pub fn cfg_worklist<F: Filesystem>(
         let iteration_start = std::time::Instant::now();
 
         let (cfg_tx, cfg_rx) = channel::<(Arc<QualifiedName>, Cfg)>();
+        let mut calls_changed: HashSet<NamespaceLocation<QualifiedName>> = HashSet::new();
 
         let cfgs_ref = &cfgs;
         let namespaces_ref = &namespaces;
         let dependents_ref = &mut dependents;
+        let calls_ref = &mut calls;
+        let calls_changed_ref = &mut calls_changed;
 
         let changed_locations = rayon::scope(move |scope| {
             let (import_tx, import_rx) = channel::<NamespaceLocation<QualifiedName>>();
@@ -295,11 +303,16 @@ pub fn cfg_worklist<F: Filesystem>(
                         NamespaceLocation<QualifiedName>,
                         HashSet<NamespaceLocation<QualifiedName>>,
                     > = HashMap::new();
+                    let mut calls: HashMap<
+                        NamespaceLocation<QualifiedName>,
+                        HashMap<Arc<Identifier>, Arc<Type>>,
+                    > = HashMap::new();
 
                     worklist(
                         &mut context,
                         &mut dependents,
-                        &cfgs_ref,
+                        &mut calls,
+                        cfgs_ref,
                         &import_tx,
                         namespace_location.clone(),
                     );
@@ -315,7 +328,18 @@ pub fn cfg_worklist<F: Filesystem>(
                         "Worklist should only compute the namespace for the given location",
                     );
 
-                    ((namespace_location, namespace), dependents)
+                    if namespace_location.module.identifiers.first() != BUILTINS_MODULE
+                        || namespace_location.module.identifiers.len() != 1
+                    {
+                        dependents
+                            .entry(NamespaceLocation::new(Arc::new(QualifiedName::parse(
+                                BUILTINS_MODULE,
+                            ))))
+                            .or_default()
+                            .insert(namespace_location.clone());
+                    }
+
+                    ((namespace_location, namespace), (dependents, calls))
                 })
                 .unzip();
 
@@ -327,7 +351,7 @@ pub fn cfg_worklist<F: Filesystem>(
             );
 
             scope.spawn(move |_| {
-                for new_dependents in worker_dependents {
+                for (new_dependents, new_calls) in worker_dependents {
                     for (from, tos) in new_dependents {
                         match dependents_ref.entry(from) {
                             Entry::Occupied(mut entry) => {
@@ -336,6 +360,48 @@ pub fn cfg_worklist<F: Filesystem>(
                             Entry::Vacant(entry) => {
                                 entry.insert(tos);
                             }
+                        }
+                    }
+                    for (namespace_location, arguments) in new_calls {
+                        let mut call_changed = false;
+
+                        match calls_ref.entry(namespace_location.clone()) {
+                            Entry::Occupied(mut entry) => {
+                                let existing_arguments = entry.get_mut();
+                                for (argument_name, argument_type) in arguments {
+                                    match existing_arguments.entry(argument_name.clone()) {
+                                        Entry::Occupied(mut entry) => {
+                                            let existing_argument_type = entry.get_mut();
+
+                                            if !existing_argument_type
+                                                .includes(namespaces_ref, &argument_type)
+                                                .is_ok_and(|included| included)
+                                            {
+                                                call_changed = true;
+                                                *existing_argument_type = {
+                                                    let mut new_argument_type = TypeUnion::new();
+                                                    new_argument_type
+                                                        .add_type(existing_argument_type.clone());
+                                                    new_argument_type.add_type(argument_type);
+                                                    new_argument_type.simplify()
+                                                };
+                                            }
+                                        }
+                                        Entry::Vacant(entry) => {
+                                            call_changed = true;
+                                            entry.insert(argument_type);
+                                        }
+                                    }
+                                }
+                            }
+                            Entry::Vacant(entry) => {
+                                entry.insert(arguments);
+                                call_changed = true;
+                            }
+                        }
+
+                        if call_changed {
+                            calls_changed_ref.insert(namespace_location);
                         }
                     }
                 }
@@ -389,6 +455,7 @@ pub fn cfg_worklist<F: Filesystem>(
                     .filter(|namespace_location| cfgs.contains_key(&namespace_location.module))
             })
             .cloned()
+            .chain(calls_changed)
             .collect();
 
         namespaces.locations.extend(changed_locations);
