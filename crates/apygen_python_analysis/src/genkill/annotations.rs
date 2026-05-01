@@ -3,7 +3,7 @@ use crate::abstract_environment::{
     TypeInstance, TypeLiteral, TypeUnion, resolve_local_attribute,
 };
 use crate::analysis::cfg::nodes::{Expr, ExprSubscript, ExprUnaryOp, UnaryOp};
-use crate::analysis::namespace::{Location, NamespacesContext};
+use crate::analysis::namespace::{Location, Namespaces};
 use crate::genkill::literals::{
     gen_expr_boolean_literal, gen_expr_bytes_literal, gen_expr_ellipsis_literal,
     gen_expr_none_literal, gen_expr_number_literal, gen_expr_string_literal,
@@ -29,7 +29,7 @@ pub enum GenAnnotationError {
 }
 
 fn get_type_attribute<'a>(
-    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
     location: &Location<QualifiedName>,
     identifiers: &'a [Identifier],
 ) -> Result<(Location<QualifiedName>, &'a Identifier, &'a LocalAttribute), GenAnnotationError> {
@@ -61,7 +61,7 @@ fn get_type_attribute<'a>(
 }
 
 pub fn gen_expr_qualified_name(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     location: &Location<QualifiedName>,
     qualified_name: QualifiedName,
 ) -> Result<Type, GenAnnotationError> {
@@ -96,7 +96,7 @@ pub fn gen_expr_qualified_name(
 }
 
 pub fn gen_expr_subscript(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     location: &Location<QualifiedName>,
     expression: &ExprSubscript,
 ) -> Result<Type, GenAnnotationError> {
@@ -163,7 +163,7 @@ pub fn gen_expr_unary_op(expression: &ExprUnaryOp) -> Result<Type, GenAnnotation
 }
 
 pub fn gen_expr_bin_op(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     location: &Location<QualifiedName>,
     expression: &ExprBinOp,
 ) -> Result<Type, GenAnnotationError> {
@@ -184,7 +184,7 @@ pub fn gen_expr_bin_op(
 }
 
 pub fn gen_annotation(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     location: &Location<QualifiedName>,
     expression: &Expr,
 ) -> Result<Type, GenAnnotationError> {

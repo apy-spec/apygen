@@ -5,7 +5,7 @@ use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint};
 pub use apygen_analysis::lattice::Lattice;
 use apygen_analysis::namespace::{
-    Location, NamespaceLocation, Namespaces, NamespacesContext, NamespacesProxy,
+    Location, NamespaceLocation, NamespaceLocations, NamespaceLocationsProxy, Namespaces,
 };
 use apygen_finder::filesystem::{Error as FilesystemError, Filesystem};
 use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
@@ -18,20 +18,33 @@ use std::sync::Arc;
 use std::sync::mpsc::{Sender, channel};
 use thiserror::Error;
 
-pub fn worklist<'a>(
-    context: &mut impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
+pub type Dependents = HashSet<NamespaceLocation<QualifiedName>>;
+pub type Arguments = HashMap<Arc<Identifier>, Arc<Type>>;
+pub struct WorklistContext<
+    'a,
+    N: Namespaces<QualifiedName, AbstractEnvironment> = NamespaceLocationsProxy<
+        'a,
+        QualifiedName,
+        AbstractEnvironment,
     >,
-    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
-    cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
-    import_tx: &Sender<NamespaceLocation<QualifiedName>>,
+> {
+    pub namespaces: N,
+    pub dependents: HashMap<NamespaceLocation<QualifiedName>, Dependents>,
+    pub calls: HashMap<NamespaceLocation<QualifiedName>, Arguments>,
+    pub cfgs: &'a HashMap<Arc<QualifiedName>, Cfg>,
+    pub import_tx: &'a Sender<NamespaceLocation<QualifiedName>>,
+}
+
+pub fn worklist(
+    context: &mut WorklistContext,
     namespace_location: NamespaceLocation<QualifiedName>,
 ) {
-    context.reset_abstract_environments(&namespace_location);
+    context
+        .namespaces
+        .reset_abstract_environments(&namespace_location);
 
-    let cfg = cfgs
+    let cfg = context
+        .cfgs
         .get(&namespace_location.module)
         .map(|module_cfg| namespace_location.resolve(module_cfg))
         .flatten()
@@ -50,16 +63,7 @@ pub fn worklist<'a>(
                 let res_abstract_environments = if let Some(NodeData::Statement(statement_data)) =
                     cfg.node_data(&program_point)
                 {
-                    gen_statement(
-                        context,
-                        dependents,
-                        calls,
-                        cfgs,
-                        import_tx,
-                        location,
-                        statement_data.statement(),
-                    )
-                    .unwrap()
+                    gen_statement(context, location, statement_data.statement()).unwrap()
                 } else {
                     HashMap::from_iter([(EdgeData::Unconditional, AbstractEnvironment::default())])
                 };
@@ -80,23 +84,26 @@ pub fn worklist<'a>(
                             .get(edge)
                             .or_else(|| res_abstract_environments.get(&EdgeData::Unconditional))
                         {
-                            let new_successor_environment =
-                                match context.get_abstract_environment(&successor_location) {
-                                    Some(successor_environment) => {
-                                        if successor_environment
-                                            .includes(context, res_abstract_environment)
-                                            .unwrap()
-                                        {
-                                            continue;
-                                        }
-                                        successor_environment
-                                            .join(context, res_abstract_environment)
-                                            .unwrap()
+                            let new_successor_environment = match context
+                                .namespaces
+                                .get_abstract_environment(&successor_location)
+                            {
+                                Some(successor_environment) => {
+                                    if successor_environment
+                                        .includes(&context.namespaces, res_abstract_environment)
+                                        .unwrap()
+                                    {
+                                        continue;
                                     }
-                                    None => res_abstract_environment.clone(),
-                                };
+                                    successor_environment
+                                        .join(&context.namespaces, res_abstract_environment)
+                                        .unwrap()
+                                }
+                                None => res_abstract_environment.clone(),
+                            };
 
                             context
+                                .namespaces
                                 .abstract_environment_entry(successor_location.clone())
                                 .insert_entry(new_successor_environment);
 
@@ -111,6 +118,7 @@ pub fn worklist<'a>(
     }
 
     context
+        .namespaces
         .abstract_environment_entry(Location {
             namespace_location: namespace_location.clone(),
             program_point: ProgramPoint::Exit,
@@ -184,12 +192,13 @@ pub fn cfg_worklist<'a, F: Filesystem>(
     specs: HashMap<Identifier, FinderSpec<Identifier, F>>,
     target_modules: &HashSet<Identifier>,
 ) -> Option<(
-    Namespaces<QualifiedName, AbstractEnvironment>,
+    NamespaceLocations<QualifiedName, AbstractEnvironment>,
     HashMap<Arc<QualifiedName>, Cfg>,
 )> {
     let module_specs = convert_specs(specs);
 
-    let mut namespaces: Namespaces<QualifiedName, AbstractEnvironment> = Namespaces::new();
+    let mut namespaces: NamespaceLocations<QualifiedName, AbstractEnvironment> =
+        NamespaceLocations::new();
     let mut dependents: HashMap<
         NamespaceLocation<QualifiedName>,
         HashSet<NamespaceLocation<QualifiedName>>,
@@ -298,40 +307,33 @@ pub fn cfg_worklist<'a, F: Filesystem>(
             let (changed, worker_dependents): (Vec<_>, Vec<_>) = cfg_worklist
                 .into_par_iter()
                 .map(|namespace_location| {
-                    let mut context = NamespacesProxy::new(&namespaces_ref);
-                    let mut dependents: HashMap<
-                        NamespaceLocation<QualifiedName>,
-                        HashSet<NamespaceLocation<QualifiedName>>,
-                    > = HashMap::new();
-                    let mut calls: HashMap<
-                        NamespaceLocation<QualifiedName>,
-                        HashMap<Arc<Identifier>, Arc<Type>>,
-                    > = HashMap::new();
+                    let mut context = WorklistContext {
+                        namespaces: NamespaceLocationsProxy::new(&namespaces_ref),
+                        dependents: HashMap::new(),
+                        calls: HashMap::new(),
+                        cfgs: cfgs_ref,
+                        import_tx: &import_tx,
+                    };
 
-                    worklist(
-                        &mut context,
-                        &mut dependents,
-                        &mut calls,
-                        cfgs_ref,
-                        &import_tx,
-                        namespace_location.clone(),
-                    );
+                    worklist(&mut context, namespace_location.clone());
 
                     let namespace = context
+                        .namespaces
                         .override_namespaces
                         .locations
                         .remove(&namespace_location)
                         .expect("Worklist should have computed this namespace");
 
                     debug_assert!(
-                        context.override_namespaces.locations.is_empty(),
+                        context.namespaces.override_namespaces.locations.is_empty(),
                         "Worklist should only compute the namespace for the given location",
                     );
 
                     if namespace_location.module.identifiers.first() != BUILTINS_MODULE
                         || namespace_location.module.identifiers.len() != 1
                     {
-                        dependents
+                        context
+                            .dependents
                             .entry(NamespaceLocation::new(Arc::new(QualifiedName::parse(
                                 BUILTINS_MODULE,
                             ))))
@@ -339,7 +341,10 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                             .insert(namespace_location.clone());
                     }
 
-                    ((namespace_location, namespace), (dependents, calls))
+                    (
+                        (namespace_location, namespace),
+                        (context.dependents, context.calls),
+                    )
                 })
                 .unzip();
 

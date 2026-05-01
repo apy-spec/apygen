@@ -1,11 +1,11 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, TYPES_MODULE, TYPING_MODULE, Type, TypeAliasKind, TypeLiteral,
-    TypeInstance,
+    TYPES_MODULE, TYPING_MODULE, Type, TypeAliasKind, TypeInstance, TypeLiteral,
 };
 use crate::genkill::expressions::{self, GenExprResult};
+use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::nodes;
-use apygen_analysis::namespace::{Location, NamespacesContext};
+use apygen_analysis::namespace::Location;
 
 pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
     match type_literal {
@@ -83,8 +83,7 @@ pub fn as_type_instance(type_literal: &TypeLiteral) -> TypeInstance {
 }
 
 pub fn call_binary_op(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    environment_location: &Location<QualifiedName>,
+    context: &mut WorklistContext,
     left: &TypeLiteral,
     operator: nodes::Operator,
     right: &TypeLiteral,

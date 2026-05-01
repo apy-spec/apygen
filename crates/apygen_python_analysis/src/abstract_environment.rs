@@ -1,5 +1,5 @@
 use crate::analysis::lattice::Lattice;
-use crate::analysis::namespace::{Location, NamespaceLocation, NamespacesContext};
+use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
 pub use apy::OneOrMany;
 pub use apy::v1::{
     GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName, Visibility,
@@ -1062,7 +1062,7 @@ impl Type {
 
     pub fn includes<'a>(
         &'a self,
-        context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+        namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
         other: &'a Self,
     ) -> Result<bool, ContextError> {
         if self == other {
@@ -1078,7 +1078,7 @@ impl Type {
                 if let Type::Intersection(other_type_intersection) = other {
                     Ok(type_intersection.is_subset(other_type_intersection))
                 } else {
-                    other.includes(context, self)
+                    other.includes(namespaces, self)
                 }
             }
             Type::Literal(_) => Ok(false),
@@ -1141,10 +1141,11 @@ impl LocalAttribute {
 
     fn includes<'a>(
         &'a self,
-        context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+        namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
         other: &'a Self,
     ) -> Result<bool, ContextError> {
-        self.attribute_type.includes(context, &other.attribute_type)
+        self.attribute_type
+            .includes(namespaces, &other.attribute_type)
     }
 
     pub fn join(&self, other: &LocalAttribute) -> LocalAttribute {
@@ -1184,9 +1185,10 @@ pub struct ImportedAttribute {
 impl ImportedAttribute {
     pub fn resolve<'a>(
         &'a self,
-        context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+        namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
     ) -> Result<&'a LocalAttribute, GetAttributeError> {
-        get_attribute(context, &Location::from(self.module.clone()), &self.name)?.resolve(context)
+        get_attribute(namespaces, &Location::from(self.module.clone()), &self.name)?
+            .resolve(namespaces)
     }
 }
 
@@ -1199,22 +1201,22 @@ pub enum Attribute {
 impl Attribute {
     pub fn resolve<'a>(
         &'a self,
-        context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+        namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
     ) -> Result<&'a LocalAttribute, GetAttributeError> {
         match self {
             Attribute::Local(local_attribute) => Ok(local_attribute),
-            Attribute::Imported(imported_attribute) => imported_attribute.resolve(context),
+            Attribute::Imported(imported_attribute) => imported_attribute.resolve(namespaces),
         }
     }
 
     pub fn as_local(
         &self,
-        context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     ) -> Result<LocalAttribute, GetAttributeError> {
         match self {
             Attribute::Local(local_attribute) => Ok(local_attribute.clone()),
             Attribute::Imported(imported_attribute) => {
-                let mut resolved_attribute = imported_attribute.resolve(context)?.clone();
+                let mut resolved_attribute = imported_attribute.resolve(namespaces)?.clone();
 
                 resolved_attribute.visibility = imported_attribute.visibility;
                 resolved_attribute.is_deprecated = imported_attribute.is_deprecated;
@@ -1237,11 +1239,11 @@ pub enum GetAttributeError {
 }
 
 pub fn get_attribute<'a>(
-    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
     location: &Location<QualifiedName>,
     name: &Identifier,
 ) -> Result<&'a Attribute, GetAttributeError> {
-    let Some(abstract_environment) = context.get_abstract_environment(location) else {
+    let Some(abstract_environment) = namespaces.get_abstract_environment(location) else {
         return Err(GetAttributeError::LocationNotFound(location.clone()));
     };
 
@@ -1256,20 +1258,20 @@ pub fn get_attribute<'a>(
 }
 
 pub fn resolve_local_attribute<'a>(
-    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
     location: Location<QualifiedName>,
     name: &Identifier,
 ) -> Result<(Location<QualifiedName>, &'a LocalAttribute), GetAttributeError> {
-    let err = match get_attribute(context, &location, name) {
+    let err = match get_attribute(namespaces, &location, name) {
         Ok(attribute) => {
-            let local_attribute = attribute.resolve(context)?;
+            let local_attribute = attribute.resolve(namespaces)?;
             return Ok((location, local_attribute));
         }
         Err(error) => error,
     };
 
     if let Some(parent_location) = location.namespace_location.parent_location() {
-        return resolve_local_attribute(context, Location::at_exit(parent_location), name);
+        return resolve_local_attribute(namespaces, Location::at_exit(parent_location), name);
     }
 
     let builtins_namespace_location =
@@ -1277,7 +1279,7 @@ pub fn resolve_local_attribute<'a>(
 
     if location.namespace_location != builtins_namespace_location {
         return resolve_local_attribute(
-            context,
+            namespaces,
             Location::at_exit(builtins_namespace_location),
             name,
         );
@@ -1332,7 +1334,7 @@ impl Lattice<QualifiedName> for AbstractEnvironment {
 
     fn includes(
         &self,
-        context: &impl NamespacesContext<QualifiedName, Self>,
+        context: &impl Namespaces<QualifiedName, Self>,
         other: &Self,
     ) -> Result<bool, Self::ContextError> {
         for (name, other_attribute) in &other.attributes {
@@ -1376,7 +1378,7 @@ impl Lattice<QualifiedName> for AbstractEnvironment {
 
     fn join(
         &self,
-        context: &impl NamespacesContext<QualifiedName, Self>,
+        context: &impl Namespaces<QualifiedName, Self>,
         other: &Self,
     ) -> Result<Self, Self::ContextError> {
         let mut new_abstract_environment = self.clone();

@@ -7,7 +7,7 @@ use crate::abstract_environment::{
 };
 use crate::genkill::visibility::visibility_from_module_name;
 use apy;
-use apygen_analysis::namespace::{Location, NamespaceLocation, NamespacesContext};
+use apygen_analysis::namespace::{Location, NamespaceLocation, Namespaces};
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::collections::BTreeMap;
@@ -89,7 +89,7 @@ pub fn convert_literal_dict(literal_dict: &LiteralDict) -> apy::v1::TypeReferenc
 }
 
 pub fn convert_literal_function(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     literal_function: &LiteralFunction,
 ) -> Option<apy::v1::Function> {
     let abstract_environment = context.get_abstract_environment(&Location::at_exit(
@@ -121,7 +121,7 @@ pub fn convert_literal_function(
 }
 
 pub fn convert_literal_class(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     literal_class: &LiteralClass,
 ) -> Option<apy::v1::Class> {
     let abstract_environment = context.get_abstract_environment(&Location::at_exit(
@@ -139,7 +139,7 @@ pub fn convert_literal_class(
 }
 
 pub fn convert_literal_type_alias(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     literal_type_alias: &LiteralTypeAlias,
 ) -> Option<apy::v1::TypeAlias> {
     Some(apy::v1::TypeAlias::new(convert_type(
@@ -149,14 +149,14 @@ pub fn convert_literal_type_alias(
 }
 
 pub fn convert_literal_generic(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     literal_generic: &LiteralGeneric,
 ) -> Option<apy::v1::Generic> {
     Some(apy::v1::Generic::new(literal_generic.value.kind))
 }
 
 pub fn convert_literal_imported_module(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     literal_imported_module: &LiteralImportedModule,
 ) -> Option<apy::v1::ImportedModule> {
     Some(apy::v1::ImportedModule::new(
@@ -175,7 +175,7 @@ pub enum ConvertedTypeLiteral {
 }
 
 pub fn convert_type_literal(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     type_literal: &TypeLiteral,
 ) -> Option<ConvertedTypeLiteral> {
     Some(match type_literal {
@@ -256,7 +256,7 @@ pub fn convert_type_instance(type_instance: &TypeInstance) -> apy::v1::TypeRefer
 }
 
 pub fn convert_type_union(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     type_union: &TypeUnion,
 ) -> Option<apy::v1::TypeReference> {
     Some(
@@ -283,7 +283,7 @@ pub fn convert_type_intersection() -> apy::v1::TypeReference {
 }
 
 pub fn convert_type(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     ty: &Type,
 ) -> Option<apy::v1::Type> {
     Some(apy::v1::Type::Reference(match ty {
@@ -333,7 +333,7 @@ pub fn convert_type(
 }
 
 pub fn convert_attribute(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     attribute: &Attribute,
 ) -> Option<apy::v1::Attribute> {
     let local_attribute = attribute.as_local(context).ok()?;
@@ -401,7 +401,7 @@ pub fn convert_attribute(
 }
 
 pub fn convert_abstract_environment(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     abstract_environment: &AbstractEnvironment,
 ) -> Option<BTreeMap<apy::v1::Identifier, apy::OneOrMany<apy::v1::Attribute>>> {
     let mut attributes: BTreeMap<apy::v1::Identifier, apy::OneOrMany<apy::v1::Attribute>> =
@@ -418,7 +418,7 @@ pub fn convert_abstract_environment(
 }
 
 pub fn convert_module(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     module: &Arc<apy::v1::QualifiedName>,
 ) -> Option<apy::v1::Module> {
     let namespace_location = NamespaceLocation::new(module.clone());
@@ -443,7 +443,7 @@ pub fn convert_module(
 }
 
 pub fn convert_apy_v1<'a>(
-    context: &(impl NamespacesContext<QualifiedName, AbstractEnvironment> + Sync),
+    context: &(impl Namespaces<QualifiedName, AbstractEnvironment> + Sync),
     target_modules: impl IntoParallelIterator<Item = &'a Arc<QualifiedName>>,
 ) -> apy::v1::ApyV1 {
     apy::v1::ApyV1::new().with_modules(

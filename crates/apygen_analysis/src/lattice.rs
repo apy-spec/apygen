@@ -1,4 +1,4 @@
-use crate::namespace::NamespacesContext;
+use crate::namespace::Namespaces;
 use std::hash::Hash;
 
 pub trait Lattice<M: Clone + PartialEq + Eq + Hash>
@@ -9,13 +9,13 @@ where
 
     fn includes(
         &self,
-        context: &impl NamespacesContext<M, Self>,
+        context: &impl Namespaces<M, Self>,
         other: &Self,
     ) -> Result<bool, Self::ContextError>;
 
     fn join(
         &self,
-        context: &impl NamespacesContext<M, Self>,
+        context: &impl Namespaces<M, Self>,
         other: &Self,
     ) -> Result<Self, Self::ContextError>;
 }

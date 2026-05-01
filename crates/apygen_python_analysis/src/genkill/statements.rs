@@ -4,42 +4,36 @@ use crate::abstract_environment::{
     Parameter, ParameterKind, Type, TypeLiteral, get_attribute,
 };
 use crate::analysis::cfg::nodes::Stmt;
-use crate::analysis::cfg::{Cfg, EdgeData, nodes};
-use crate::analysis::namespace::{Location, NamespaceLocation, NamespacesContext};
+use crate::analysis::cfg::{EdgeData, nodes};
+use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
 use crate::genkill::annotations::gen_annotation;
 use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::expressions::gen_expr;
 use crate::genkill::visibility::gen_visibility;
+use crate::worklist::WorklistContext;
 use apy::OneOrMany;
 use apy::v1::{Identifier, ParseIdentifierError, ParseQualifiedNameError, QualifiedName};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::mpsc::Sender;
 
 pub fn gen_assign(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
-    cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
+    context: &mut WorklistContext,
     location: Location<QualifiedName>,
     stmt_assign: &nodes::StmtAssign,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
+        .namespaces
         .get_abstract_environment(&location)
         .cloned()
         .unwrap_or_default();
 
-    let gen_result =
-        gen_expr(context, dependents, calls, &location, &stmt_assign.value).map(|ty| Arc::new(ty));
+    let gen_result = gen_expr(context, &location, &stmt_assign.value).map(|ty| Arc::new(ty));
 
     for target in &stmt_assign.targets {
         let target = AssignmentTarget::try_from(target);
 
         if let Ok(AssignmentTarget::Name(name)) = target {
-            let visibility = gen_visibility(cfgs, &location.namespace_location, &name);
+            let visibility = gen_visibility(context.cfgs, &location.namespace_location, &name);
 
             target_abstract_environment.attributes.insert(
                 Arc::new(name),
@@ -62,22 +56,18 @@ pub fn gen_assign(
 }
 
 pub fn gen_return(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
+    context: &mut WorklistContext,
     location: Location<QualifiedName>,
     stmt_return: &nodes::StmtReturn,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
+        .namespaces
         .get_abstract_environment(&location)
         .cloned()
         .unwrap_or_default();
 
     if let Some(value) = &stmt_return.value {
-        let gen_result = gen_expr(context, dependents, calls, &location, value);
+        let gen_result = gen_expr(context, &location, value);
         target_abstract_environment.returned_value = Arc::new(gen_result.value);
     } else {
         target_abstract_environment.returned_value = Arc::new(Type::new_literal(TypeLiteral::None));
@@ -90,37 +80,33 @@ pub fn gen_return(
 }
 
 pub fn gen_ann_assign(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
-    cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
+    context: &mut WorklistContext,
     location: Location<QualifiedName>,
     stmt_ann_assign: &nodes::StmtAnnAssign,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
+        .namespaces
         .get_abstract_environment(&location)
         .cloned()
         .unwrap_or_default();
 
-    let expression = match gen_annotation(context, &location, &stmt_ann_assign.annotation) {
-        Ok(ty) => ty,
-        Err(_) => {
-            target_abstract_environment
-                .diagnostics
-                .insert(Diagnostic::InvalidAnnotation {
-                    location: location.clone(),
-                });
-            Type::Any
-        }
-    };
+    let expression =
+        match gen_annotation(&context.namespaces, &location, &stmt_ann_assign.annotation) {
+            Ok(ty) => ty,
+            Err(_) => {
+                target_abstract_environment
+                    .diagnostics
+                    .insert(Diagnostic::InvalidAnnotation {
+                        location: location.clone(),
+                    });
+                Type::Any
+            }
+        };
 
     let target = AssignmentTarget::try_from(stmt_ann_assign.target.as_ref());
 
     if let Ok(AssignmentTarget::Name(name)) = target {
-        let visibility = gen_visibility(cfgs, &location.namespace_location, &name);
+        let visibility = gen_visibility(context.cfgs, &location.namespace_location, &name);
 
         target_abstract_environment.attributes.insert(
             Arc::new(name),
@@ -142,17 +128,12 @@ pub fn gen_ann_assign(
 }
 
 pub fn gen_import(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
-    import_tx: &Sender<NamespaceLocation<QualifiedName>>,
+    context: &mut WorklistContext,
     location: Location<QualifiedName>,
     stmt_import: &nodes::StmtImport,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
+        .namespaces
         .get_abstract_environment(&location)
         .cloned()
         .unwrap_or_default();
@@ -176,7 +157,7 @@ pub fn gen_import(
             .next()
             .expect("OneOrMany always has at least one element");
 
-        let visibility = gen_visibility(cfgs, &location.namespace_location, &root_package);
+        let visibility = gen_visibility(context.cfgs, &location.namespace_location, &root_package);
 
         let mut submodules = imbl::OrdSet::new();
         if let Ok(submodule_identifiers) = OneOrMany::try_from_iter(identifier_iter) {
@@ -208,10 +189,12 @@ pub fn gen_import(
         );
 
         let module_location = NamespaceLocation::from(module);
-        import_tx
+        context
+            .import_tx
             .send(module_location.clone())
             .expect("Should send module location to import channel");
-        dependents
+        context
+            .dependents
             .entry(module_location)
             .or_default()
             .insert(location.namespace_location.clone());
@@ -224,17 +207,12 @@ pub fn gen_import(
 }
 
 pub fn gen_import_from(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
-    import_tx: &Sender<NamespaceLocation<QualifiedName>>,
+    context: &mut WorklistContext,
     location: Location<QualifiedName>,
     stmt_import_from: &nodes::StmtImportFrom,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
+        .namespaces
         .get_abstract_environment(&location)
         .cloned()
         .unwrap_or_default();
@@ -263,11 +241,11 @@ pub fn gen_import_from(
             continue;
         };
 
-        let visibility = gen_visibility(cfgs, &location.namespace_location, &name);
+        let visibility = gen_visibility(&context.cfgs, &location.namespace_location, &name);
         let identifier = Identifier::try_parse(alias.name.id.as_ref())?;
 
         match get_attribute(
-            context,
+            &context.namespaces,
             &Location::at_exit(namespace_location.clone()),
             &identifier,
         ) {
@@ -289,7 +267,7 @@ pub fn gen_import_from(
                     Arc::new(QualifiedName { identifiers })
                 };
 
-                if cfgs.contains_key(&submodule) {
+                if context.cfgs.contains_key(&submodule) {
                     target_abstract_environment.attributes.insert(
                         Arc::new(name),
                         Arc::new(Attribute::Local(LocalAttribute {
@@ -314,10 +292,12 @@ pub fn gen_import_from(
         };
     }
 
-    import_tx
+    context
+        .import_tx
         .send(namespace_location.clone())
         .expect("Should send module location to import channel");
-    dependents
+    context
+        .dependents
         .entry(namespace_location)
         .or_default()
         .insert(location.namespace_location);
@@ -329,25 +309,20 @@ pub fn gen_import_from(
 }
 
 pub fn gen_parameter(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
+    context: &mut WorklistContext,
     location: &Location<QualifiedName>,
     parameter: &nodes::Parameter,
     kind: ParameterKind,
     default: Option<&Box<nodes::Expr>>,
 ) -> Result<Parameter, ParseIdentifierError> {
     let annotation_ty = match &parameter.annotation {
-        Some(annotation) => gen_annotation(context, location, annotation.as_ref()).ok(),
+        Some(annotation) => gen_annotation(&context.namespaces, location, annotation.as_ref()).ok(),
         None => None,
     };
 
     let ty = match default {
         Some(default) => {
-            let default_ty = gen_expr(context, dependents, calls, location, default.as_ref()).value;
+            let default_ty = gen_expr(context, location, default.as_ref()).value;
             match annotation_ty {
                 Some(annotation_ty) => annotation_ty,
                 None => default_ty,
@@ -370,17 +345,12 @@ pub fn gen_parameter(
 }
 
 pub fn gen_function_def(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
-    cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
+    context: &mut WorklistContext,
     location: Location<QualifiedName>,
     stmt_function_def: &nodes::StmtFunctionDef,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
+        .namespaces
         .get_abstract_environment(&location)
         .cloned()
         .unwrap_or_default();
@@ -391,8 +361,6 @@ pub fn gen_function_def(
     for positional_parameter in &stmt_function_def.parameters.posonlyargs {
         parameters.push(gen_parameter(
             context,
-            dependents,
-            calls,
             &location,
             &positional_parameter.parameter,
             ParameterKind::PositionalOnly,
@@ -402,8 +370,6 @@ pub fn gen_function_def(
     for positional_or_keyword_parameter in &stmt_function_def.parameters.args {
         parameters.push(gen_parameter(
             context,
-            dependents,
-            calls,
             &location,
             &positional_or_keyword_parameter.parameter,
             ParameterKind::PositionalOrKeyword,
@@ -413,8 +379,6 @@ pub fn gen_function_def(
     if let Some(var_positional_parameter) = &stmt_function_def.parameters.vararg {
         parameters.push(gen_parameter(
             context,
-            dependents,
-            calls,
             &location,
             &var_positional_parameter,
             ParameterKind::VarPositional,
@@ -424,8 +388,6 @@ pub fn gen_function_def(
     for keyword_parameter in &stmt_function_def.parameters.kwonlyargs {
         parameters.push(gen_parameter(
             context,
-            dependents,
-            calls,
             &location,
             &keyword_parameter.parameter,
             ParameterKind::KeywordOnly,
@@ -435,8 +397,6 @@ pub fn gen_function_def(
     if let Some(var_keyword_parameter) = &stmt_function_def.parameters.kwarg {
         parameters.push(gen_parameter(
             context,
-            dependents,
-            calls,
             &location,
             &var_keyword_parameter,
             ParameterKind::VarKeyword,
@@ -444,7 +404,7 @@ pub fn gen_function_def(
         )?);
     }
 
-    let visibility = gen_visibility(cfgs, &location.namespace_location, &name);
+    let visibility = gen_visibility(context.cfgs, &location.namespace_location, &name);
     target_abstract_environment.attributes.insert(
         Arc::new(name),
         Arc::new(Attribute::Local(LocalAttribute {
@@ -464,7 +424,8 @@ pub fn gen_function_def(
         })),
     );
 
-    dependents
+    context
+        .dependents
         .entry(location.namespace_location.clone())
         .or_default()
         .insert(location.as_sub_location());
@@ -476,22 +437,18 @@ pub fn gen_function_def(
 }
 
 pub fn gen_class_def(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
+    context: &mut WorklistContext,
     location: Location<QualifiedName>,
     stmt_class_def: &nodes::StmtClassDef,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context
+        .namespaces
         .get_abstract_environment(&location)
         .cloned()
         .unwrap_or_default();
 
     let name = Identifier::try_parse(stmt_class_def.name.id.as_ref())?;
-    let visibility = gen_visibility(cfgs, &location.namespace_location, &name);
+    let visibility = gen_visibility(context.cfgs, &location.namespace_location, &name);
     target_abstract_environment.attributes.insert(
         Arc::new(name),
         Arc::new(Attribute::Local(LocalAttribute {
@@ -512,7 +469,8 @@ pub fn gen_class_def(
         })),
     );
 
-    dependents
+    context
+        .dependents
         .entry(location.namespace_location.clone())
         .or_default()
         .insert(location.as_sub_location());
@@ -524,50 +482,24 @@ pub fn gen_class_def(
 }
 
 pub fn gen_statement<'a>(
-    context: &mut impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
-    cfgs: &HashMap<Arc<QualifiedName>, Cfg>,
-    import_tx: &Sender<NamespaceLocation<QualifiedName>>,
+    context: &mut WorklistContext,
     location: Location<QualifiedName>,
     statement: &Stmt,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     match statement {
-        Stmt::AnnAssign(stmt_ann_assign) => {
-            gen_ann_assign(context, dependents, calls, cfgs, location, &stmt_ann_assign)
+        Stmt::AnnAssign(stmt_ann_assign) => gen_ann_assign(context, location, &stmt_ann_assign),
+        Stmt::Return(stmt_return) => gen_return(context, location, &stmt_return),
+        Stmt::Assign(stmt_assign) => gen_assign(context, location, &stmt_assign),
+        Stmt::Import(stmt_import) => gen_import(context, location, &stmt_import),
+        Stmt::ImportFrom(stmt_import_from) => gen_import_from(context, location, &stmt_import_from),
+        Stmt::FunctionDef(stmt_function_def) => {
+            gen_function_def(context, location, &stmt_function_def)
         }
-        Stmt::Return(stmt_return) => gen_return(context, dependents, calls, location, &stmt_return),
-        Stmt::Assign(stmt_assign) => {
-            gen_assign(context, dependents, calls, cfgs, location, &stmt_assign)
-        }
-        Stmt::Import(stmt_import) => {
-            gen_import(context, dependents, cfgs, import_tx, location, &stmt_import)
-        }
-        Stmt::ImportFrom(stmt_import_from) => gen_import_from(
-            context,
-            dependents,
-            cfgs,
-            import_tx,
-            location,
-            &stmt_import_from,
-        ),
-        Stmt::FunctionDef(stmt_function_def) => gen_function_def(
-            context,
-            dependents,
-            calls,
-            cfgs,
-            location,
-            &stmt_function_def,
-        ),
-        Stmt::ClassDef(stmt_class_def) => {
-            gen_class_def(context, dependents, cfgs, location, &stmt_class_def)
-        }
+        Stmt::ClassDef(stmt_class_def) => gen_class_def(context, location, &stmt_class_def),
         _ => Ok(HashMap::from_iter([(
             EdgeData::Unconditional,
             context
+                .namespaces
                 .get_abstract_environment(&location)
                 .cloned()
                 .unwrap_or_default(),

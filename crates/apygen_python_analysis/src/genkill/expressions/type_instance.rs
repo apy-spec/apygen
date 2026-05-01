@@ -4,10 +4,11 @@ use crate::abstract_environment::{
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::GenExprResult;
+use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::nodes::Operator;
-use apygen_analysis::namespace::{Location, NamespaceLocation, NamespacesContext};
-use std::collections::{HashMap, HashSet};
+use apygen_analysis::namespace::{Location, NamespaceLocation, Namespaces};
+use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -20,7 +21,7 @@ pub enum GetInstanceEnvironmentError {
 }
 
 pub fn get_instance_environment<'a>(
-    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    context: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
     type_instance: &TypeInstance,
 ) -> Result<&'a AbstractEnvironment, GetInstanceEnvironmentError> {
     let local_attribute =
@@ -63,11 +64,11 @@ pub fn get_functions(ty: &Type) -> Vec<&FunctionType> {
 }
 
 pub fn get_methods<'a>(
-    context: &'a impl NamespacesContext<QualifiedName, AbstractEnvironment>,
+    namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
     type_instance: &TypeInstance,
     method_name: &Identifier,
 ) -> Vec<&'a FunctionType> {
-    let Ok(environment) = get_instance_environment(context, type_instance) else {
+    let Ok(environment) = get_instance_environment(namespaces, type_instance) else {
         return Vec::new();
     };
 
@@ -75,7 +76,7 @@ pub fn get_methods<'a>(
         return Vec::new();
     };
 
-    let Ok(local_attribute) = attribute.resolve(context) else {
+    let Ok(local_attribute) = attribute.resolve(namespaces) else {
         return Vec::new();
     };
 
@@ -83,19 +84,14 @@ pub fn get_methods<'a>(
 }
 
 pub fn call_method(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
+    context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     type_instance: &TypeInstance,
     method_name: &Identifier,
     positional: Vec<Arc<Type>>,
     keyword: HashMap<Arc<Identifier>, Arc<Type>>,
 ) -> GenExprResult<Type> {
-    let methods = get_methods(context, type_instance, method_name);
+    let methods = get_methods(&context.namespaces, type_instance, method_name);
 
     if methods.is_empty() {
         return GenExprResult::raise(Exception::builtins("AttributeError"));
@@ -112,6 +108,7 @@ pub fn call_method(
     for method in methods {
         if let Ok(bindings) = arguments.bind(&method.parameters) {
             if let Some(environment) = context
+                .namespaces
                 .get_abstract_environment(&Location::at_exit(method.location.as_sub_location()))
             {
                 result = result.union(GenExprResult {
@@ -124,8 +121,11 @@ pub fn call_method(
                 result = GenExprResult::unknown();
             }
 
-            calls.insert(method.location.as_sub_location(), bindings);
-            dependents
+            context
+                .calls
+                .insert(method.location.as_sub_location(), bindings);
+            context
+                .dependents
                 .entry(method.location.as_sub_location())
                 .or_default()
                 .insert(environment_location.namespace_location.clone());
@@ -138,12 +138,7 @@ pub fn call_method(
 }
 
 pub fn call_operator(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
+    context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     left: &TypeInstance,
     operator_name: &str,
@@ -151,8 +146,6 @@ pub fn call_operator(
 ) -> GenExprResult<Type> {
     call_method(
         context,
-        dependents,
-        calls,
         environment_location,
         left,
         &Identifier::parse(&format!("__{operator_name}__")),
@@ -161,8 +154,6 @@ pub fn call_operator(
     )
     .union(call_method(
         context,
-        dependents,
-        calls,
         environment_location,
         right,
         &Identifier::parse(&format!("__r{operator_name}__")),
@@ -174,134 +165,25 @@ pub fn call_operator(
 /// References:
 /// - https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types
 pub fn call_binary_op(
-    context: &impl NamespacesContext<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    >,
-    calls: &mut HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>>,
+    context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     left: &TypeInstance,
     operator: Operator,
     right: &TypeInstance,
 ) -> GenExprResult<Type> {
     match operator {
-        Operator::Add => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "add",
-            right,
-        ),
-        Operator::Sub => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "sub",
-            right,
-        ),
-        Operator::Mult => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "mul",
-            right,
-        ),
-        Operator::MatMult => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "matmul",
-            right,
-        ),
-        Operator::Div => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "truediv",
-            right,
-        ),
-        Operator::Mod => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "mod",
-            right,
-        ),
-        Operator::Pow => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "pow",
-            right,
-        ),
-        Operator::LShift => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "lshift",
-            right,
-        ),
-        Operator::RShift => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "rshift",
-            right,
-        ),
-        Operator::BitOr => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "or",
-            right,
-        ),
-        Operator::BitXor => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "xor",
-            right,
-        ),
-        Operator::BitAnd => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "and",
-            right,
-        ),
-        Operator::FloorDiv => call_operator(
-            context,
-            dependents,
-            calls,
-            environment_location,
-            left,
-            "floordiv",
-            right,
-        ),
+        Operator::Add => call_operator(context, environment_location, left, "add", right),
+        Operator::Sub => call_operator(context, environment_location, left, "sub", right),
+        Operator::Mult => call_operator(context, environment_location, left, "mul", right),
+        Operator::MatMult => call_operator(context, environment_location, left, "matmul", right),
+        Operator::Div => call_operator(context, environment_location, left, "truediv", right),
+        Operator::Mod => call_operator(context, environment_location, left, "mod", right),
+        Operator::Pow => call_operator(context, environment_location, left, "pow", right),
+        Operator::LShift => call_operator(context, environment_location, left, "lshift", right),
+        Operator::RShift => call_operator(context, environment_location, left, "rshift", right),
+        Operator::BitOr => call_operator(context, environment_location, left, "or", right),
+        Operator::BitXor => call_operator(context, environment_location, left, "xor", right),
+        Operator::BitAnd => call_operator(context, environment_location, left, "and", right),
+        Operator::FloorDiv => call_operator(context, environment_location, left, "floordiv", right),
     }
 }

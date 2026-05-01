@@ -133,7 +133,7 @@ impl<E> Namespace<E> {
     }
 }
 
-pub trait NamespacesContext<M: Clone + PartialEq + Eq + Hash, E: Clone + Default> {
+pub trait Namespaces<M: Clone + PartialEq + Eq + Hash, E: Clone + Default> {
     fn reset_abstract_environments(&mut self, namespace_location: &NamespaceLocation<M>);
     fn get_abstract_environment(&self, location: &Location<M>) -> Option<&E>;
     fn abstract_environment_entry(
@@ -143,20 +143,20 @@ pub trait NamespacesContext<M: Clone + PartialEq + Eq + Hash, E: Clone + Default
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct Namespaces<M, E> {
+pub struct NamespaceLocations<M, E> {
     pub locations: HashMap<NamespaceLocation<M>, Namespace<E>>,
 }
 
-impl<M, E> Namespaces<M, E> {
+impl<M, E> NamespaceLocations<M, E> {
     pub fn new() -> Self {
-        Namespaces {
+        NamespaceLocations {
             locations: HashMap::new(),
         }
     }
 }
 
-impl<M: Clone + PartialEq + Eq + Hash, E: Clone + Default> NamespacesContext<M, E>
-    for Namespaces<M, E>
+impl<M: Clone + PartialEq + Eq + Hash, E: Clone + Default> Namespaces<M, E>
+    for NamespaceLocations<M, E>
 {
     fn reset_abstract_environments(&mut self, namespace_location: &NamespaceLocation<M>) {
         self.locations.remove(namespace_location);
@@ -180,22 +180,22 @@ impl<M: Clone + PartialEq + Eq + Hash, E: Clone + Default> NamespacesContext<M, 
 }
 
 #[derive(Debug)]
-pub struct NamespacesProxy<'n, M: Clone + PartialEq + Eq + Hash, E: Clone + Default> {
-    pub namespaces: &'n Namespaces<M, E>,
-    pub override_namespaces: Namespaces<M, E>,
+pub struct NamespaceLocationsProxy<'n, M: Clone + PartialEq + Eq + Hash, E: Clone + Default> {
+    pub namespaces: &'n NamespaceLocations<M, E>,
+    pub override_namespaces: NamespaceLocations<M, E>,
 }
 
-impl<'n, M: Clone + PartialEq + Eq + Hash, E: Clone + Default> NamespacesProxy<'n, M, E> {
-    pub fn new(namespaces: &'n Namespaces<M, E>) -> Self {
-        NamespacesProxy {
+impl<'n, M: Clone + PartialEq + Eq + Hash, E: Clone + Default> NamespaceLocationsProxy<'n, M, E> {
+    pub fn new(namespaces: &'n NamespaceLocations<M, E>) -> Self {
+        NamespaceLocationsProxy {
             namespaces,
-            override_namespaces: Namespaces::new(),
+            override_namespaces: NamespaceLocations::new(),
         }
     }
 }
 
-impl<M: Clone + PartialEq + Eq + Hash, E: Clone + Default> NamespacesContext<M, E>
-    for NamespacesProxy<'_, M, E>
+impl<M: Clone + PartialEq + Eq + Hash, E: Clone + Default> Namespaces<M, E>
+    for NamespaceLocationsProxy<'_, M, E>
 {
     fn reset_abstract_environments(&mut self, namespace_location: &NamespaceLocation<M>) {
         if let Some(override_namespace) = self
