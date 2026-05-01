@@ -63,70 +63,61 @@ pub fn worklist(
         .expect("Should exist since worklist is only called on modules in the project data");
 
     let mut worklist: BTreeSet<ProgramPoint> = BTreeSet::from_iter([ProgramPoint::Entry]);
-    while !worklist.is_empty() {
-        worklist = worklist
-            .into_iter()
-            .flat_map(|program_point| {
-                let location = Location {
-                    namespace_location: namespace_location.clone(),
-                    program_point,
-                };
+    while let Some(program_point) = worklist.pop_first() {
+        let location = Location {
+            namespace_location: namespace_location.clone(),
+            program_point,
+        };
 
-                let res_abstract_environments = if let Some(NodeData::Statement(statement_data)) =
-                    cfg.node_data(&program_point)
+        let res_abstract_environments =
+            if let Some(NodeData::Statement(statement_data)) = cfg.node_data(&program_point) {
+                gen_statement(context, location, statement_data.statement()).unwrap()
+            } else {
+                HashMap::from_iter([(EdgeData::Unconditional, AbstractEnvironment::default())])
+            };
+
+        for successor in cfg.successors(&program_point).unwrap().cloned() {
+            let successor_location = Location {
+                namespace_location: namespace_location.clone(),
+                program_point: successor,
+            };
+
+            let edges = cfg
+                .edge_data(program_point, successor)
+                .expect("Should exist since successor is returned by cfg.successors");
+
+            for edge in edges {
+                if let Some(res_abstract_environment) = res_abstract_environments
+                    .get(edge)
+                    .or_else(|| res_abstract_environments.get(&EdgeData::Unconditional))
                 {
-                    gen_statement(context, location, statement_data.statement()).unwrap()
-                } else {
-                    HashMap::from_iter([(EdgeData::Unconditional, AbstractEnvironment::default())])
-                };
-
-                let mut worklist: BTreeSet<ProgramPoint> = BTreeSet::new();
-                for successor in cfg.successors(&program_point).unwrap().cloned() {
-                    let successor_location = Location {
-                        namespace_location: namespace_location.clone(),
-                        program_point: successor,
+                    let new_successor_environment = match context
+                        .namespaces
+                        .get_abstract_environment(&successor_location)
+                    {
+                        Some(successor_environment) => {
+                            if successor_environment
+                                .includes(&context.namespaces, res_abstract_environment)
+                                .unwrap()
+                            {
+                                continue;
+                            }
+                            successor_environment
+                                .join(&context.namespaces, res_abstract_environment)
+                                .unwrap()
+                        }
+                        None => res_abstract_environment.clone(),
                     };
 
-                    let edges = cfg
-                        .edge_data(program_point, successor)
-                        .expect("Should exist since successor is returned by cfg.successors");
+                    context
+                        .namespaces
+                        .abstract_environment_entry(successor_location.clone())
+                        .insert_entry(new_successor_environment);
 
-                    for edge in edges {
-                        if let Some(res_abstract_environment) = res_abstract_environments
-                            .get(edge)
-                            .or_else(|| res_abstract_environments.get(&EdgeData::Unconditional))
-                        {
-                            let new_successor_environment = match context
-                                .namespaces
-                                .get_abstract_environment(&successor_location)
-                            {
-                                Some(successor_environment) => {
-                                    if successor_environment
-                                        .includes(&context.namespaces, res_abstract_environment)
-                                        .unwrap()
-                                    {
-                                        continue;
-                                    }
-                                    successor_environment
-                                        .join(&context.namespaces, res_abstract_environment)
-                                        .unwrap()
-                                }
-                                None => res_abstract_environment.clone(),
-                            };
-
-                            context
-                                .namespaces
-                                .abstract_environment_entry(successor_location.clone())
-                                .insert_entry(new_successor_environment);
-
-                            worklist.insert(successor);
-                        }
-                    }
+                    worklist.insert(successor);
                 }
-
-                worklist
-            })
-            .collect();
+            }
+        }
     }
 
     context
