@@ -21,11 +21,7 @@ pub fn gen_assign(
     location: Location<QualifiedName>,
     stmt_assign: &nodes::StmtAssign,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
-    let mut target_abstract_environment = context
-        .namespaces
-        .get_abstract_environment(&location)
-        .cloned()
-        .unwrap_or_default();
+    let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
     let gen_result = gen_expr(context, &location, &stmt_assign.value).map(|ty| Arc::new(ty));
 
@@ -60,11 +56,7 @@ pub fn gen_return(
     location: Location<QualifiedName>,
     stmt_return: &nodes::StmtReturn,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
-    let mut target_abstract_environment = context
-        .namespaces
-        .get_abstract_environment(&location)
-        .cloned()
-        .unwrap_or_default();
+    let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
     if let Some(value) = &stmt_return.value {
         let gen_result = gen_expr(context, &location, value);
@@ -84,11 +76,7 @@ pub fn gen_ann_assign(
     location: Location<QualifiedName>,
     stmt_ann_assign: &nodes::StmtAnnAssign,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
-    let mut target_abstract_environment = context
-        .namespaces
-        .get_abstract_environment(&location)
-        .cloned()
-        .unwrap_or_default();
+    let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
     let expression =
         match gen_annotation(&context.namespaces, &location, &stmt_ann_assign.annotation) {
@@ -132,11 +120,7 @@ pub fn gen_import(
     location: Location<QualifiedName>,
     stmt_import: &nodes::StmtImport,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
-    let mut target_abstract_environment = context
-        .namespaces
-        .get_abstract_environment(&location)
-        .cloned()
-        .unwrap_or_default();
+    let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
     for alias in &stmt_import.names {
         let module = QualifiedName::try_from(alias.name.id.as_ref())?;
@@ -211,11 +195,7 @@ pub fn gen_import_from(
     location: Location<QualifiedName>,
     stmt_import_from: &nodes::StmtImportFrom,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
-    let mut target_abstract_environment = context
-        .namespaces
-        .get_abstract_environment(&location)
-        .cloned()
-        .unwrap_or_default();
+    let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
     let mut level = stmt_import_from.level;
     let mut qualified_name = location.namespace_location.module.as_ref().clone();
@@ -349,11 +329,7 @@ pub fn gen_function_def(
     location: Location<QualifiedName>,
     stmt_function_def: &nodes::StmtFunctionDef,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
-    let mut target_abstract_environment = context
-        .namespaces
-        .get_abstract_environment(&location)
-        .cloned()
-        .unwrap_or_default();
+    let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
     let name = Identifier::try_parse(stmt_function_def.name.id.as_ref())?;
 
@@ -441,11 +417,7 @@ pub fn gen_class_def(
     location: Location<QualifiedName>,
     stmt_class_def: &nodes::StmtClassDef,
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
-    let mut target_abstract_environment = context
-        .namespaces
-        .get_abstract_environment(&location)
-        .cloned()
-        .unwrap_or_default();
+    let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
     let name = Identifier::try_parse(stmt_class_def.name.id.as_ref())?;
     let visibility = gen_visibility(context.cfgs, &location.namespace_location, &name);

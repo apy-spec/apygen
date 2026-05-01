@@ -35,6 +35,18 @@ pub struct WorklistContext<
     pub import_tx: &'a Sender<NamespaceLocation<QualifiedName>>,
 }
 
+impl<N: Namespaces<QualifiedName, AbstractEnvironment>> WorklistContext<'_, N> {
+    pub fn clone_abstract_environment(
+        &self,
+        location: &Location<QualifiedName>,
+    ) -> AbstractEnvironment {
+        self.namespaces
+            .get_abstract_environment(&location)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
 pub fn worklist(
     context: &mut WorklistContext,
     namespace_location: NamespaceLocation<QualifiedName>,
