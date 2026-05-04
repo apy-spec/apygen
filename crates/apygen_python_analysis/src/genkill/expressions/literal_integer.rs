@@ -15,7 +15,7 @@ pub fn as_boolean(literal_integer: &LiteralInteger) -> bool {
 
 pub fn call_dunder_float(literal_integer: &LiteralInteger) -> GenExprResult<Type> {
     if let Some(literal_float) = literal_integer.to_literal_float() {
-        GenExprResult::new_total_pure_non_raising(Type::new_float_literal(literal_float))
+        GenExprResult::new(Type::new_float_literal(literal_float))
     } else {
         GenExprResult::unknown()
     }
@@ -59,7 +59,7 @@ pub fn call_binary_op(
     operator: nodes::Operator,
     right: &LiteralInteger,
 ) -> GenExprResult<Type> {
-    GenExprResult::new_total_pure_non_raising(match operator {
+    GenExprResult::new(match operator {
         nodes::Operator::Add => Type::new_integer_literal(left + right),
         nodes::Operator::Sub => Type::new_integer_literal(left - right),
         nodes::Operator::Mult => Type::new_integer_literal(left * right),
@@ -67,7 +67,7 @@ pub fn call_binary_op(
             let big_right = match right {
                 LiteralInteger::Int(small_right) => {
                     if let Ok(small_right) = usize::try_from(*small_right) {
-                        return GenExprResult::new_total_pure_non_raising(
+                        return GenExprResult::new(
                             Type::new_integer_literal(left.pow(small_right)),
                         );
                     }
@@ -97,7 +97,7 @@ pub fn call_binary_op(
             let (left, right) = match (left, right) {
                 (LiteralInteger::Int(left), LiteralInteger::Int(right)) => {
                     if let Some(value) = Rational64::new(*left, *right).to_f64() {
-                        return GenExprResult::new_total_pure_non_raising(Type::new_float_literal(
+                        return GenExprResult::new(Type::new_float_literal(
                             LiteralFloat { value },
                         ));
                     }

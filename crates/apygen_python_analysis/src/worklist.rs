@@ -3,7 +3,7 @@ use crate::genkill::statements::gen_statement;
 use apy::OneOrMany;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint};
-pub use apygen_analysis::lattice::Lattice;
+pub use apygen_analysis::lattice::NamespacesLattice;
 use apygen_analysis::namespace::{
     Location, NamespaceLocation, NamespaceLocations, NamespaceLocationsProxy, Namespaces,
 };

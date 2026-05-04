@@ -2,7 +2,7 @@ use crate::abstract_environment::{
     AbstractEnvironment, Attribute, BUILTINS_MODULE, LiteralBoolean, LiteralBytes, LiteralClass,
     LiteralComplex, LiteralDict, LiteralFloat, LiteralFunction, LiteralGeneric,
     LiteralImportedModule, LiteralInteger, LiteralList, LiteralString, LiteralTuple,
-    LiteralTypeAlias, QualifiedName, TYPES_MODULE, TYPING_MODULE, Type, TypeLiteral, TypeInstance,
+    LiteralTypeAlias, QualifiedName, TYPES_MODULE, TYPING_MODULE, Type, TypeInstance, TypeLiteral,
     TypeUnion,
 };
 use crate::genkill::visibility::visibility_from_module_name;
@@ -96,7 +96,7 @@ pub fn convert_literal_function(
         literal_function.value.location.as_sub_location(),
     ))?;
 
-    let return_type = convert_type(context, &abstract_environment.returned_value)?;
+    let return_type = convert_type(context, &abstract_environment.returned_value.data)?;
 
     let mut signature = apy::v1::Signature::new(return_type);
 
@@ -128,7 +128,7 @@ pub fn convert_literal_class(
         literal_class.value.location.as_sub_location(),
     ))?;
 
-    let return_type = convert_type(context, &abstract_environment.returned_value)?;
+    let return_type = convert_type(context, &abstract_environment.returned_value.data)?;
 
     assert!(matches!(return_type, apy::v1::Type::Literal(_)));
 
@@ -338,7 +338,7 @@ pub fn convert_attribute(
 ) -> Option<apy::v1::Attribute> {
     let local_attribute = attribute.as_local(context).ok()?;
 
-    let ty = match local_attribute.attribute_type.as_ref() {
+    let ty = match local_attribute.attribute_type.data.as_ref() {
         Type::Any => apy::v1::Type::Reference(convert_type_any()),
         Type::Never => apy::v1::Type::Reference(convert_type_never()),
         Type::NoReturn => apy::v1::Type::Reference(convert_type_no_return()),
@@ -362,29 +362,29 @@ pub fn convert_attribute(
             },
             ConvertedTypeLiteral::Function(function) => {
                 return Some(apy::v1::Attribute::Function(
-                    function.with_final(local_attribute.is_final),
+                    function.with_final(local_attribute.finality.data.is_final()),
                 ));
             }
             ConvertedTypeLiteral::Class(class) => {
                 return Some(apy::v1::Attribute::Class(
                     class
-                        .with_final(local_attribute.is_final)
-                        .with_visibility(local_attribute.visibility),
+                        .with_final(local_attribute.finality.data.is_final())
+                        .with_visibility(local_attribute.visibility.data.into()),
                 ));
             }
             ConvertedTypeLiteral::TypeAlias(type_alias) => {
                 return Some(apy::v1::Attribute::TypeAlias(
-                    type_alias.with_visibility(local_attribute.visibility),
+                    type_alias.with_visibility(local_attribute.visibility.data.into()),
                 ));
             }
             ConvertedTypeLiteral::Generic(generic) => {
                 return Some(apy::v1::Attribute::Generic(
-                    generic.with_visibility(local_attribute.visibility),
+                    generic.with_visibility(local_attribute.visibility.data.into()),
                 ));
             }
             ConvertedTypeLiteral::ImportedModule(imported_module) => {
                 return Some(apy::v1::Attribute::ImportedModule(
-                    imported_module.with_visibility(local_attribute.visibility),
+                    imported_module.with_visibility(local_attribute.visibility.data.into()),
                 ));
             }
         },
@@ -392,11 +392,11 @@ pub fn convert_attribute(
 
     Some(apy::v1::Attribute::Variable(
         apy::v1::Variable::new(ty)
-            .with_final(local_attribute.is_final)
-            .with_visibility(local_attribute.visibility)
-            .with_deprecated(local_attribute.is_deprecated)
-            .with_initialised(local_attribute.is_initialised)
-            .with_readonly(local_attribute.is_readonly),
+            .with_final(local_attribute.finality.data.is_final())
+            .with_visibility(local_attribute.visibility.data.into())
+            .with_deprecated(local_attribute.deprecation.data.is_deprecated())
+            .with_initialised(local_attribute.initialisation.data.is_initialised())
+            .with_readonly(local_attribute.mutability.data.is_readonly()),
     ))
 }
 
@@ -438,7 +438,7 @@ pub fn convert_module(
             .ok()?,
             apy::v1::ModuleAttributes::new(),
         )
-        .with_visibility(visibility_from_module_name(&module)),
+        .with_visibility(visibility_from_module_name(&module).into()),
     )
 }
 

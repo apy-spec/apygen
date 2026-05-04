@@ -10,8 +10,8 @@ pub mod type_instance;
 pub mod type_literal;
 
 use crate::abstract_environment::{
-    Exception, LiteralList, LiteralTuple, Type, TypeInstance, TypeLiteral, TypeUnion,
-    resolve_local_attribute,
+    AbstractEnvironment, Completeness, Exception, LiteralList, LiteralTuple, Pureness,
+    RaisedExceptions, Type, TypeInstance, TypeLiteral, resolve_local_attribute,
 };
 use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::Location;
@@ -22,80 +22,85 @@ use crate::genkill::literals::{
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::nodes::{Expr, ExprBinOp, ExprBoolOp, ExprName, ExprUnaryOp};
-use std::collections::BTreeSet;
+use apygen_analysis::lattice::{Lattice, NamespacesLattice};
+use apygen_analysis::namespace::Namespaces;
 use std::sync::Arc;
 
 pub struct GenExprResult<T> {
     pub value: T,
-    pub exceptions: BTreeSet<Exception>,
-    pub pure: bool,
-    pub partial: bool,
+    pub exceptions: RaisedExceptions,
+    pub pureness: Pureness,
+    pub completeness: Completeness,
 }
 
 impl<T> GenExprResult<T> {
-    pub fn new_total_pure_non_raising(value: T) -> Self {
+    pub fn new(value: T) -> Self {
         GenExprResult {
             value,
-            exceptions: BTreeSet::new(),
-            pure: true,
-            partial: false,
+            exceptions: RaisedExceptions::default(),
+            pureness: Pureness::default(),
+            completeness: Completeness::default(),
         }
+    }
+
+    pub fn with_value(mut self, value: T) -> Self {
+        self.value = value;
+        self
+    }
+
+    pub fn with_exceptions(mut self, exceptions: RaisedExceptions) -> Self {
+        self.exceptions = exceptions;
+        self
+    }
+
+    pub fn with_pureness(mut self, pureness: Pureness) -> Self {
+        self.pureness = pureness;
+        self
+    }
+
+    pub fn with_completeness(mut self, completeness: Completeness) -> Self {
+        self.completeness = completeness;
+        self
     }
 
     pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> GenExprResult<U> {
         GenExprResult {
             value: f(self.value),
             exceptions: self.exceptions,
-            pure: self.pure,
-            partial: self.partial,
+            pureness: self.pureness,
+            completeness: self.completeness,
         }
     }
 }
 
 impl GenExprResult<Type> {
     pub fn never() -> Self {
-        GenExprResult {
-            value: Type::Never,
-            exceptions: BTreeSet::new(),
-            pure: true,
-            partial: false,
-        }
+        GenExprResult::new(Type::Never)
     }
 
     pub fn raise(exception: Exception) -> Self {
-        GenExprResult {
-            value: Type::NoReturn,
-            exceptions: BTreeSet::from_iter([exception]),
-            pure: false,
-            partial: false,
-        }
+        GenExprResult::new(Type::NoReturn)
+            .with_exceptions(RaisedExceptions::raise(exception))
+            .with_pureness(Pureness::Impure)
+            .with_completeness(Completeness::Partial)
     }
 
     pub fn unknown() -> Self {
-        GenExprResult {
-            value: Type::Any,
-            exceptions: BTreeSet::from_iter([Exception::from_type(Type::Any)]),
-            pure: false,
-            partial: true,
-        }
+        GenExprResult::new(Type::Any)
+            .with_exceptions(RaisedExceptions::raise(Exception::any()))
+            .with_pureness(Pureness::Impure)
+            .with_completeness(Completeness::Partial)
     }
 
-    pub fn union(self, other: GenExprResult<Type>) -> GenExprResult<Type> {
-        GenExprResult {
-            value: {
-                let mut type_union = TypeUnion::new();
-                type_union.add_type(Arc::new(self.value.clone()));
-                type_union.add_type(Arc::new(other.value));
-                type_union.simplify().as_ref().clone()
-            },
-            exceptions: {
-                let mut exceptions_union = self.exceptions.clone();
-                exceptions_union.extend(other.exceptions);
-                exceptions_union
-            },
-            pure: self.pure && other.pure,
-            partial: self.partial || other.partial,
-        }
+    pub fn union(
+        self,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+        other: GenExprResult<Type>,
+    ) -> GenExprResult<Type> {
+        GenExprResult::new(self.value.join(namespaces, &other.value).unwrap())
+            .with_exceptions(self.exceptions.join(&other.exceptions))
+            .with_pureness(self.pureness.join(&other.pureness))
+            .with_completeness(self.completeness.join(&other.completeness))
     }
 }
 
@@ -115,15 +120,15 @@ pub fn gen_expr_collection(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     expressions: &Vec<nodes::Expr>,
-) -> GenExprResult<impl IntoIterator<Item = Type>> {
-    let mut result = GenExprResult::new_total_pure_non_raising(Vec::new());
+) -> GenExprResult<Vec<Type>> {
+    let mut result = GenExprResult::new(Vec::new());
 
     for expression in expressions {
         let expression_result = gen_expr(context, environment_location, expression);
         result.value.push(expression_result.value);
-        result.exceptions.extend(expression_result.exceptions);
-        result.pure &= result.pure;
-        result.partial |= result.partial;
+        result.exceptions = result.exceptions.join(&expression_result.exceptions);
+        result.pureness = result.pureness.join(&expression_result.pureness);
+        result.completeness = result.completeness.join(&expression_result.completeness);
     }
 
     result
@@ -252,9 +257,9 @@ pub fn gen_name(
         environment_location.clone(),
         &identifier,
     ) {
-        Ok((_, local_attribute)) => GenExprResult::new_total_pure_non_raising(
-            local_attribute.attribute_type.as_ref().clone(),
-        ),
+        Ok((_, local_attribute)) => {
+            GenExprResult::new(local_attribute.attribute_type.data.as_ref().clone())
+        }
         Err(_) => GenExprResult::unknown(),
     }
 }
@@ -264,32 +269,31 @@ pub fn gen_bool_op(
     environment_location: &Location<QualifiedName>,
     expr_bool_op: &ExprBoolOp,
 ) -> GenExprResult<Type> {
-    let mut expr_iter = expr_bool_op
-        .values
-        .iter()
-        .map(|expr| gen_expr(context, environment_location, expr));
+    let mut expr_iter = expr_bool_op.values.iter();
 
-    let mut result = expr_iter
+    let expr = expr_iter
         .next()
         .expect("A boolean operation must have at least one operand");
+    let mut result = gen_expr(context, environment_location, expr);
 
-    for expr_result in expr_iter {
+    for next_expr in expr_iter {
+        let next_result = gen_expr(context, environment_location, next_expr);
+
         if let Some(bool) = gen_bool_value(&result.value) {
             if (expr_bool_op.op == nodes::BoolOp::And && !bool)
                 || (expr_bool_op.op == nodes::BoolOp::Or && bool)
             {
                 break;
             }
-            result = expr_result;
+            result = next_result;
         } else {
-            let mut type_union = TypeUnion::new();
-            type_union.add_type(Arc::new(result.value));
-            type_union.add_type(Arc::new(expr_result.value));
-
-            result.value = type_union.simplify().as_ref().clone();
-            result.exceptions.extend(expr_result.exceptions);
-            result.pure &= expr_result.pure;
-            result.partial |= expr_result.partial;
+            result.value = result
+                .value
+                .join(&context.namespaces, &next_result.value)
+                .unwrap();
+            result.exceptions = result.exceptions.join(&next_result.exceptions);
+            result.pureness = result.pureness.join(&next_result.pureness);
+            result.completeness = result.completeness.join(&next_result.completeness);
         }
     }
 
@@ -342,7 +346,7 @@ pub fn gen_expr(
     environment_location: &Location<QualifiedName>,
     expression: &nodes::Expr,
 ) -> GenExprResult<Type> {
-    GenExprResult::new_total_pure_non_raising(match expression {
+    GenExprResult::new(match expression {
         Expr::BoolOp(expr_bool_op) => {
             return gen_bool_op(context, environment_location, expr_bool_op);
         }

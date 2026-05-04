@@ -27,7 +27,7 @@ pub fn call_unary_op(
         nodes::UnaryOp::Invert | nodes::UnaryOp::UAdd | nodes::UnaryOp::USub => {
             GenExprResult::raise(Exception::type_error())
         }
-        nodes::UnaryOp::Not => GenExprResult::new_total_pure_non_raising(call_not(literal_bytes)),
+        nodes::UnaryOp::Not => GenExprResult::new(call_not(literal_bytes)),
     }
 }
 
@@ -36,7 +36,7 @@ pub fn call_binary_op(
     operator: nodes::Operator,
     right: &LiteralBytes,
 ) -> GenExprResult<Type> {
-    GenExprResult::new_total_pure_non_raising(match operator {
+    GenExprResult::new(match operator {
         nodes::Operator::Add => Type::new_bytes_literal(LiteralBytes {
             value: left
                 .value
@@ -51,7 +51,7 @@ pub fn call_binary_op(
 
 pub fn repeat_bytes(bytes: &LiteralBytes, repetitions: &LiteralInteger) -> GenExprResult<Type> {
     if let Some(repetitions) = repetitions.to_usize() {
-        GenExprResult::new_total_pure_non_raising(Type::new_bytes_literal(LiteralBytes {
+        GenExprResult::new(Type::new_bytes_literal(LiteralBytes {
             value: imbl::Vector::from_iter(
                 (0..repetitions).flat_map(|_| bytes.value.iter().cloned()),
             ),

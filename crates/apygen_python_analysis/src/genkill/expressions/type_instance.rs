@@ -27,7 +27,7 @@ pub fn get_instance_environment<'a>(
     let local_attribute =
         get_attribute(context, &type_instance.origin, &type_instance.name)?.resolve(context)?;
 
-    let Type::Literal(type_literal) = local_attribute.attribute_type.as_ref() else {
+    let Type::Literal(type_literal) = local_attribute.attribute_type.data.as_ref() else {
         return Err(GetInstanceEnvironmentError::DoesNotHaveNamespace);
     };
 
@@ -80,7 +80,7 @@ pub fn get_methods<'a>(
         return Vec::new();
     };
 
-    get_functions(local_attribute.attribute_type.as_ref())
+    get_functions(local_attribute.attribute_type.data.as_ref())
 }
 
 pub fn call_method(
@@ -111,12 +111,15 @@ pub fn call_method(
                 .namespaces
                 .get_abstract_environment(&Location::at_exit(method.location.as_sub_location()))
             {
-                result = result.union(GenExprResult {
-                    value: environment.returned_value.as_ref().clone(),
-                    exceptions: environment.raised_exceptions.iter().cloned().collect(),
-                    pure: environment.is_pure,
-                    partial: environment.is_partial,
-                });
+                result = result.union(
+                    &context.namespaces,
+                    GenExprResult {
+                        value: environment.returned_value.data.as_ref().clone(),
+                        exceptions: environment.raised_exceptions.data.clone(),
+                        pureness: environment.pureness.data,
+                        completeness: environment.completeness.data,
+                    },
+                );
             } else {
                 result = GenExprResult::unknown();
             }
@@ -130,7 +133,10 @@ pub fn call_method(
                 .or_default()
                 .insert(environment_location.namespace_location.clone());
         } else {
-            result = result.union(GenExprResult::raise(Exception::builtins("TypeError")));
+            result = result.union(
+                &context.namespaces,
+                GenExprResult::raise(Exception::builtins("TypeError")),
+            );
         }
     }
 
@@ -144,22 +150,24 @@ pub fn call_operator(
     operator_name: &str,
     right: &TypeInstance,
 ) -> GenExprResult<Type> {
-    call_method(
+    let normal_call = call_method(
         context,
         environment_location,
         left,
         &Identifier::parse(&format!("__{operator_name}__")),
         vec![Arc::new(Type::Instance(right.clone()))],
         HashMap::new(),
-    )
-    .union(call_method(
+    );
+    let reverse_call = call_method(
         context,
         environment_location,
         right,
         &Identifier::parse(&format!("__r{operator_name}__")),
         vec![Arc::new(Type::Instance(left.clone()))],
         HashMap::new(),
-    ))
+    );
+
+    normal_call.union(&context.namespaces, reverse_call)
 }
 
 /// References:

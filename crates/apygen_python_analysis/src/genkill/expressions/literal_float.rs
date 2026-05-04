@@ -35,7 +35,7 @@ pub fn call_unary_op(
     literal_float: &LiteralFloat,
     operator: nodes::UnaryOp,
 ) -> GenExprResult<Type> {
-    GenExprResult::new_total_pure_non_raising(match operator {
+    GenExprResult::new(match operator {
         nodes::UnaryOp::Invert => {
             return GenExprResult::raise(Exception::type_error());
         }
@@ -50,7 +50,7 @@ pub fn call_binary_op(
     operator: nodes::Operator,
     right: &LiteralFloat,
 ) -> GenExprResult<Type> {
-    GenExprResult::new_total_pure_non_raising(match operator {
+    GenExprResult::new(match operator {
         nodes::Operator::Add => Type::new_float_literal(LiteralFloat {
             value: left.value + right.value,
         }),

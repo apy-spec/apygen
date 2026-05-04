@@ -1,9 +1,8 @@
-use crate::analysis::lattice::Lattice;
+use crate::analysis::lattice::NamespacesLattice;
 use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
 pub use apy::OneOrMany;
-pub use apy::v1::{
-    GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName, Visibility,
-};
+pub use apy::v1::{GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName};
+use apygen_analysis::lattice::Lattice;
 use imbl;
 pub use num_bigint::BigInt;
 use num_bigint::BigUint;
@@ -11,6 +10,7 @@ use num_complex::Complex64;
 use num_traits::{Pow, ToPrimitive, checked_pow};
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
+use std::hash::Hash;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 use std::sync::Arc;
 use thiserror::Error;
@@ -22,13 +22,96 @@ pub const TYPING_EXTENSIONS_MODULE: &str = "typing_extensions";
 pub const ABC_MODULE: &str = "abc";
 pub const DEPTH_LIMIT: usize = 20;
 
-pub fn join_visibility(first: Visibility, second: Visibility) -> Visibility {
-    if matches!(first, Visibility::Internal) || matches!(second, Visibility::Internal) {
-        Visibility::Internal
-    } else if matches!(first, Visibility::Subclass) && matches!(second, Visibility::Subclass) {
-        Visibility::Subclass
-    } else {
-        Visibility::Public
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Source {
+    Specified,
+    Inferred,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Sourced<T: Clone> {
+    pub data: T,
+    pub source: Source,
+}
+
+impl<T: Clone> Sourced<T> {
+    pub fn new(data: T, source: Source) -> Self {
+        Sourced { data, source }
+    }
+
+    pub fn specified(data: T) -> Self {
+        Sourced::new(data, Source::Specified)
+    }
+
+    pub fn inferred(data: T) -> Self {
+        Sourced::new(data, Source::Inferred)
+    }
+
+    pub fn map<U: Clone>(self, f: impl FnOnce(T) -> U) -> Sourced<U> {
+        Sourced {
+            data: f(self.data),
+            source: self.source,
+        }
+    }
+}
+
+impl<T: Clone + Lattice> Lattice for Sourced<T> {
+    fn includes(&self, other: &Self) -> bool {
+        match (&self.source, &other.source) {
+            (Source::Specified, Source::Specified) => self.data.includes(&other.data),
+            (Source::Inferred, Source::Inferred) => self.data.includes(&other.data),
+            (Source::Inferred, Source::Specified) => false,
+            (Source::Specified, Source::Inferred) => true,
+        }
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        match (&self.source, &other.source) {
+            (Source::Specified, Source::Specified) => Sourced {
+                data: self.data.join(&other.data),
+                source: Source::Specified,
+            },
+            (Source::Inferred, Source::Inferred) => Sourced {
+                data: self.data.join(&other.data),
+                source: Source::Inferred,
+            },
+            (Source::Inferred, Source::Specified) => other.clone(),
+            (Source::Specified, Source::Inferred) => self.clone(),
+        }
+    }
+}
+
+impl<M: Clone + PartialEq + Eq + Hash, E: Clone + Default, T: Clone + NamespacesLattice<M, E>>
+    NamespacesLattice<M, E> for Sourced<T>
+{
+    type Error = T::Error;
+
+    fn includes(
+        &self,
+        namespaces: &impl Namespaces<M, E>,
+        other: &Self,
+    ) -> Result<bool, Self::Error> {
+        match (&self.source, &other.source) {
+            (Source::Specified, Source::Specified) => self.data.includes(namespaces, &other.data),
+            (Source::Inferred, Source::Inferred) => self.data.includes(namespaces, &other.data),
+            (Source::Inferred, Source::Specified) => Ok(false),
+            (Source::Specified, Source::Inferred) => Ok(true),
+        }
+    }
+
+    fn join(&self, namespaces: &impl Namespaces<M, E>, other: &Self) -> Result<Self, Self::Error> {
+        match (&self.source, &other.source) {
+            (Source::Specified, Source::Specified) => Ok(Sourced {
+                data: self.data.join(namespaces, &other.data)?,
+                source: Source::Specified,
+            }),
+            (Source::Inferred, Source::Inferred) => Ok(Sourced {
+                data: self.data.join(namespaces, &other.data)?,
+                source: Source::Inferred,
+            }),
+            (Source::Inferred, Source::Specified) => Ok(other.clone()),
+            (Source::Specified, Source::Inferred) => Ok(self.clone()),
+        }
     }
 }
 
@@ -129,6 +212,10 @@ impl Exception {
             exception_type: Arc::new(exception_type),
             origin: ExceptionOrigin::Raised,
         }
+    }
+
+    pub fn any() -> Self {
+        Exception::from_type(Type::Any)
     }
 
     pub fn builtins(name: &str) -> Self {
@@ -1059,12 +1146,16 @@ impl Type {
     pub fn new_intersection<I: IntoIterator<Item = Type>>(types: I) -> Self {
         Type::Intersection(imbl::OrdSet::from_iter(types.into_iter()))
     }
+}
 
-    pub fn includes<'a>(
-        &'a self,
-        namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: &'a Self,
-    ) -> Result<bool, ContextError> {
+impl NamespacesLattice<QualifiedName, AbstractEnvironment> for Type {
+    type Error = GetAttributeError;
+
+    fn includes(
+        &self,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+        other: &Self,
+    ) -> Result<bool, Self::Error> {
         if self == other {
             return Ok(true);
         }
@@ -1083,6 +1174,25 @@ impl Type {
             }
             Type::Literal(_) => Ok(false),
         }
+    }
+
+    fn join(
+        &self,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+        other: &Self,
+    ) -> Result<Self, Self::Error> {
+        Ok(if self == other {
+            self.clone()
+        } else if self.includes(namespaces, other)? {
+            self.clone()
+        } else if other.includes(namespaces, self)? {
+            other.clone()
+        } else {
+            let mut type_union = TypeUnion::new();
+            type_union.add_type(Arc::new(self.clone()));
+            type_union.add_type(Arc::new(other.clone()));
+            Type::Union(type_union)
+        })
     }
 }
 
@@ -1112,62 +1222,253 @@ impl Display for Type {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+pub enum Visibility {
+    #[default]
+    Public,
+    Subclass,
+    Internal,
+}
+
+impl Lattice for Visibility {
+    fn includes(&self, other: &Self) -> bool {
+        other <= self
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        if matches!(self, Visibility::Internal) || matches!(other, Visibility::Internal) {
+            Visibility::Internal
+        } else if matches!(self, Visibility::Subclass) && matches!(other, Visibility::Subclass) {
+            Visibility::Subclass
+        } else {
+            Visibility::Public
+        }
+    }
+}
+
+impl From<Visibility> for apy::v1::Visibility {
+    fn from(visibility: Visibility) -> Self {
+        match visibility {
+            Visibility::Public => apy::v1::Visibility::Public,
+            Visibility::Subclass => apy::v1::Visibility::Subclass,
+            Visibility::Internal => apy::v1::Visibility::Internal,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Initialisation {
+    #[default]
+    Initialised,
+    Uninitialised,
+}
+
+impl Initialisation {
+    pub fn is_initialised(&self) -> bool {
+        matches!(self, Initialisation::Initialised)
+    }
+}
+
+impl Lattice for Initialisation {
+    fn includes(&self, other: &Self) -> bool {
+        other <= self
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        if self == &Initialisation::Uninitialised || other == &Initialisation::Uninitialised {
+            Initialisation::Uninitialised
+        } else {
+            Initialisation::Initialised
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Mutability {
+    #[default]
+    Mutable,
+    Readonly,
+}
+
+impl Mutability {
+    pub fn is_readonly(&self) -> bool {
+        matches!(self, Mutability::Readonly)
+    }
+}
+
+impl Lattice for Mutability {
+    fn includes(&self, other: &Self) -> bool {
+        other <= self
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        if self == &Mutability::Readonly || other == &Mutability::Readonly {
+            Mutability::Readonly
+        } else {
+            Mutability::Mutable
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Finality {
+    #[default]
+    NonFinal,
+    Final,
+}
+
+impl Finality {
+    pub fn is_final(&self) -> bool {
+        matches!(self, Finality::Final)
+    }
+}
+
+impl Lattice for Finality {
+    fn includes(&self, other: &Self) -> bool {
+        other <= self
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        if self == &Finality::Final || other == &Finality::Final {
+            Finality::Final
+        } else {
+            Finality::NonFinal
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Deprecation {
+    #[default]
+    NotDeprecated,
+    Deprecated,
+}
+
+impl Deprecation {
+    pub fn is_deprecated(&self) -> bool {
+        matches!(self, Deprecation::Deprecated)
+    }
+}
+
+impl Lattice for Deprecation {
+    fn includes(&self, other: &Self) -> bool {
+        other <= self
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        if self == &Deprecation::Deprecated || other == &Deprecation::Deprecated {
+            Deprecation::Deprecated
+        } else {
+            Deprecation::NotDeprecated
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LocalAttribute {
-    pub attribute_type: Arc<Type>,
+    pub attribute_type: Sourced<Arc<Type>>,
 
-    pub visibility: Visibility,
+    pub visibility: Sourced<Visibility>,
 
-    pub is_initialised: bool,
+    pub initialisation: Sourced<Initialisation>,
 
-    pub is_readonly: bool,
+    pub mutability: Sourced<Mutability>,
 
-    pub is_final: bool,
+    pub finality: Sourced<Finality>,
 
-    pub is_deprecated: bool,
+    pub deprecation: Sourced<Deprecation>,
 }
 
 impl LocalAttribute {
-    pub fn unknown() -> Self {
+    pub fn new(attribute_type: Sourced<Arc<Type>>) -> Self {
         LocalAttribute {
-            attribute_type: Arc::new(Type::Any),
-            visibility: Visibility::Internal,
-            is_initialised: false,
-            is_readonly: true,
-            is_final: true,
-            is_deprecated: true,
+            attribute_type,
+            visibility: Sourced::inferred(Visibility::default()),
+            initialisation: Sourced::inferred(Initialisation::default()),
+            mutability: Sourced::inferred(Mutability::default()),
+            finality: Sourced::inferred(Finality::default()),
+            deprecation: Sourced::inferred(Deprecation::default()),
         }
     }
 
-    fn includes<'a>(
-        &'a self,
-        namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: &'a Self,
-    ) -> Result<bool, ContextError> {
-        self.attribute_type
-            .includes(namespaces, &other.attribute_type)
+    pub fn with_attribute_type(mut self, attribute_type: Sourced<Arc<Type>>) -> Self {
+        self.attribute_type = attribute_type;
+        self
     }
 
-    pub fn join(&self, other: &LocalAttribute) -> LocalAttribute {
-        let mut type_union = TypeUnion::new();
+    pub fn with_visibility(mut self, visibility: Sourced<Visibility>) -> Self {
+        self.visibility = visibility;
+        self
+    }
 
-        type_union.add_type(self.attribute_type.clone());
-        type_union.add_type(other.attribute_type.clone());
+    pub fn with_initialisation(mut self, initialisation: Sourced<Initialisation>) -> Self {
+        self.initialisation = initialisation;
+        self
+    }
 
-        let ty = type_union.simplify();
+    pub fn with_mutability(mut self, mutability: Sourced<Mutability>) -> Self {
+        self.mutability = mutability;
+        self
+    }
 
-        LocalAttribute {
-            attribute_type: if ty.depth() > DEPTH_LIMIT {
-                Arc::new(Type::Any)
-            } else {
-                ty
-            },
-            visibility: join_visibility(self.visibility, other.visibility),
-            is_initialised: self.is_initialised && other.is_initialised,
-            is_readonly: self.is_readonly || other.is_readonly,
-            is_final: self.is_final || other.is_final,
-            is_deprecated: self.is_deprecated || other.is_deprecated,
+    pub fn with_finality(mut self, finality: Sourced<Finality>) -> Self {
+        self.finality = finality;
+        self
+    }
+
+    pub fn with_deprecation(mut self, deprecation: Sourced<Deprecation>) -> Self {
+        self.deprecation = deprecation;
+        self
+    }
+}
+
+impl NamespacesLattice<QualifiedName, AbstractEnvironment> for LocalAttribute {
+    type Error = GetAttributeError;
+
+    fn includes(
+        &self,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+        other: &Self,
+    ) -> Result<bool, Self::Error> {
+        if self == other {
+            return Ok(true);
         }
+
+        Ok(self
+            .attribute_type
+            .includes(namespaces, &other.attribute_type)?
+            && self.visibility.includes(&other.visibility)
+            && self.initialisation.includes(&other.initialisation)
+            && self.mutability.includes(&other.mutability)
+            && self.finality.includes(&other.finality)
+            && self.deprecation.includes(&other.deprecation))
+    }
+
+    fn join(
+        &self,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+        other: &Self,
+    ) -> Result<Self, Self::Error> {
+        if self == other {
+            return Ok(self.clone());
+        }
+
+        let mut attribute_type = self
+            .attribute_type
+            .join(namespaces, &other.attribute_type)?;
+
+        if attribute_type.data.depth() > DEPTH_LIMIT {
+            attribute_type.data = Arc::new(Type::Any);
+        }
+
+        Ok(LocalAttribute {
+            attribute_type,
+            visibility: self.visibility.join(&other.visibility),
+            initialisation: self.initialisation.join(&other.initialisation),
+            mutability: self.mutability.join(&other.mutability),
+            finality: self.finality.join(&other.finality),
+            deprecation: self.deprecation.join(&other.deprecation),
+        })
     }
 }
 
@@ -1177,9 +1478,9 @@ pub struct ImportedAttribute {
 
     pub module: Arc<QualifiedName>,
 
-    pub visibility: Visibility,
+    pub visibility: Sourced<Visibility>,
 
-    pub is_deprecated: bool,
+    pub deprecation: Sourced<Deprecation>,
 }
 
 impl ImportedAttribute {
@@ -1190,12 +1491,24 @@ impl ImportedAttribute {
         get_attribute(namespaces, &Location::from(self.module.clone()), &self.name)?
             .resolve(namespaces)
     }
+
+    pub fn as_local(
+        &self,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+    ) -> Result<LocalAttribute, GetAttributeError> {
+        let mut resolved_attribute = self.resolve(namespaces)?.clone();
+
+        resolved_attribute.visibility = self.visibility.clone();
+        resolved_attribute.deprecation = self.deprecation.clone();
+
+        Ok(resolved_attribute)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Attribute {
-    Local(LocalAttribute),
     Imported(ImportedAttribute),
+    Local(LocalAttribute),
 }
 
 impl Attribute {
@@ -1204,8 +1517,8 @@ impl Attribute {
         namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
     ) -> Result<&'a LocalAttribute, GetAttributeError> {
         match self {
-            Attribute::Local(local_attribute) => Ok(local_attribute),
             Attribute::Imported(imported_attribute) => imported_attribute.resolve(namespaces),
+            Attribute::Local(local_attribute) => Ok(local_attribute),
         }
     }
 
@@ -1214,16 +1527,82 @@ impl Attribute {
         namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     ) -> Result<LocalAttribute, GetAttributeError> {
         match self {
+            Attribute::Imported(imported_attribute) => imported_attribute.as_local(namespaces),
             Attribute::Local(local_attribute) => Ok(local_attribute.clone()),
-            Attribute::Imported(imported_attribute) => {
-                let mut resolved_attribute = imported_attribute.resolve(namespaces)?.clone();
-
-                resolved_attribute.visibility = imported_attribute.visibility;
-                resolved_attribute.is_deprecated = imported_attribute.is_deprecated;
-
-                Ok(resolved_attribute)
-            }
         }
+    }
+}
+
+impl NamespacesLattice<QualifiedName, AbstractEnvironment> for Attribute {
+    type Error = GetAttributeError;
+
+    fn includes(
+        &self,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+        other: &Self,
+    ) -> Result<bool, Self::Error> {
+        if self == other {
+            return Ok(true);
+        }
+
+        self.as_local(namespaces)?
+            .includes(namespaces, &other.as_local(namespaces)?)
+    }
+
+    fn join(
+        &self,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+        other: &Self,
+    ) -> Result<Self, Self::Error> {
+        if self == other {
+            return Ok(self.clone());
+        }
+
+        Ok(match (self, other) {
+            (Attribute::Local(self_local_attribute), Attribute::Local(other_local_attribute)) => {
+                Attribute::Local(self_local_attribute.join(namespaces, other_local_attribute)?)
+            }
+            (
+                Attribute::Imported(self_imported_attribute),
+                Attribute::Imported(other_imported_attribute),
+            ) => {
+                if self_imported_attribute.name == other_imported_attribute.name
+                    && self_imported_attribute.module == other_imported_attribute.module
+                {
+                    Attribute::Imported(ImportedAttribute {
+                        name: self_imported_attribute.name.clone(),
+                        module: self_imported_attribute.module.clone(),
+                        visibility: self_imported_attribute
+                            .visibility
+                            .join(&other_imported_attribute.visibility),
+                        deprecation: self_imported_attribute
+                            .deprecation
+                            .join(&other_imported_attribute.deprecation),
+                    })
+                } else {
+                    Attribute::Local(
+                        self_imported_attribute
+                            .as_local(namespaces)?
+                            .join(namespaces, &other_imported_attribute.as_local(namespaces)?)?,
+                    )
+                }
+            }
+            (
+                Attribute::Local(self_local_attribute),
+                Attribute::Imported(other_imported_attribute),
+            ) => Attribute::Local(
+                self_local_attribute
+                    .join(namespaces, &other_imported_attribute.as_local(namespaces)?)?,
+            ),
+            (
+                Attribute::Imported(self_imported_attribute),
+                Attribute::Local(other_local_attribute),
+            ) => Attribute::Local(
+                self_imported_attribute
+                    .as_local(namespaces)?
+                    .join(namespaces, other_local_attribute)?,
+            ),
+        })
     }
 }
 
@@ -1288,6 +1667,73 @@ pub fn resolve_local_attribute<'a>(
     Err(err)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RaisedExceptions {
+    pub exceptions: imbl::OrdSet<Exception>,
+}
+
+impl RaisedExceptions {
+    pub fn raise(exception: Exception) -> Self {
+        RaisedExceptions {
+            exceptions: imbl::OrdSet::unit(exception),
+        }
+    }
+}
+
+impl Lattice for RaisedExceptions {
+    fn includes(&self, other: &Self) -> bool {
+        other.exceptions.is_subset(&self.exceptions)
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        let mut exceptions = self.exceptions.clone();
+        exceptions.extend(other.exceptions.clone());
+        RaisedExceptions { exceptions }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Completeness {
+    #[default]
+    Total,
+    Partial,
+}
+
+impl Lattice for Completeness {
+    fn includes(&self, other: &Self) -> bool {
+        other <= self
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        if self == &Completeness::Partial || other == &Completeness::Partial {
+            Completeness::Partial
+        } else {
+            Completeness::Total
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Pureness {
+    #[default]
+    Pure,
+    Impure,
+}
+
+impl Lattice for Pureness {
+    fn includes(&self, other: &Self) -> bool {
+        other <= self
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        if self == &Pureness::Impure || other == &Pureness::Impure {
+            Pureness::Impure
+        } else {
+            Pureness::Pure
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Diagnostic {
     InvalidAnnotation { location: Location<QualifiedName> },
@@ -1296,10 +1742,10 @@ pub enum Diagnostic {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AbstractEnvironment {
     pub attributes: imbl::HashMap<Arc<Identifier>, Arc<Attribute>>,
-    pub returned_value: Arc<Type>,
-    pub raised_exceptions: imbl::OrdSet<Exception>,
-    pub is_partial: bool,
-    pub is_pure: bool,
+    pub returned_value: Sourced<Arc<Type>>,
+    pub raised_exceptions: Sourced<RaisedExceptions>,
+    pub completeness: Sourced<Completeness>,
+    pub pureness: Sourced<Pureness>,
     pub diagnostics: imbl::HashSet<Diagnostic>,
 }
 
@@ -1313,53 +1759,27 @@ impl Default for AbstractEnvironment {
     fn default() -> Self {
         AbstractEnvironment {
             attributes: imbl::HashMap::new(),
-            returned_value: Arc::new(Type::new_literal(TypeLiteral::None)),
-            raised_exceptions: imbl::OrdSet::new(),
-            is_partial: false,
-            is_pure: false,
+            returned_value: Sourced::inferred(Arc::new(Type::new_literal(TypeLiteral::None))),
+            raised_exceptions: Sourced::inferred(RaisedExceptions::default()),
+            completeness: Sourced::inferred(Completeness::Total),
+            pureness: Sourced::inferred(Pureness::Pure),
             diagnostics: imbl::HashSet::new(),
         }
     }
 }
 
-#[derive(Debug, Error)]
-#[error("failed to get attribute '{identifier}' from context: {error}")]
-pub struct ContextError {
-    pub identifier: Arc<Identifier>,
-    pub error: GetAttributeError,
-}
-
-impl Lattice<QualifiedName> for AbstractEnvironment {
-    type ContextError = ContextError;
+impl NamespacesLattice<QualifiedName, AbstractEnvironment> for AbstractEnvironment {
+    type Error = GetAttributeError;
 
     fn includes(
         &self,
-        context: &impl Namespaces<QualifiedName, Self>,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
         other: &Self,
-    ) -> Result<bool, Self::ContextError> {
+    ) -> Result<bool, Self::Error> {
         for (name, other_attribute) in &other.attributes {
             match self.attributes.get(name) {
                 Some(self_attribute) => {
-                    if self_attribute == other_attribute {
-                        continue;
-                    }
-
-                    let self_local_attribute =
-                        self_attribute
-                            .as_local(context)
-                            .map_err(|error| ContextError {
-                                identifier: name.clone(),
-                                error,
-                            })?;
-                    let other_local_attribute =
-                        other_attribute
-                            .as_local(context)
-                            .map_err(|error| ContextError {
-                                identifier: name.clone(),
-                                error,
-                            })?;
-
-                    if !self_local_attribute.includes(context, &other_local_attribute)? {
+                    if !self_attribute.includes(namespaces, &other_attribute)? {
                         return Ok(false);
                     }
                 }
@@ -1369,47 +1789,26 @@ impl Lattice<QualifiedName> for AbstractEnvironment {
 
         Ok(self
             .returned_value
-            .includes(context, &other.returned_value)?
-            && other.raised_exceptions.is_subset(&self.raised_exceptions)
-            && (self.is_partial || !other.is_partial)
-            && (!self.is_pure || other.is_pure)
+            .includes(namespaces, &other.returned_value)?
+            && self.raised_exceptions.includes(&other.raised_exceptions)
+            && self.completeness.includes(&other.completeness)
+            && self.pureness.includes(&other.pureness)
             && other.diagnostics.is_subset(&self.diagnostics))
     }
 
     fn join(
         &self,
-        context: &impl Namespaces<QualifiedName, Self>,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
         other: &Self,
-    ) -> Result<Self, Self::ContextError> {
-        let mut new_abstract_environment = self.clone();
+    ) -> Result<Self, Self::Error> {
+        let mut attributes = self.attributes.clone();
 
         for (name, other_attribute) in &other.attributes {
-            match new_abstract_environment.attributes.entry(name.clone()) {
+            match attributes.entry(name.clone()) {
                 imbl::hashmap::Entry::Occupied(mut entry) => {
-                    let entry_attribute = entry.get();
+                    let self_attribute = entry.get_mut();
 
-                    if entry_attribute == other_attribute {
-                        continue;
-                    }
-
-                    let entry_local_attribute =
-                        entry_attribute
-                            .as_local(context)
-                            .map_err(|error| ContextError {
-                                identifier: name.clone(),
-                                error,
-                            })?;
-                    let other_local_attribute =
-                        other_attribute
-                            .as_local(context)
-                            .map_err(|error| ContextError {
-                                identifier: name.clone(),
-                                error,
-                            })?;
-
-                    entry.insert(Arc::new(Attribute::Local(
-                        entry_local_attribute.join(&other_local_attribute),
-                    )));
+                    *self_attribute = self_attribute.join(namespaces, other_attribute)?;
                 }
                 imbl::hashmap::Entry::Vacant(entry) => {
                     entry.insert(other_attribute.clone());
@@ -1417,20 +1816,18 @@ impl Lattice<QualifiedName> for AbstractEnvironment {
             }
         }
 
-        let mut return_type_union = TypeUnion::new();
-        return_type_union.add_type(new_abstract_environment.returned_value.clone());
-        return_type_union.add_type(other.returned_value.clone());
-        new_abstract_environment.returned_value = return_type_union.simplify();
+        let mut diagnostics = self.diagnostics.clone();
+        diagnostics.extend(other.diagnostics.clone());
 
-        new_abstract_environment
-            .raised_exceptions
-            .extend(other.raised_exceptions.clone());
-        new_abstract_environment.is_partial |= other.is_partial;
-        new_abstract_environment.is_pure &= other.is_pure;
-        new_abstract_environment
-            .diagnostics
-            .extend(other.diagnostics.clone());
-
-        Ok(new_abstract_environment)
+        Ok(AbstractEnvironment {
+            attributes,
+            returned_value: self
+                .returned_value
+                .join(namespaces, &other.returned_value)?,
+            raised_exceptions: self.raised_exceptions.join(&other.raised_exceptions),
+            completeness: self.completeness.join(&other.completeness),
+            pureness: self.pureness.join(&other.pureness),
+            diagnostics,
+        })
     }
 }

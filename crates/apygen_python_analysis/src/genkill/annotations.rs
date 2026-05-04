@@ -43,7 +43,7 @@ fn get_type_attribute<'a>(
         return Ok((origin, identifier, local_attribute));
     };
 
-    let Type::Literal(literal_value) = local_attribute.attribute_type.as_ref() else {
+    let Type::Literal(literal_value) = local_attribute.attribute_type.data.as_ref() else {
         return Err(GenAnnotationError::IsNotNamespace(identifier.to_owned()));
     };
 
@@ -68,7 +68,7 @@ pub fn gen_expr_qualified_name(
     let (origin, name, local_attribute) =
         get_type_attribute(context, location, &qualified_name.identifiers)?;
 
-    let Type::Literal(literal_value) = local_attribute.attribute_type.as_ref() else {
+    let Type::Literal(literal_value) = local_attribute.attribute_type.data.as_ref() else {
         return Err(GenAnnotationError::InvalidAnnotation {
             reason: "The base is not a literal".to_owned(),
         });

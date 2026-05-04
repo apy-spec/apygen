@@ -34,7 +34,7 @@ pub fn call_unary_op(
     literal_complex: &LiteralComplex,
     operator: nodes::UnaryOp,
 ) -> GenExprResult<Type> {
-    GenExprResult::new_total_pure_non_raising(match operator {
+    GenExprResult::new(match operator {
         nodes::UnaryOp::Invert => return GenExprResult::raise(Exception::type_error()),
         nodes::UnaryOp::Not => call_not(literal_complex),
         nodes::UnaryOp::UAdd => call_dunder_pos(literal_complex),
@@ -47,7 +47,7 @@ pub fn call_binary_op(
     operator: nodes::Operator,
     right: &LiteralComplex,
 ) -> GenExprResult<Type> {
-    GenExprResult::new_total_pure_non_raising(match operator {
+    GenExprResult::new(match operator {
         nodes::Operator::Add => Type::new_complex_literal(LiteralComplex {
             value: left.value + right.value,
         }),

@@ -28,7 +28,7 @@ pub fn call_unary_op(
         nodes::UnaryOp::Invert | nodes::UnaryOp::UAdd | nodes::UnaryOp::USub => {
             GenExprResult::raise(Exception::type_error())
         }
-        nodes::UnaryOp::Not => GenExprResult::new_total_pure_non_raising(call_not(literal_string)),
+        nodes::UnaryOp::Not => GenExprResult::new(call_not(literal_string)),
     }
 }
 
@@ -37,7 +37,7 @@ pub fn call_binary_op(
     operator: nodes::Operator,
     right: &LiteralString,
 ) -> GenExprResult<Type> {
-    GenExprResult::new_total_pure_non_raising(match operator {
+    GenExprResult::new(match operator {
         nodes::Operator::Add => Type::new_string_literal({
             let mut value = String::new();
             value.push_str(left.value.as_str());
@@ -52,7 +52,7 @@ pub fn call_binary_op(
 
 pub fn repeat_string(string: &LiteralString, repetitions: &LiteralInteger) -> GenExprResult<Type> {
     if let Some(repetitions) = repetitions.to_usize() {
-        GenExprResult::new_total_pure_non_raising(Type::new_string_literal(LiteralString {
+        GenExprResult::new(Type::new_string_literal(LiteralString {
             value: Arc::new(string.value.repeat(repetitions)),
         }))
     } else {

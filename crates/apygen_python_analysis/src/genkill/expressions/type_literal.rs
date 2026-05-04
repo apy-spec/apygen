@@ -152,7 +152,7 @@ pub fn call_binary_op(
 }
 
 pub fn call_unary_op(type_literal: &TypeLiteral, operator: nodes::UnaryOp) -> GenExprResult<Type> {
-    GenExprResult::new_total_pure_non_raising(match type_literal {
+    GenExprResult::new(match type_literal {
         TypeLiteral::Integer(literal_integer) => {
             expressions::literal_integer::call_unary_op(literal_integer, operator)
         }

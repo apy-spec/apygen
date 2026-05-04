@@ -23,6 +23,6 @@ pub fn call_unary_op(operator: nodes::UnaryOp) -> GenExprResult<Type> {
         nodes::UnaryOp::Invert | nodes::UnaryOp::UAdd | nodes::UnaryOp::USub => {
             GenExprResult::raise(Exception::type_error())
         }
-        nodes::UnaryOp::Not => GenExprResult::new_total_pure_non_raising(call_not()),
+        nodes::UnaryOp::Not => GenExprResult::new(call_not()),
     }
 }
