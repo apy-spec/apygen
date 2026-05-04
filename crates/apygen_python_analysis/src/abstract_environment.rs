@@ -1761,8 +1761,8 @@ impl Default for AbstractEnvironment {
             attributes: imbl::HashMap::new(),
             returned_value: Sourced::inferred(Arc::new(Type::new_literal(TypeLiteral::None))),
             raised_exceptions: Sourced::inferred(RaisedExceptions::default()),
-            completeness: Sourced::inferred(Completeness::Total),
-            pureness: Sourced::inferred(Pureness::Pure),
+            completeness: Sourced::inferred(Completeness::default()),
+            pureness: Sourced::inferred(Pureness::default()),
             diagnostics: imbl::HashSet::new(),
         }
     }
