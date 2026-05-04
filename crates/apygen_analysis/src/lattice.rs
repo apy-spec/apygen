@@ -1,4 +1,5 @@
 use crate::namespace::Namespaces;
+use std::convert::Infallible;
 use std::hash::Hash;
 use std::sync::Arc;
 
@@ -60,6 +61,26 @@ impl<L: Lattice + PartialEq + Eq> Lattice for Arc<L> {
             return self.clone();
         }
         Arc::new(self.as_ref().join(other.as_ref()))
+    }
+}
+
+pub trait InfallibleLattice: Lattice {}
+
+impl<L: InfallibleLattice, M: Clone + PartialEq + Eq + Hash, E: Clone + Default>
+    NamespacesLattice<M, E> for L
+{
+    type Error = Infallible;
+
+    fn includes(
+        &self,
+        _namespaces: &impl Namespaces<M, E>,
+        other: &Self,
+    ) -> Result<bool, Self::Error> {
+        Ok(self.includes(other))
+    }
+
+    fn join(&self, _namespaces: &impl Namespaces<M, E>, other: &Self) -> Result<Self, Self::Error> {
+        Ok(self.join(other))
     }
 }
 
