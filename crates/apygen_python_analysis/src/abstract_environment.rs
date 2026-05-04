@@ -2,7 +2,7 @@ use crate::analysis::lattice::NamespacesLattice;
 use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
 pub use apy::OneOrMany;
 pub use apy::v1::{GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName};
-use apygen_analysis::lattice::Lattice;
+use apygen_analysis::lattice::{Lattice, OrdLattice};
 use imbl;
 pub use num_bigint::BigInt;
 use num_bigint::BigUint;
@@ -28,6 +28,8 @@ pub enum Source {
     Inferred,
     Specified,
 }
+
+impl OrdLattice for Source {}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct Sourced<T: Clone> {
@@ -1231,21 +1233,7 @@ pub enum Visibility {
     Internal,
 }
 
-impl Lattice for Visibility {
-    fn includes(&self, other: &Self) -> bool {
-        other <= self
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        if matches!(self, Visibility::Internal) || matches!(other, Visibility::Internal) {
-            Visibility::Internal
-        } else if matches!(self, Visibility::Subclass) && matches!(other, Visibility::Subclass) {
-            Visibility::Subclass
-        } else {
-            Visibility::Public
-        }
-    }
-}
+impl OrdLattice for Visibility {}
 
 impl From<Visibility> for apy::v1::Visibility {
     fn from(visibility: Visibility) -> Self {
@@ -1270,19 +1258,7 @@ impl Initialisation {
     }
 }
 
-impl Lattice for Initialisation {
-    fn includes(&self, other: &Self) -> bool {
-        other <= self
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        if self == &Initialisation::Uninitialised || other == &Initialisation::Uninitialised {
-            Initialisation::Uninitialised
-        } else {
-            Initialisation::Initialised
-        }
-    }
-}
+impl OrdLattice for Initialisation {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Mutability {
@@ -1297,19 +1273,7 @@ impl Mutability {
     }
 }
 
-impl Lattice for Mutability {
-    fn includes(&self, other: &Self) -> bool {
-        other <= self
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        if self == &Mutability::Readonly || other == &Mutability::Readonly {
-            Mutability::Readonly
-        } else {
-            Mutability::Mutable
-        }
-    }
-}
+impl OrdLattice for Mutability {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Finality {
@@ -1324,19 +1288,7 @@ impl Finality {
     }
 }
 
-impl Lattice for Finality {
-    fn includes(&self, other: &Self) -> bool {
-        other <= self
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        if self == &Finality::Final || other == &Finality::Final {
-            Finality::Final
-        } else {
-            Finality::NonFinal
-        }
-    }
-}
+impl OrdLattice for Finality {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Deprecation {
@@ -1351,19 +1303,7 @@ impl Deprecation {
     }
 }
 
-impl Lattice for Deprecation {
-    fn includes(&self, other: &Self) -> bool {
-        other <= self
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        if self == &Deprecation::Deprecated || other == &Deprecation::Deprecated {
-            Deprecation::Deprecated
-        } else {
-            Deprecation::NotDeprecated
-        }
-    }
-}
+impl OrdLattice for Deprecation {}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LocalAttribute {
@@ -1700,19 +1640,7 @@ pub enum Completeness {
     Partial,
 }
 
-impl Lattice for Completeness {
-    fn includes(&self, other: &Self) -> bool {
-        other <= self
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        if self == &Completeness::Partial || other == &Completeness::Partial {
-            Completeness::Partial
-        } else {
-            Completeness::Total
-        }
-    }
-}
+impl OrdLattice for Completeness {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Pureness {
@@ -1721,19 +1649,7 @@ pub enum Pureness {
     Impure,
 }
 
-impl Lattice for Pureness {
-    fn includes(&self, other: &Self) -> bool {
-        other <= self
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        if self == &Pureness::Impure || other == &Pureness::Impure {
-            Pureness::Impure
-        } else {
-            Pureness::Pure
-        }
-    }
-}
+impl OrdLattice for Pureness {}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Diagnostic {

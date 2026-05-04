@@ -62,3 +62,15 @@ impl<L: Lattice + PartialEq + Eq> Lattice for Arc<L> {
         Arc::new(self.as_ref().join(other.as_ref()))
     }
 }
+
+pub trait OrdLattice: PartialEq + Eq + PartialOrd + Ord + Clone {}
+
+impl<T: OrdLattice> Lattice for T {
+    fn includes(&self, other: &Self) -> bool {
+        other <= self
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        self.max(other).clone()
+    }
+}
