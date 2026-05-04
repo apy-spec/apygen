@@ -22,13 +22,14 @@ pub const TYPING_EXTENSIONS_MODULE: &str = "typing_extensions";
 pub const ABC_MODULE: &str = "abc";
 pub const DEPTH_LIMIT: usize = 20;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Source {
-    Specified,
+    #[default]
     Inferred,
+    Specified,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct Sourced<T: Clone> {
     pub data: T,
     pub source: Source,
@@ -39,12 +40,12 @@ impl<T: Clone> Sourced<T> {
         Sourced { data, source }
     }
 
-    pub fn specified(data: T) -> Self {
-        Sourced::new(data, Source::Specified)
-    }
-
     pub fn inferred(data: T) -> Self {
         Sourced::new(data, Source::Inferred)
+    }
+
+    pub fn specified(data: T) -> Self {
+        Sourced::new(data, Source::Specified)
     }
 
     pub fn map<U: Clone>(self, f: impl FnOnce(T) -> U) -> Sourced<U> {
@@ -1758,12 +1759,12 @@ impl AbstractEnvironment {
 impl Default for AbstractEnvironment {
     fn default() -> Self {
         AbstractEnvironment {
-            attributes: imbl::HashMap::new(),
+            attributes: imbl::HashMap::default(),
             returned_value: Sourced::inferred(Arc::new(Type::new_literal(TypeLiteral::None))),
-            raised_exceptions: Sourced::inferred(RaisedExceptions::default()),
-            completeness: Sourced::inferred(Completeness::default()),
-            pureness: Sourced::inferred(Pureness::default()),
-            diagnostics: imbl::HashSet::new(),
+            raised_exceptions: Sourced::default(),
+            completeness: Sourced::default(),
+            pureness: Sourced::default(),
+            diagnostics: imbl::HashSet::default(),
         }
     }
 }
