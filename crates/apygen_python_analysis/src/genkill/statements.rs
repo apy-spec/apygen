@@ -290,16 +290,10 @@ pub fn gen_parameter(
         None => None,
     };
 
-    let ty = match default {
-        Some(default) => {
-            let default_ty = gen_expr(context, location, default.as_ref()).value;
-            match annotation_ty {
-                Some(annotation_ty) => annotation_ty,
-                None => default_ty,
-            }
-        }
+    let ty = annotation_ty.unwrap_or(match default {
+        Some(default) => gen_expr(context, location, default.as_ref()).value,
         None => Type::Any,
-    };
+    });
 
     Ok(Parameter {
         name: Arc::new(Identifier::try_parse(parameter.name.id.as_ref())?),
@@ -374,6 +368,15 @@ pub fn gen_function_def(
         location.as_sub_location(),
         BoundArguments::from(&parameters),
     );
+    if let Some(return_annotation) = &stmt_function_def.returns {
+        context.returns.insert(
+            location.as_sub_location(),
+            Arc::new(
+                gen_annotation(&context.namespaces, &location, return_annotation)
+                    .unwrap_or(Type::Any),
+            ),
+        );
+    }
 
     let visibility = gen_visibility(context.cfgs, &location.namespace_location, &name);
     target_abstract_environment.attributes.insert(

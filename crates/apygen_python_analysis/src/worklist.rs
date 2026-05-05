@@ -1,5 +1,5 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, BUILTINS_MODULE, LocalAttribute, Sourced,
+    AbstractEnvironment, Attribute, BUILTINS_MODULE, LocalAttribute, Sourced, Type,
 };
 use crate::genkill::calls::BoundArguments;
 use crate::genkill::statements::gen_statement;
@@ -35,6 +35,7 @@ pub struct WorklistContext<
     pub namespaces: N,
     pub dependents: HashMap<NamespaceLocation<QualifiedName>, Dependents>,
     pub calls: HashMap<NamespaceLocation<QualifiedName>, BoundArguments>,
+    pub returns: HashMap<NamespaceLocation<QualifiedName>, Arc<Type>>,
     pub cfgs: &'a HashMap<Arc<QualifiedName>, Cfg>,
     pub import_tx: &'a Sender<NamespaceLocation<QualifiedName>>,
 }
@@ -55,19 +56,21 @@ pub fn worklist(
     context: &mut WorklistContext,
     namespace_location: NamespaceLocation<QualifiedName>,
     arguments: Option<&BoundArguments>,
+    return_type: Option<&Arc<Type>>,
 ) {
     context
         .namespaces
         .reset_abstract_environments(&namespace_location);
 
+    let entry_environment = context
+        .namespaces
+        .abstract_environment_entry(Location {
+            namespace_location: namespace_location.clone(),
+            program_point: ProgramPoint::Entry,
+        })
+        .or_default();
+
     if let Some(arguments) = arguments {
-        let entry_environment = context
-            .namespaces
-            .abstract_environment_entry(Location {
-                namespace_location: namespace_location.clone(),
-                program_point: ProgramPoint::Entry,
-            })
-            .or_default();
         for (parameter, argument_type) in &arguments.variables {
             entry_environment.attributes.insert(
                 parameter.name.clone(),
@@ -82,6 +85,10 @@ pub fn worklist(
                 )),
             );
         }
+    }
+
+    if let Some(return_type) = return_type {
+        entry_environment.returned_value = Sourced::specified(return_type.clone());
     }
 
     let cfg = context
@@ -233,6 +240,7 @@ pub fn cfg_worklist<'a, F: Filesystem>(
         NamespaceLocations::new();
     let mut dependents: HashMap<NamespaceLocation<QualifiedName>, Dependents> = HashMap::new();
     let mut calls: HashMap<NamespaceLocation<QualifiedName>, BoundArguments> = HashMap::new();
+    let mut returns: HashMap<NamespaceLocation<QualifiedName>, Arc<Type>> = HashMap::new();
 
     let mut cfgs: HashMap<_, _> = target_modules
         .par_iter()
@@ -280,6 +288,7 @@ pub fn cfg_worklist<'a, F: Filesystem>(
         let namespaces_ref = &namespaces;
         let dependents_ref = &mut dependents;
         let calls_ref = &mut calls;
+        let returns_ref = &mut returns;
         let calls_changed_ref = &mut calls_changed;
 
         let changed_locations = rayon::scope(move |scope| {
@@ -339,6 +348,7 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                         namespaces: NamespaceLocationsProxy::new(&namespaces_ref),
                         dependents: HashMap::new(),
                         calls: HashMap::new(),
+                        returns: HashMap::new(),
                         cfgs: cfgs_ref,
                         import_tx: &import_tx,
                     };
@@ -347,6 +357,7 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                         &mut context,
                         namespace_location.clone(),
                         calls_ref.get(&namespace_location),
+                        returns_ref.get(&namespace_location),
                     );
 
                     let namespace = context
@@ -375,7 +386,7 @@ pub fn cfg_worklist<'a, F: Filesystem>(
 
                     (
                         (namespace_location, namespace),
-                        (context.dependents, context.calls),
+                        (context.dependents, context.calls, context.returns),
                     )
                 })
                 .unzip();
@@ -388,7 +399,7 @@ pub fn cfg_worklist<'a, F: Filesystem>(
             );
 
             scope.spawn(move |_| {
-                for (new_dependents, new_calls) in worker_dependents {
+                for (new_dependents, new_calls, new_returns) in worker_dependents {
                     for (from, tos) in new_dependents {
                         match dependents_ref.entry(from) {
                             Entry::Occupied(mut entry) => {
@@ -435,6 +446,31 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                         }
 
                         if call_changed {
+                            calls_changed_ref.insert(namespace_location);
+                        }
+                    }
+                    for (namespace_location, return_type) in new_returns {
+                        let mut return_changed = false;
+
+                        match returns_ref.entry(namespace_location.clone()) {
+                            Entry::Occupied(mut entry) => {
+                                let existing_return_type = entry.get_mut();
+
+                                if !existing_return_type
+                                    .includes(namespaces_ref, &return_type)
+                                    .is_ok_and(|included| included)
+                                {
+                                    return_changed = true;
+                                    *existing_return_type = return_type
+                                }
+                            }
+                            Entry::Vacant(entry) => {
+                                entry.insert(return_type);
+                                return_changed = true;
+                            }
+                        }
+
+                        if return_changed {
                             calls_changed_ref.insert(namespace_location);
                         }
                     }
