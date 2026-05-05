@@ -50,6 +50,23 @@ impl<N: Namespaces<QualifiedName, AbstractEnvironment>> WorklistContext<'_, N> {
             .cloned()
             .unwrap_or_default()
     }
+
+    pub fn add_dependent(
+        &mut self,
+        namespace_location: NamespaceLocation<QualifiedName>,
+        dependent: NamespaceLocation<QualifiedName>,
+    ) {
+        self.dependents
+            .entry(namespace_location)
+            .or_default()
+            .insert(dependent);
+    }
+
+    pub fn import(&mut self, namespace_location: NamespaceLocation<QualifiedName>) {
+        self.import_tx
+            .send(namespace_location)
+            .expect("Should be able to send namespace location to import channel");
+    }
 }
 
 pub fn worklist(

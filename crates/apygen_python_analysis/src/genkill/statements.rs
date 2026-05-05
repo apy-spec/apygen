@@ -168,15 +168,8 @@ pub fn gen_import(
         );
 
         let module_location = NamespaceLocation::from(module);
-        context
-            .import_tx
-            .send(module_location.clone())
-            .expect("Should send module location to import channel");
-        context
-            .dependents
-            .entry(module_location)
-            .or_default()
-            .insert(location.namespace_location.clone());
+        context.import(module_location.clone());
+        context.add_dependent(module_location, location.namespace_location.clone());
     }
 
     Ok(HashMap::from_iter([(
@@ -263,15 +256,8 @@ pub fn gen_import_from(
         };
     }
 
-    context
-        .import_tx
-        .send(namespace_location.clone())
-        .expect("Should send module location to import channel");
-    context
-        .dependents
-        .entry(namespace_location)
-        .or_default()
-        .insert(location.namespace_location);
+    context.import(namespace_location.clone());
+    context.add_dependent(namespace_location, location.namespace_location);
 
     Ok(HashMap::from_iter([(
         EdgeData::Unconditional,
@@ -428,11 +414,10 @@ pub fn gen_function_def(
         )),
     );
 
-    context
-        .dependents
-        .entry(location.namespace_location.clone())
-        .or_default()
-        .insert(location.as_sub_location());
+    context.add_dependent(
+        location.namespace_location.clone(),
+        location.as_sub_location(),
+    );
 
     Ok(HashMap::from_iter([(
         EdgeData::Unconditional,
@@ -467,11 +452,10 @@ pub fn gen_class_def(
         )),
     );
 
-    context
-        .dependents
-        .entry(location.namespace_location.clone())
-        .or_default()
-        .insert(location.as_sub_location());
+    context.add_dependent(
+        location.namespace_location.clone(),
+        location.as_sub_location(),
+    );
 
     Ok(HashMap::from_iter([(
         EdgeData::Unconditional,
