@@ -385,13 +385,9 @@ pub fn gen_function_def(
     }
     context.add_call(location.as_sub_location(), bound_arguments);
     if let Some(return_annotation) = &stmt_function_def.returns {
-        context.add_return(
-            location.as_sub_location(),
-            Arc::new(
-                gen_annotation(&context.namespaces, &location, return_annotation)
-                    .unwrap_or(Type::Any),
-            ),
-        );
+        if let Ok(ty) = gen_annotation(&context.namespaces, &location, return_annotation) {
+            context.add_return(location.as_sub_location(), Arc::new(ty));
+        }
     }
 
     let visibility = gen_visibility(context.cfgs, &location.namespace_location, &name);
