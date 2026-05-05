@@ -96,7 +96,14 @@ pub fn convert_literal_function(
         literal_function.value.location.as_sub_location(),
     ))?;
 
-    let return_type = convert_type(context, &abstract_environment.returned_value.data)?;
+    let return_type = convert_type(
+        context,
+        &abstract_environment
+            .returned_value
+            .as_ref()
+            .map(|value| value.data.clone())
+            .unwrap_or(Arc::new(Type::new_literal(TypeLiteral::None))),
+    )?;
 
     let mut signature = apy::v1::Signature::new(return_type);
 
@@ -137,7 +144,14 @@ pub fn convert_literal_class(
         literal_class.value.location.as_sub_location(),
     ))?;
 
-    let return_type = convert_type(context, &abstract_environment.returned_value.data)?;
+    let return_type = convert_type(
+        context,
+        &abstract_environment
+            .returned_value
+            .as_ref()
+            .map(|value| value.data.clone())
+            .unwrap_or(Arc::new(Type::new_literal(TypeLiteral::None))),
+    )?;
 
     assert!(matches!(return_type, apy::v1::Type::Literal(_)));
 

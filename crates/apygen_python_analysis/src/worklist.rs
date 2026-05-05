@@ -193,7 +193,7 @@ pub fn worklist(
     }
 
     if let Some(return_type) = return_type {
-        entry_environment.returned_value = Sourced::specified(return_type.clone());
+        entry_environment.returned_value = Some(Sourced::specified(return_type.clone()));
     }
 
     let cfg = context

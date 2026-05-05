@@ -42,6 +42,41 @@ impl<
     }
 }
 
+impl<
+    M: Clone + PartialEq + Eq + Hash,
+    E: Clone + Default,
+    L: NamespacesLattice<M, E> + PartialEq + Eq + Clone,
+> NamespacesLattice<M, E> for Option<L>
+{
+    type Error = L::Error;
+
+    fn includes(
+        &self,
+        namespaces: &impl Namespaces<M, E>,
+        other: &Self,
+    ) -> Result<bool, Self::Error> {
+        Ok(match (self, other) {
+            (Some(self_lattice), Some(other_lattice)) => {
+                self_lattice.includes(namespaces, other_lattice)?
+            }
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => true,
+        })
+    }
+
+    fn join(&self, namespaces: &impl Namespaces<M, E>, other: &Self) -> Result<Self, Self::Error> {
+        Ok(match (self, other) {
+            (Some(self_lattice), Some(other_lattice)) => {
+                Some(self_lattice.join(namespaces, other_lattice)?)
+            }
+            (Some(self_lattice), None) => Some(self_lattice.clone()),
+            (None, Some(other_lattice)) => Some(other_lattice.clone()),
+            (None, None) => None,
+        })
+    }
+}
+
 pub trait Lattice {
     fn includes(&self, other: &Self) -> bool;
 
@@ -61,6 +96,26 @@ impl<L: Lattice + PartialEq + Eq> Lattice for Arc<L> {
             return self.clone();
         }
         Arc::new(self.as_ref().join(other.as_ref()))
+    }
+}
+
+impl<L: Lattice + PartialEq + Eq + Clone> Lattice for Option<L> {
+    fn includes(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Some(self_lattice), Some(other_lattice)) => self_lattice.includes(other_lattice),
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => true,
+        }
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        match (self, other) {
+            (Some(self_lattice), Some(other_lattice)) => Some(self_lattice.join(other_lattice)),
+            (Some(self_lattice), None) => Some(self_lattice.clone()),
+            (None, Some(other_lattice)) => Some(other_lattice.clone()),
+            (None, None) => None,
+        }
     }
 }
 

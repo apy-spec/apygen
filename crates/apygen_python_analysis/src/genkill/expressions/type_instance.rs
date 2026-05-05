@@ -79,7 +79,11 @@ pub fn call_function(
         .get_abstract_environment(&Location::at_exit(function_type.location.as_sub_location()))
     {
         GenExprResult {
-            value: environment.returned_value.data.as_ref().clone(),
+            value: environment
+                .returned_value
+                .as_ref()
+                .map(|value| value.data.as_ref().clone())
+                .unwrap_or(Type::new_literal(TypeLiteral::None)),
             exceptions: environment.raised_exceptions.data.clone(),
             pureness: environment.pureness.data,
             completeness: environment.completeness.data,

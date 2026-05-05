@@ -57,11 +57,13 @@ pub fn gen_return(
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
-    let new_returned_value = Sourced::inferred(Arc::new(if let Some(value) = &stmt_return.value {
-        gen_expr(context, &location, value).value
-    } else {
-        Type::new_literal(TypeLiteral::None)
-    }));
+    let new_returned_value = Some(Sourced::inferred(Arc::new(
+        if let Some(value) = &stmt_return.value {
+            gen_expr(context, &location, value).value
+        } else {
+            Type::new_literal(TypeLiteral::None)
+        },
+    )));
 
     target_abstract_environment.returned_value = target_abstract_environment
         .returned_value

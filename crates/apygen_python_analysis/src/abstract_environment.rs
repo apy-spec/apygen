@@ -1664,10 +1664,10 @@ pub enum Diagnostic {
     InvalidAnnotation { location: Location<QualifiedName> },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AbstractEnvironment {
     pub attributes: imbl::HashMap<Arc<Identifier>, Arc<Attribute>>,
-    pub returned_value: Sourced<Arc<Type>>,
+    pub returned_value: Option<Sourced<Arc<Type>>>,
     pub raised_exceptions: Sourced<RaisedExceptions>,
     pub completeness: Sourced<Completeness>,
     pub pureness: Sourced<Pureness>,
@@ -1677,19 +1677,6 @@ pub struct AbstractEnvironment {
 impl AbstractEnvironment {
     pub fn new() -> AbstractEnvironment {
         Self::default()
-    }
-}
-
-impl Default for AbstractEnvironment {
-    fn default() -> Self {
-        AbstractEnvironment {
-            attributes: imbl::HashMap::default(),
-            returned_value: Sourced::inferred(Arc::new(Type::new_literal(TypeLiteral::None))),
-            raised_exceptions: Sourced::default(),
-            completeness: Sourced::default(),
-            pureness: Sourced::default(),
-            diagnostics: imbl::HashSet::default(),
-        }
     }
 }
 
