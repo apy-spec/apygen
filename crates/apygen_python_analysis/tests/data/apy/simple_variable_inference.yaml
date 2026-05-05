@@ -64,15 +64,10 @@ modules:
       sum_int:
         kind: VARIABLE
         type:
-          id: Union
-          module: typing
+          id: int
+          module: builtins
           history_index: 0
-          arguments:
-            - id: Never
-              module: typing
-              history_index: 0
-              arguments: []
-            - None
+          arguments: []
         description: ""
         initialised: true
         readonly: false

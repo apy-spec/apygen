@@ -109,7 +109,14 @@ pub fn worklist(
             if let Some(NodeData::Statement(statement_data)) = cfg.node_data(&program_point) {
                 gen_statement(context, location, statement_data.statement()).unwrap()
             } else {
-                HashMap::from_iter([(EdgeData::Unconditional, AbstractEnvironment::default())])
+                HashMap::from_iter([(
+                    EdgeData::Unconditional,
+                    context
+                        .namespaces
+                        .get_abstract_environment(&location)
+                        .cloned()
+                        .unwrap_or(AbstractEnvironment::default()),
+                )])
             };
 
         for successor in cfg.successors(&program_point).unwrap().cloned() {
