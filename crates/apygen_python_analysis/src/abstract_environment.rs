@@ -1169,7 +1169,13 @@ impl NamespacesLattice<QualifiedName, AbstractEnvironment> for Type {
             Type::Never => Ok(false),
             Type::NoReturn => Ok(false),
             Type::Instance { .. } => Ok(true),
-            Type::Union(type_union) => Ok(type_union.contains(&Arc::new(other.clone()))),
+            Type::Union(type_union) => {
+                if let Type::Union(other_type_union) = other {
+                    Ok(other_type_union.types().is_subset(type_union.types()))
+                } else {
+                    Ok(type_union.contains(&Arc::new(other.clone())))
+                }
+            }
             Type::Intersection(type_intersection) => {
                 if let Type::Intersection(other_type_intersection) = other {
                     Ok(type_intersection.is_subset(other_type_intersection))

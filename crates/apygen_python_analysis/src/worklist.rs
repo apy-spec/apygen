@@ -65,9 +65,17 @@ pub fn add_call(
                         panic!("Should not happen");
                     }
                     btree_map::Entry::Occupied(mut type_entry) => {
-                        let existing_type = type_entry.get_mut();
-                        if let Ok(joined_type) = existing_type.join(namespaces, &ty) {
-                            *existing_type = joined_type;
+                        let existing_type_option = type_entry.get_mut();
+                        match (&existing_type_option, ty) {
+                            (Some(existing_type), Some(ty)) => {
+                                if let Ok(joined_type) = existing_type.join(namespaces, &ty) {
+                                    *existing_type_option = Some(joined_type);
+                                }
+                            }
+                            (None, Some(ty)) => {
+                                *existing_type_option = Some(ty);
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -168,13 +176,17 @@ pub fn worklist(
             entry_environment.attributes.insert(
                 parameter.name.clone(),
                 Arc::new(Attribute::Local(
-                    LocalAttribute::new(argument_type.clone())
-                        .with_visibility(Sourced::inferred(gen_visibility(
-                            &context.cfgs,
-                            &namespace_location,
-                            &parameter.name,
-                        )))
-                        .with_deprecation(Sourced::specified(parameter.deprecation.clone())),
+                    LocalAttribute::new(
+                        argument_type
+                            .clone()
+                            .unwrap_or(Sourced::inferred(Arc::new(Type::Any))),
+                    )
+                    .with_visibility(Sourced::inferred(gen_visibility(
+                        &context.cfgs,
+                        &namespace_location,
+                        &parameter.name,
+                    )))
+                    .with_deprecation(Sourced::specified(parameter.deprecation.clone())),
                 )),
             );
         }
@@ -522,14 +534,25 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                                         btree_map::Entry::Occupied(mut entry) => {
                                             let existing_argument_type = entry.get_mut();
 
-                                            if !existing_argument_type
-                                                .includes(namespaces_ref, &argument_type)
-                                                .is_ok_and(|included| included)
-                                            {
-                                                call_changed = true;
-                                                *existing_argument_type = existing_argument_type
-                                                    .join(namespaces_ref, &argument_type)
-                                                    .unwrap();
+                                            match (&existing_argument_type, argument_type) {
+                                                (Some(existing_type), Some(ty)) => {
+                                                    if !existing_type
+                                                        .includes(namespaces_ref, &ty)
+                                                        .is_ok_and(|included| included)
+                                                    {
+                                                        call_changed = true;
+                                                        *existing_argument_type = Some(
+                                                            existing_type
+                                                                .join(namespaces_ref, &ty)
+                                                                .unwrap(),
+                                                        );
+                                                    }
+                                                }
+                                                (None, Some(ty)) => {
+                                                    call_changed = true;
+                                                    *existing_argument_type = Some(ty);
+                                                }
+                                                _ => {}
                                             }
                                         }
                                         btree_map::Entry::Vacant(entry) => {

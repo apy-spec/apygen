@@ -9,7 +9,7 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BoundArguments {
-    pub variables: BTreeMap<Parameter, Sourced<Arc<Type>>>,
+    pub variables: BTreeMap<Parameter, Option<Sourced<Arc<Type>>>>,
 }
 
 impl BoundArguments {
@@ -57,7 +57,7 @@ impl Arguments {
                     if let Some(argument) = positional_iter.next() {
                         bindings
                             .variables
-                            .insert(parameter.clone(), Sourced::inferred(argument));
+                            .insert(parameter.clone(), Some(Sourced::inferred(argument)));
                     } else {
                         return Err(BindError::MissingPositionalArgument);
                     }
@@ -66,11 +66,11 @@ impl Arguments {
                     if let Some(argument) = positional_iter.next() {
                         bindings
                             .variables
-                            .insert(parameter.clone(), Sourced::inferred(argument.clone()));
+                            .insert(parameter.clone(), Some(Sourced::inferred(argument.clone())));
                     } else if let Some(argument) = self.keyword.get(&parameter.name) {
                         bindings
                             .variables
-                            .insert(parameter.clone(), Sourced::inferred(argument.clone()));
+                            .insert(parameter.clone(), Some(Sourced::inferred(argument.clone())));
                     } else {
                         return Err(BindError::MissingPositionalOrKeywordArgument);
                     }
@@ -98,7 +98,7 @@ impl Arguments {
 
                     bindings
                         .variables
-                        .insert(parameter.clone(), Sourced::inferred(ty));
+                        .insert(parameter.clone(), Some(Sourced::inferred(ty)));
                 }
                 ParameterKind::KeywordOnly => {
                     if bindings.variables.contains_key(&parameter) {
@@ -108,7 +108,7 @@ impl Arguments {
                     if let Some(argument) = self.keyword.get(&parameter.name) {
                         bindings
                             .variables
-                            .insert(parameter.clone(), Sourced::inferred(argument.clone()));
+                            .insert(parameter.clone(), Some(Sourced::inferred(argument.clone())));
                     } else {
                         return Err(BindError::MissingKeywordArgument);
                     }
@@ -142,7 +142,7 @@ impl Arguments {
 
                     bindings
                         .variables
-                        .insert(parameter.clone(), Sourced::inferred(ty));
+                        .insert(parameter.clone(), Some(Sourced::inferred(ty)));
                 }
             }
         }

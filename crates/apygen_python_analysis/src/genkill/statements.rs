@@ -271,20 +271,21 @@ pub fn gen_parameter(
     parameter: &nodes::Parameter,
     kind: ParameterKind,
     default: Option<&Box<nodes::Expr>>,
-) -> Result<(Parameter, Sourced<Arc<Type>>), ParseIdentifierError> {
+) -> Result<(Parameter, Option<Sourced<Arc<Type>>>), ParseIdentifierError> {
     let annotation_ty = match &parameter.annotation {
         Some(annotation) => gen_annotation(&context.namespaces, location, annotation.as_ref())
             .ok()
-            .map(Sourced::specified),
+            .map(|ty| Sourced::specified(Arc::new(ty))),
         None => None,
     };
 
-    let ty = annotation_ty
-        .unwrap_or(Sourced::inferred(match default {
-            Some(default) => gen_expr(context, location, default.as_ref()).value,
-            None => Type::Any,
-        }))
-        .map(Arc::new);
+    let ty = annotation_ty.or_else(|| {
+        default.map(|default| {
+            Sourced::inferred(Arc::new(
+                gen_expr(context, location, default.as_ref()).value,
+            ))
+        })
+    });
 
     Ok((
         Parameter {
@@ -346,10 +347,12 @@ pub fn gen_function_def(
         bound_arguments.variables.insert(
             parameter,
             ty.map(|ty| {
-                Arc::new(Type::Instance(TypeInstance::builtins_tuple([
-                    ty,
-                    Arc::new(Type::new_literal(TypeLiteral::Ellipsis)),
-                ])))
+                ty.map(|ty| {
+                    Arc::new(Type::Instance(TypeInstance::builtins_tuple([
+                        ty,
+                        Arc::new(Type::new_literal(TypeLiteral::Ellipsis)),
+                    ])))
+                })
             }),
         );
     }
@@ -376,10 +379,12 @@ pub fn gen_function_def(
         bound_arguments.variables.insert(
             parameter,
             ty.map(|ty| {
-                Arc::new(Type::Instance(TypeInstance::builtins_dict(
-                    Arc::new(Type::Instance(TypeInstance::builtins("str"))),
-                    ty,
-                )))
+                ty.map(|ty| {
+                    Arc::new(Type::Instance(TypeInstance::builtins_dict(
+                        Arc::new(Type::Instance(TypeInstance::builtins("str"))),
+                        ty,
+                    )))
+                })
             }),
         );
     }
