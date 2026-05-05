@@ -383,11 +383,9 @@ pub fn gen_function_def(
             }),
         );
     }
-    context
-        .calls
-        .insert(location.as_sub_location(), bound_arguments);
+    context.add_call(location.as_sub_location(), bound_arguments);
     if let Some(return_annotation) = &stmt_function_def.returns {
-        context.returns.insert(
+        context.add_return(
             location.as_sub_location(),
             Arc::new(
                 gen_annotation(&context.namespaces, &location, return_annotation)

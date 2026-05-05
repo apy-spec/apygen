@@ -1,16 +1,14 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Exception, FunctionType, GetAttributeError, Type,
-    TypeInstance, TypeLiteral, get_attribute,
+    AbstractEnvironment, Exception, FunctionType, GetAttributeError, Type, TypeInstance,
+    TypeLiteral, get_attribute,
 };
 use crate::genkill::calls::{Arguments, BoundArguments};
 use crate::genkill::expressions::GenExprResult;
-use crate::worklist::{Dependents, WorklistContext};
+use crate::worklist::{Dependents, WorklistContext, add_call, add_dependent};
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::nodes::Operator;
-use apygen_analysis::lattice::NamespacesLattice;
 use apygen_analysis::namespace::{Location, NamespaceLocation, Namespaces};
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap, btree_map};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -90,31 +88,18 @@ pub fn call_function(
         GenExprResult::unknown()
     };
 
-    match calls.entry(function_type.location.as_sub_location()) {
-        Entry::Occupied(mut entry) => {
-            let existing_bindings = entry.get_mut();
-            for (parameter, argument) in bindings.variables {
-                match existing_bindings.variables.entry(parameter) {
-                    btree_map::Entry::Vacant(entry) => {
-                        entry.insert(argument);
-                    }
-                    btree_map::Entry::Occupied(mut entry) => {
-                        let existing_argument = entry.get_mut();
-                        if let Ok(joined_argument) = existing_argument.join(namespaces, &argument) {
-                            *existing_argument = joined_argument;
-                        }
-                    }
-                }
-            }
-        }
-        Entry::Vacant(entry) => {
-            entry.insert(bindings);
-        }
-    }
-    dependents
-        .entry(function_type.location.as_sub_location())
-        .or_default()
-        .insert(environment_location.namespace_location.clone());
+    add_call(
+        calls,
+        namespaces,
+        function_type.location.as_sub_location(),
+        bindings,
+    );
+
+    add_dependent(
+        dependents,
+        function_type.location.as_sub_location(),
+        environment_location.namespace_location.clone(),
+    );
 
     result
 }

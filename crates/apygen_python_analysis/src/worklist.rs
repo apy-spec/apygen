@@ -40,6 +40,64 @@ pub struct WorklistContext<
     pub import_tx: &'a Sender<NamespaceLocation<QualifiedName>>,
 }
 
+pub fn add_dependent(
+    dependents: &mut HashMap<NamespaceLocation<QualifiedName>, Dependents>,
+    namespace_location: NamespaceLocation<QualifiedName>,
+    dependent: NamespaceLocation<QualifiedName>,
+) {
+    dependents
+        .entry(namespace_location)
+        .or_default()
+        .insert(dependent);
+}
+pub fn add_call(
+    calls: &mut HashMap<NamespaceLocation<QualifiedName>, BoundArguments>,
+    namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+    namespace_location: NamespaceLocation<QualifiedName>,
+    arguments: BoundArguments,
+) {
+    match calls.entry(namespace_location) {
+        Entry::Occupied(mut call_entry) => {
+            let existing_arguments = call_entry.get_mut();
+            for (parameter, ty) in arguments.variables {
+                match existing_arguments.variables.entry(parameter) {
+                    btree_map::Entry::Vacant(_) => {
+                        panic!("Should not happen");
+                    }
+                    btree_map::Entry::Occupied(mut type_entry) => {
+                        let existing_type = type_entry.get_mut();
+                        if let Ok(joined_type) = existing_type.join(namespaces, &ty) {
+                            *existing_type = joined_type;
+                        }
+                    }
+                }
+            }
+        }
+        Entry::Vacant(call_entry) => {
+            call_entry.insert(arguments);
+        }
+    }
+}
+
+pub fn add_return(
+    returns: &mut HashMap<NamespaceLocation<QualifiedName>, Arc<Type>>,
+    namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+    namespace_location: NamespaceLocation<QualifiedName>,
+    ty: Arc<Type>,
+) {
+    match returns.entry(namespace_location) {
+        Entry::Occupied(mut return_entry) => {
+            let existing_return = return_entry.get_mut();
+            if let Ok(joined_return) = existing_return.join(namespaces, &ty) {
+                *existing_return = joined_return;
+            }
+        }
+        Entry::Vacant(return_entry) => {
+            return_entry.insert(ty);
+        }
+    }
+}
+
 impl<N: Namespaces<QualifiedName, AbstractEnvironment>> WorklistContext<'_, N> {
     pub fn clone_abstract_environment(
         &self,
@@ -56,10 +114,28 @@ impl<N: Namespaces<QualifiedName, AbstractEnvironment>> WorklistContext<'_, N> {
         namespace_location: NamespaceLocation<QualifiedName>,
         dependent: NamespaceLocation<QualifiedName>,
     ) {
-        self.dependents
-            .entry(namespace_location)
-            .or_default()
-            .insert(dependent);
+        add_dependent(&mut self.dependents, namespace_location, dependent);
+    }
+
+    pub fn add_call(
+        &mut self,
+        namespace_location: NamespaceLocation<QualifiedName>,
+        arguments: BoundArguments,
+    ) {
+        add_call(
+            &mut self.calls,
+            &self.namespaces,
+            namespace_location,
+            arguments,
+        )
+    }
+
+    pub fn add_return(
+        &mut self,
+        namespace_location: NamespaceLocation<QualifiedName>,
+        ty: Arc<Type>,
+    ) {
+        add_return(&mut self.returns, &self.namespaces, namespace_location, ty)
     }
 
     pub fn import(&mut self, namespace_location: NamespaceLocation<QualifiedName>) {
