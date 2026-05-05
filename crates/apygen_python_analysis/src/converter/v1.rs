@@ -106,7 +106,16 @@ pub fn convert_literal_function(
             apy::v1::Parameter::new(
                 parameter.name.as_ref().clone(),
                 parameter.kind,
-                convert_type(context, &parameter.parameter_type)?,
+                convert_type(
+                    context,
+                    &abstract_environment
+                        .attributes
+                        .get(parameter.name.as_ref())
+                        .map(|attribute| {
+                            &attribute.resolve(context).ok().unwrap().attribute_type.data
+                        })
+                        .unwrap_or(&Arc::new(Type::Any)),
+                )?,
             )
             .with_deprecated(parameter.deprecation.is_deprecated())
             .with_optional(parameter.is_optional),

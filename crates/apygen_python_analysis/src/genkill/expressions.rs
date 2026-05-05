@@ -15,17 +15,20 @@ use crate::abstract_environment::{
 };
 use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::Location;
+use crate::genkill::calls::Arguments;
+use crate::genkill::expressions::type_instance::call_function;
 use crate::genkill::literals::{
     gen_expr_boolean_literal, gen_expr_bytes_literal, gen_expr_ellipsis_literal,
     gen_expr_none_literal, gen_expr_number_literal, gen_expr_string_literal,
 };
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::cfg::nodes::{Expr, ExprBinOp, ExprBoolOp, ExprName, ExprUnaryOp};
+use apygen_analysis::cfg::nodes::{Expr, ExprBinOp, ExprBoolOp, ExprCall, ExprName, ExprUnaryOp};
 use apygen_analysis::lattice::{Lattice, NamespacesLattice};
 use apygen_analysis::namespace::Namespaces;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct GenExprResult<T> {
     pub value: T,
     pub exceptions: RaisedExceptions,
@@ -341,6 +344,46 @@ pub fn gen_unary_op(
     })
 }
 
+pub fn gen_call(
+    context: &mut WorklistContext,
+    environment_location: &Location<QualifiedName>,
+    expr_call: &ExprCall,
+) -> GenExprResult<Type> {
+    let func = gen_expr(context, environment_location, &expr_call.func);
+
+    let Type::Literal(literal) = func.value else {
+        return GenExprResult::unknown();
+    };
+
+    let TypeLiteral::Function(literal_function) = literal.as_ref() else {
+        return GenExprResult::unknown();
+    };
+
+    let mut arguments = Arguments::new();
+    for argument in &expr_call.arguments.args {
+        arguments.positional.push(Arc::new(
+            gen_expr(context, environment_location, argument).value,
+        ));
+    }
+    for keyword_argument in &expr_call.arguments.keywords {
+        if let Some(name) = &keyword_argument.arg {
+            arguments.keyword.insert(
+                Arc::new(Identifier::parse(&name.id)),
+                Arc::new(gen_expr(context, environment_location, &keyword_argument.value).value),
+            );
+        }
+    }
+
+    call_function(
+        &context.namespaces,
+        &mut context.dependents,
+        &mut context.calls,
+        environment_location,
+        literal_function.value.as_ref(),
+        &arguments,
+    )
+}
+
 pub fn gen_expr(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
@@ -371,7 +414,7 @@ pub fn gen_expr(
         Expr::Yield(_) => return GenExprResult::unknown(),
         Expr::YieldFrom(_) => return GenExprResult::unknown(),
         Expr::Compare(_) => return GenExprResult::unknown(),
-        Expr::Call(_) => return GenExprResult::unknown(),
+        Expr::Call(expr_call) => return gen_call(context, environment_location, expr_call),
         Expr::FString(_) => return GenExprResult::unknown(),
         Expr::StringLiteral(expr_string_literal) => gen_expr_string_literal(expr_string_literal),
         Expr::BytesLiteral(expr_bytes_literal) => gen_expr_bytes_literal(expr_bytes_literal),

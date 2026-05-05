@@ -159,16 +159,14 @@ pub struct Parameter {
 
     pub kind: ParameterKind,
 
-    pub parameter_type: Arc<Type>,
-
     pub is_optional: bool,
 
-    pub deprecation: Deprecation
+    pub deprecation: Deprecation,
 }
 
 impl StructuralDepth for Parameter {
     fn depth(&self) -> usize {
-        self.parameter_type.depth()
+        0
     }
 }
 

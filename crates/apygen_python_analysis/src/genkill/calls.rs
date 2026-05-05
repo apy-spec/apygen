@@ -3,7 +3,7 @@ use crate::abstract_environment::{
 };
 use apy::v1::{Identifier, ParameterKind};
 use imbl;
-use std::collections::BTreeMap;
+use std::collections::{btree_map, BTreeMap};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -15,33 +15,6 @@ pub struct BoundArguments {
 impl BoundArguments {
     pub fn new() -> Self {
         Self::default()
-    }
-}
-
-impl From<&imbl::Vector<Parameter>> for BoundArguments {
-    fn from(parameters: &imbl::Vector<Parameter>) -> Self {
-        let mut bindings = Self::new();
-        for parameter in parameters {
-            let ty = match parameter.kind {
-                ParameterKind::PositionalOnly
-                | ParameterKind::PositionalOrKeyword
-                | ParameterKind::KeywordOnly => parameter.parameter_type.clone(),
-                ParameterKind::VarPositional => {
-                    Arc::new(Type::Instance(TypeInstance::builtins_tuple([
-                        parameter.parameter_type.clone(),
-                        Arc::new(Type::new_literal(TypeLiteral::Ellipsis)),
-                    ])))
-                }
-                ParameterKind::VarKeyword => Arc::new(Type::Instance(TypeInstance::builtins_dict(
-                    Arc::new(Type::Instance(TypeInstance::builtins("str"))),
-                    parameter.parameter_type.clone(),
-                ))),
-            };
-            bindings
-                .variables
-                .insert(parameter.clone(), Sourced::specified(ty));
-        }
-        bindings
     }
 }
 
@@ -68,6 +41,13 @@ pub struct Arguments {
 }
 
 impl Arguments {
+    pub fn new() -> Self {
+        Self {
+            positional: Vec::new(),
+            keyword: BTreeMap::new(),
+        }
+    }
+
     pub fn bind(&self, parameters: &imbl::Vector<Parameter>) -> Result<BoundArguments, BindError> {
         let mut bindings = BoundArguments::new();
         let mut positional_iter = self.positional.iter().cloned();

@@ -59,6 +59,7 @@ pub fn analyse_directory(
 
 #[rstest]
 #[case::simple_variable_inference("simple_variable_inference")]
+#[case::simple_function_call("simple_function_call")]
 #[case::int_literal_inference("int_literal_inference")]
 #[case::big_int_literal_inference("big_int_literal_inference")]
 fn test_inference(#[case] module_name: String) {
@@ -77,7 +78,9 @@ fn test_inference(#[case] module_name: String) {
         .join(&module_name)
         .with_extension("yaml");
     let mut actual_apy_path = File::create(&expected_apy_path).expect("APY file should exist");
-    actual_apy.to_yaml_writer(&mut actual_apy_path).expect("TODO: panic message");
+    actual_apy
+        .to_yaml_writer(&mut actual_apy_path)
+        .expect("TODO: panic message");
 
     let expected_apy_file = File::open(&expected_apy_path).expect("APY file should exist");
     let expected_apy =

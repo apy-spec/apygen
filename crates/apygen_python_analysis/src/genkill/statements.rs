@@ -1,7 +1,8 @@
 use crate::abstract_environment::{
     AbstractEnvironment, Attribute, ClassType, Deprecation, Diagnostic, FunctionType,
     ImportedAttribute, ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule,
-    LocalAttribute, Parameter, ParameterKind, Sourced, Type, TypeLiteral, get_attribute,
+    LocalAttribute, Parameter, ParameterKind, Sourced, Type, TypeInstance, TypeLiteral,
+    get_attribute,
 };
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{EdgeData, nodes};
@@ -284,28 +285,34 @@ pub fn gen_parameter(
     parameter: &nodes::Parameter,
     kind: ParameterKind,
     default: Option<&Box<nodes::Expr>>,
-) -> Result<Parameter, ParseIdentifierError> {
+) -> Result<(Parameter, Sourced<Arc<Type>>), ParseIdentifierError> {
     let annotation_ty = match &parameter.annotation {
-        Some(annotation) => gen_annotation(&context.namespaces, location, annotation.as_ref()).ok(),
+        Some(annotation) => gen_annotation(&context.namespaces, location, annotation.as_ref())
+            .ok()
+            .map(Sourced::specified),
         None => None,
     };
 
-    let ty = annotation_ty.unwrap_or(match default {
-        Some(default) => gen_expr(context, location, default.as_ref()).value,
-        None => Type::Any,
-    });
+    let ty = annotation_ty
+        .unwrap_or(Sourced::inferred(match default {
+            Some(default) => gen_expr(context, location, default.as_ref()).value,
+            None => Type::Any,
+        }))
+        .map(Arc::new);
 
-    Ok(Parameter {
-        name: Arc::new(Identifier::try_parse(parameter.name.id.as_ref())?),
-        parameter_type: Arc::new(ty),
-        deprecation: Deprecation::NotDeprecated,
-        kind,
-        is_optional: default.is_some()
-            || matches!(
-                kind,
-                ParameterKind::VarPositional | ParameterKind::VarKeyword
-            ),
-    })
+    Ok((
+        Parameter {
+            name: Arc::new(Identifier::try_parse(parameter.name.id.as_ref())?),
+            deprecation: Deprecation::NotDeprecated,
+            kind,
+            is_optional: default.is_some()
+                || matches!(
+                    kind,
+                    ParameterKind::VarPositional | ParameterKind::VarKeyword
+                ),
+        },
+        ty,
+    ))
 }
 
 pub fn gen_function_def(
@@ -318,56 +325,81 @@ pub fn gen_function_def(
     let name = Identifier::try_parse(stmt_function_def.name.id.as_ref())?;
 
     let mut parameters: imbl::Vector<Parameter> = imbl::Vector::new();
+    let mut bound_arguments = BoundArguments::new();
     for positional_parameter in &stmt_function_def.parameters.posonlyargs {
-        parameters.push_back(gen_parameter(
+        let (parameter, ty) = gen_parameter(
             context,
             &location,
             &positional_parameter.parameter,
             ParameterKind::PositionalOnly,
             positional_parameter.default.as_ref(),
-        )?);
+        )?;
+        parameters.push_back(parameter.clone());
+        bound_arguments.variables.insert(parameter, ty);
     }
     for positional_or_keyword_parameter in &stmt_function_def.parameters.args {
-        parameters.push_back(gen_parameter(
+        let (parameter, ty) = gen_parameter(
             context,
             &location,
             &positional_or_keyword_parameter.parameter,
             ParameterKind::PositionalOrKeyword,
             positional_or_keyword_parameter.default.as_ref(),
-        )?);
+        )?;
+        parameters.push_back(parameter.clone());
+        bound_arguments.variables.insert(parameter, ty);
     }
     if let Some(var_positional_parameter) = &stmt_function_def.parameters.vararg {
-        parameters.push_back(gen_parameter(
+        let (parameter, ty) = gen_parameter(
             context,
             &location,
             &var_positional_parameter,
             ParameterKind::VarPositional,
             None,
-        )?);
+        )?;
+        parameters.push_back(parameter.clone());
+        bound_arguments.variables.insert(
+            parameter,
+            ty.map(|ty| {
+                Arc::new(Type::Instance(TypeInstance::builtins_tuple([
+                    ty,
+                    Arc::new(Type::new_literal(TypeLiteral::Ellipsis)),
+                ])))
+            }),
+        );
     }
     for keyword_parameter in &stmt_function_def.parameters.kwonlyargs {
-        parameters.push_back(gen_parameter(
+        let (parameter, ty) = gen_parameter(
             context,
             &location,
             &keyword_parameter.parameter,
             ParameterKind::KeywordOnly,
             keyword_parameter.default.as_ref(),
-        )?);
+        )?;
+        parameters.push_back(parameter.clone());
+        bound_arguments.variables.insert(parameter, ty);
     }
     if let Some(var_keyword_parameter) = &stmt_function_def.parameters.kwarg {
-        parameters.push_back(gen_parameter(
+        let (parameter, ty) = gen_parameter(
             context,
             &location,
             &var_keyword_parameter,
             ParameterKind::VarKeyword,
             None,
-        )?);
+        )?;
+        parameters.push_back(parameter.clone());
+        bound_arguments.variables.insert(
+            parameter,
+            ty.map(|ty| {
+                Arc::new(Type::Instance(TypeInstance::builtins_dict(
+                    Arc::new(Type::Instance(TypeInstance::builtins("str"))),
+                    ty,
+                )))
+            }),
+        );
     }
-
-    context.calls.insert(
-        location.as_sub_location(),
-        BoundArguments::from(&parameters),
-    );
+    context
+        .calls
+        .insert(location.as_sub_location(), bound_arguments);
     if let Some(return_annotation) = &stmt_function_def.returns {
         context.returns.insert(
             location.as_sub_location(),

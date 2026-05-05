@@ -1,14 +1,16 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Exception, FunctionType, GetAttributeError, Type, TypeInstance,
-    TypeLiteral, get_attribute,
+    AbstractEnvironment, Exception, FunctionType, GetAttributeError, Type,
+    TypeInstance, TypeLiteral, get_attribute,
 };
-use crate::genkill::calls::Arguments;
+use crate::genkill::calls::{Arguments, BoundArguments};
 use crate::genkill::expressions::GenExprResult;
-use crate::worklist::WorklistContext;
+use crate::worklist::{Dependents, WorklistContext};
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::nodes::Operator;
+use apygen_analysis::lattice::NamespacesLattice;
 use apygen_analysis::namespace::{Location, NamespaceLocation, Namespaces};
-use std::collections::BTreeMap;
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeMap, HashMap, btree_map};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -63,6 +65,60 @@ pub fn get_functions(ty: &Type) -> Vec<&FunctionType> {
     }
 }
 
+pub fn call_function(
+    namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+    dependents: &mut HashMap<NamespaceLocation<QualifiedName>, Dependents>,
+    calls: &mut HashMap<NamespaceLocation<QualifiedName>, BoundArguments>,
+    environment_location: &Location<QualifiedName>,
+    function_type: &FunctionType,
+    arguments: &Arguments,
+) -> GenExprResult<Type> {
+    let Ok(bindings) = arguments.bind(&function_type.parameters) else {
+        return GenExprResult::raise(Exception::builtins("TypeError"));
+    };
+
+    let result = if let Some(environment) = namespaces
+        .get_abstract_environment(&Location::at_exit(function_type.location.as_sub_location()))
+    {
+        GenExprResult {
+            value: environment.returned_value.data.as_ref().clone(),
+            exceptions: environment.raised_exceptions.data.clone(),
+            pureness: environment.pureness.data,
+            completeness: environment.completeness.data,
+        }
+    } else {
+        GenExprResult::unknown()
+    };
+
+    match calls.entry(function_type.location.as_sub_location()) {
+        Entry::Occupied(mut entry) => {
+            let existing_bindings = entry.get_mut();
+            for (parameter, argument) in bindings.variables {
+                match existing_bindings.variables.entry(parameter) {
+                    btree_map::Entry::Vacant(entry) => {
+                        entry.insert(argument);
+                    }
+                    btree_map::Entry::Occupied(mut entry) => {
+                        let existing_argument = entry.get_mut();
+                        if let Ok(joined_argument) = existing_argument.join(namespaces, &argument) {
+                            *existing_argument = joined_argument;
+                        }
+                    }
+                }
+            }
+        }
+        Entry::Vacant(entry) => {
+            entry.insert(bindings);
+        }
+    }
+    dependents
+        .entry(function_type.location.as_sub_location())
+        .or_default()
+        .insert(environment_location.namespace_location.clone());
+
+    result
+}
+
 pub fn get_methods<'a>(
     namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
     type_instance: &TypeInstance,
@@ -106,38 +162,15 @@ pub fn call_method(
 
     let mut result = GenExprResult::never();
     for method in methods {
-        if let Ok(bindings) = arguments.bind(&method.parameters) {
-            if let Some(environment) = context
-                .namespaces
-                .get_abstract_environment(&Location::at_exit(method.location.as_sub_location()))
-            {
-                result = result.union(
-                    &context.namespaces,
-                    GenExprResult {
-                        value: environment.returned_value.data.as_ref().clone(),
-                        exceptions: environment.raised_exceptions.data.clone(),
-                        pureness: environment.pureness.data,
-                        completeness: environment.completeness.data,
-                    },
-                );
-            } else {
-                result = GenExprResult::unknown();
-            }
-
-            context
-                .calls
-                .insert(method.location.as_sub_location(), bindings);
-            context
-                .dependents
-                .entry(method.location.as_sub_location())
-                .or_default()
-                .insert(environment_location.namespace_location.clone());
-        } else {
-            result = result.union(
-                &context.namespaces,
-                GenExprResult::raise(Exception::builtins("TypeError")),
-            );
-        }
+        let call_result = call_function(
+            &context.namespaces,
+            &mut context.dependents,
+            &mut context.calls,
+            environment_location,
+            method,
+            &arguments,
+        );
+        result = result.union(&context.namespaces, call_result);
     }
 
     result
