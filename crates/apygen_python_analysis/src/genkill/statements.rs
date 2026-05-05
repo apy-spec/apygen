@@ -8,6 +8,7 @@ use crate::analysis::cfg::{EdgeData, nodes};
 use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
 use crate::genkill::annotations::gen_annotation;
 use crate::genkill::assignment::AssignmentTarget;
+use crate::genkill::calls::BoundArguments;
 use crate::genkill::expressions::gen_expr;
 use crate::genkill::visibility::gen_visibility;
 use crate::worklist::WorklistContext;
@@ -303,7 +304,7 @@ pub fn gen_parameter(
     Ok(Parameter {
         name: Arc::new(Identifier::try_parse(parameter.name.id.as_ref())?),
         parameter_type: Arc::new(ty),
-        is_deprecated: false,
+        deprecation: Deprecation::NotDeprecated,
         kind,
         is_optional: default.is_some()
             || matches!(
@@ -322,9 +323,9 @@ pub fn gen_function_def(
 
     let name = Identifier::try_parse(stmt_function_def.name.id.as_ref())?;
 
-    let mut parameters: Vec<Parameter> = Vec::new();
+    let mut parameters: imbl::Vector<Parameter> = imbl::Vector::new();
     for positional_parameter in &stmt_function_def.parameters.posonlyargs {
-        parameters.push(gen_parameter(
+        parameters.push_back(gen_parameter(
             context,
             &location,
             &positional_parameter.parameter,
@@ -333,7 +334,7 @@ pub fn gen_function_def(
         )?);
     }
     for positional_or_keyword_parameter in &stmt_function_def.parameters.args {
-        parameters.push(gen_parameter(
+        parameters.push_back(gen_parameter(
             context,
             &location,
             &positional_or_keyword_parameter.parameter,
@@ -342,7 +343,7 @@ pub fn gen_function_def(
         )?);
     }
     if let Some(var_positional_parameter) = &stmt_function_def.parameters.vararg {
-        parameters.push(gen_parameter(
+        parameters.push_back(gen_parameter(
             context,
             &location,
             &var_positional_parameter,
@@ -351,7 +352,7 @@ pub fn gen_function_def(
         )?);
     }
     for keyword_parameter in &stmt_function_def.parameters.kwonlyargs {
-        parameters.push(gen_parameter(
+        parameters.push_back(gen_parameter(
             context,
             &location,
             &keyword_parameter.parameter,
@@ -360,7 +361,7 @@ pub fn gen_function_def(
         )?);
     }
     if let Some(var_keyword_parameter) = &stmt_function_def.parameters.kwarg {
-        parameters.push(gen_parameter(
+        parameters.push_back(gen_parameter(
             context,
             &location,
             &var_keyword_parameter,
@@ -368,6 +369,11 @@ pub fn gen_function_def(
             None,
         )?);
     }
+
+    context.calls.insert(
+        location.as_sub_location(),
+        BoundArguments::from(&parameters),
+    );
 
     let visibility = gen_visibility(context.cfgs, &location.namespace_location, &name);
     target_abstract_environment.attributes.insert(
@@ -379,7 +385,7 @@ pub fn gen_function_def(
                         location: location.clone(),
                         generics: imbl::OrdMap::new(),
                         is_async: stmt_function_def.is_async,
-                        parameters: imbl::Vector::from(parameters),
+                        parameters,
                     }),
                 }),
             ))))

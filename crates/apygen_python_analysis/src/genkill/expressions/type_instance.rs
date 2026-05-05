@@ -8,7 +8,7 @@ use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::nodes::Operator;
 use apygen_analysis::namespace::{Location, NamespaceLocation, Namespaces};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -89,7 +89,7 @@ pub fn call_method(
     type_instance: &TypeInstance,
     method_name: &Identifier,
     positional: Vec<Arc<Type>>,
-    keyword: HashMap<Arc<Identifier>, Arc<Type>>,
+    keyword: BTreeMap<Arc<Identifier>, Arc<Type>>,
 ) -> GenExprResult<Type> {
     let methods = get_methods(&context.namespaces, type_instance, method_name);
 
@@ -156,7 +156,7 @@ pub fn call_operator(
         left,
         &Identifier::parse(&format!("__{operator_name}__")),
         vec![Arc::new(Type::Instance(right.clone()))],
-        HashMap::new(),
+        BTreeMap::new(),
     );
     let reverse_call = call_method(
         context,
@@ -164,7 +164,7 @@ pub fn call_operator(
         right,
         &Identifier::parse(&format!("__r{operator_name}__")),
         vec![Arc::new(Type::Instance(left.clone()))],
-        HashMap::new(),
+        BTreeMap::new(),
     );
 
     normal_call.union(&context.namespaces, reverse_call)

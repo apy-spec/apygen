@@ -1,5 +1,9 @@
-use crate::abstract_environment::{AbstractEnvironment, BUILTINS_MODULE, Type, TypeUnion};
+use crate::abstract_environment::{
+    AbstractEnvironment, Attribute, BUILTINS_MODULE, LocalAttribute, Sourced,
+};
+use crate::genkill::calls::BoundArguments;
 use crate::genkill::statements::gen_statement;
+use crate::genkill::visibility::gen_visibility;
 use apy::OneOrMany;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint};
@@ -12,6 +16,7 @@ use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSp
 use log::{debug, info};
 use rayon::iter::once;
 use rayon::prelude::*;
+use std::collections::btree_map;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -19,7 +24,6 @@ use std::sync::mpsc::{Sender, channel};
 use thiserror::Error;
 
 pub type Dependents = HashSet<NamespaceLocation<QualifiedName>>;
-pub type Arguments = HashMap<Arc<Identifier>, Arc<Type>>;
 pub struct WorklistContext<
     'a,
     N: Namespaces<QualifiedName, AbstractEnvironment> = NamespaceLocationsProxy<
@@ -30,7 +34,7 @@ pub struct WorklistContext<
 > {
     pub namespaces: N,
     pub dependents: HashMap<NamespaceLocation<QualifiedName>, Dependents>,
-    pub calls: HashMap<NamespaceLocation<QualifiedName>, Arguments>,
+    pub calls: HashMap<NamespaceLocation<QualifiedName>, BoundArguments>,
     pub cfgs: &'a HashMap<Arc<QualifiedName>, Cfg>,
     pub import_tx: &'a Sender<NamespaceLocation<QualifiedName>>,
 }
@@ -50,10 +54,35 @@ impl<N: Namespaces<QualifiedName, AbstractEnvironment>> WorklistContext<'_, N> {
 pub fn worklist(
     context: &mut WorklistContext,
     namespace_location: NamespaceLocation<QualifiedName>,
+    arguments: Option<&BoundArguments>,
 ) {
     context
         .namespaces
         .reset_abstract_environments(&namespace_location);
+
+    if let Some(arguments) = arguments {
+        let entry_environment = context
+            .namespaces
+            .abstract_environment_entry(Location {
+                namespace_location: namespace_location.clone(),
+                program_point: ProgramPoint::Entry,
+            })
+            .or_default();
+        for (parameter, argument_type) in &arguments.variables {
+            entry_environment.attributes.insert(
+                parameter.name.clone(),
+                Arc::new(Attribute::Local(
+                    LocalAttribute::new(argument_type.clone())
+                        .with_visibility(Sourced::inferred(gen_visibility(
+                            &context.cfgs,
+                            &namespace_location,
+                            &parameter.name,
+                        )))
+                        .with_deprecation(Sourced::specified(parameter.deprecation.clone())),
+                )),
+            );
+        }
+    }
 
     let cfg = context
         .cfgs
@@ -202,12 +231,8 @@ pub fn cfg_worklist<'a, F: Filesystem>(
 
     let mut namespaces: NamespaceLocations<QualifiedName, AbstractEnvironment> =
         NamespaceLocations::new();
-    let mut dependents: HashMap<
-        NamespaceLocation<QualifiedName>,
-        HashSet<NamespaceLocation<QualifiedName>>,
-    > = HashMap::new();
-    let mut calls: HashMap<NamespaceLocation<QualifiedName>, HashMap<Arc<Identifier>, Arc<Type>>> =
-        HashMap::new();
+    let mut dependents: HashMap<NamespaceLocation<QualifiedName>, Dependents> = HashMap::new();
+    let mut calls: HashMap<NamespaceLocation<QualifiedName>, BoundArguments> = HashMap::new();
 
     let mut cfgs: HashMap<_, _> = target_modules
         .par_iter()
@@ -318,7 +343,11 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                         import_tx: &import_tx,
                     };
 
-                    worklist(&mut context, namespace_location.clone());
+                    worklist(
+                        &mut context,
+                        namespace_location.clone(),
+                        calls_ref.get(&namespace_location),
+                    );
 
                     let namespace = context
                         .namespaces
@@ -376,9 +405,10 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                         match calls_ref.entry(namespace_location.clone()) {
                             Entry::Occupied(mut entry) => {
                                 let existing_arguments = entry.get_mut();
-                                for (argument_name, argument_type) in arguments {
-                                    match existing_arguments.entry(argument_name.clone()) {
-                                        Entry::Occupied(mut entry) => {
+                                for (argument_name, argument_type) in arguments.variables {
+                                    match existing_arguments.variables.entry(argument_name.clone())
+                                    {
+                                        btree_map::Entry::Occupied(mut entry) => {
                                             let existing_argument_type = entry.get_mut();
 
                                             if !existing_argument_type
@@ -386,16 +416,12 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                                                 .is_ok_and(|included| included)
                                             {
                                                 call_changed = true;
-                                                *existing_argument_type = {
-                                                    let mut new_argument_type = TypeUnion::new();
-                                                    new_argument_type
-                                                        .add_type(existing_argument_type.clone());
-                                                    new_argument_type.add_type(argument_type);
-                                                    new_argument_type.simplify()
-                                                };
+                                                *existing_argument_type = existing_argument_type
+                                                    .join(namespaces_ref, &argument_type)
+                                                    .unwrap();
                                             }
                                         }
-                                        Entry::Vacant(entry) => {
+                                        btree_map::Entry::Vacant(entry) => {
                                             call_changed = true;
                                             entry.insert(argument_type);
                                         }

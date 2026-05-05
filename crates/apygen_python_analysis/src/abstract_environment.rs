@@ -163,7 +163,7 @@ pub struct Parameter {
 
     pub is_optional: bool,
 
-    pub is_deprecated: bool,
+    pub deprecation: Deprecation
 }
 
 impl StructuralDepth for Parameter {
@@ -984,6 +984,10 @@ impl TypeInstance {
 
     pub fn builtins_tuple<I: IntoIterator<Item = Arc<Type>>>(element_types: I) -> Self {
         TypeInstance::builtins("tuple").with_arguments(element_types.into_iter().collect())
+    }
+
+    pub fn builtins_dict(key_type: Arc<Type>, value_type: Arc<Type>) -> Self {
+        TypeInstance::builtins("dict").with_arguments(imbl::vector![key_type, value_type])
     }
 
     pub fn with_origin(mut self, origin: Location<QualifiedName>) -> Self {

@@ -108,7 +108,7 @@ pub fn convert_literal_function(
                 parameter.kind,
                 convert_type(context, &parameter.parameter_type)?,
             )
-            .with_deprecated(parameter.is_deprecated)
+            .with_deprecated(parameter.deprecation.is_deprecated())
             .with_optional(parameter.is_optional),
         )
     }
