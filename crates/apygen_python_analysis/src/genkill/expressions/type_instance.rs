@@ -201,19 +201,21 @@ pub fn call_binary_op(
     operator: Operator,
     right: &TypeInstance,
 ) -> GenExprResult<Type> {
-    match operator {
-        Operator::Add => call_operator(context, environment_location, left, "add", right),
-        Operator::Sub => call_operator(context, environment_location, left, "sub", right),
-        Operator::Mult => call_operator(context, environment_location, left, "mul", right),
-        Operator::MatMult => call_operator(context, environment_location, left, "matmul", right),
-        Operator::Div => call_operator(context, environment_location, left, "truediv", right),
-        Operator::Mod => call_operator(context, environment_location, left, "mod", right),
-        Operator::Pow => call_operator(context, environment_location, left, "pow", right),
-        Operator::LShift => call_operator(context, environment_location, left, "lshift", right),
-        Operator::RShift => call_operator(context, environment_location, left, "rshift", right),
-        Operator::BitOr => call_operator(context, environment_location, left, "or", right),
-        Operator::BitXor => call_operator(context, environment_location, left, "xor", right),
-        Operator::BitAnd => call_operator(context, environment_location, left, "and", right),
-        Operator::FloorDiv => call_operator(context, environment_location, left, "floordiv", right),
-    }
+    let method_name = match operator {
+        Operator::Add => "add",
+        Operator::Sub => "sub",
+        Operator::Mult => "mul",
+        Operator::MatMult => "matmul",
+        Operator::Div => "truediv",
+        Operator::Mod => "mod",
+        Operator::Pow => "pow",
+        Operator::LShift => "lshift",
+        Operator::RShift => "rshift",
+        Operator::BitOr => "or",
+        Operator::BitXor => "xor",
+        Operator::BitAnd => "and",
+        Operator::FloorDiv => "floordiv",
+    };
+
+    call_operator(context, environment_location, left, method_name, right)
 }
