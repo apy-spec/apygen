@@ -16,16 +16,19 @@ use crate::abstract_environment::{
 use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::Location;
 use crate::genkill::calls::Arguments;
-use crate::genkill::expressions::type_instance::call_function;
+use crate::genkill::expressions::type_instance::{call_function, call_method};
 use crate::genkill::literals::{
     gen_expr_boolean_literal, gen_expr_bytes_literal, gen_expr_ellipsis_literal,
     gen_expr_none_literal, gen_expr_number_literal, gen_expr_string_literal,
 };
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::cfg::nodes::{Expr, ExprBinOp, ExprBoolOp, ExprCall, ExprName, ExprUnaryOp};
+use apygen_analysis::cfg::nodes::{
+    Expr, ExprBinOp, ExprBoolOp, ExprCall, ExprName, ExprUnaryOp, Operator,
+};
 use apygen_analysis::lattice::{Lattice, NamespacesLattice};
 use apygen_analysis::namespace::Namespaces;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -303,6 +306,98 @@ pub fn gen_bool_op(
     result
 }
 
+/// References:
+/// - https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types
+pub fn gen_operator_name(operator: nodes::Operator) -> &'static str {
+    match operator {
+        Operator::Add => "add",
+        Operator::Sub => "sub",
+        Operator::Mult => "mul",
+        Operator::MatMult => "matmul",
+        Operator::Div => "truediv",
+        Operator::Mod => "mod",
+        Operator::Pow => "pow",
+        Operator::LShift => "lshift",
+        Operator::RShift => "rshift",
+        Operator::BitOr => "or",
+        Operator::BitXor => "xor",
+        Operator::BitAnd => "and",
+        Operator::FloorDiv => "floordiv",
+    }
+}
+
+pub fn as_type_instances(ty: &Type) -> Vec<TypeInstance> {
+    match ty {
+        Type::Any => vec![TypeInstance::typing("Any")],
+        Type::Never => vec![TypeInstance::typing("Never")],
+        Type::NoReturn => vec![TypeInstance::typing("NoReturn")],
+        Type::Instance(type_instance) => vec![type_instance.clone()],
+        Type::Union(union) => union
+            .types()
+            .iter()
+            .flat_map(|ty| as_type_instances(ty.as_ref()))
+            .collect(),
+        Type::Intersection(intersection) => intersection
+            .iter()
+            .flat_map(|ty| as_type_instances(ty.as_ref()))
+            .collect(),
+        Type::Literal(literal) => vec![type_literal::as_type_instance(literal.as_ref())],
+    }
+}
+
+pub fn call_operator(
+    context: &mut WorklistContext,
+    environment_location: &Location<QualifiedName>,
+    left: &Type,
+    operator: nodes::Operator,
+    right: &Type,
+) -> GenExprResult<Type> {
+    let operator_name = gen_operator_name(operator);
+
+    let mut result = GenExprResult::never();
+
+    for left_instance in as_type_instances(left) {
+        let normal_call = call_method(
+            context,
+            environment_location,
+            &left_instance,
+            &Identifier::parse(&format!("__{operator_name}__")),
+            vec![Arc::new(right.clone())],
+            BTreeMap::new(),
+        );
+        result = result.union(&context.namespaces, normal_call);
+    }
+
+    for right_instance in as_type_instances(right) {
+        let reverse_call = call_method(
+            context,
+            environment_location,
+            &right_instance,
+            &Identifier::parse(&format!("__r{operator_name}__")),
+            vec![Arc::new(left.clone())],
+            BTreeMap::new(),
+        );
+        result = result.union(&context.namespaces, reverse_call);
+    }
+
+    result
+}
+
+pub fn call_binary_op(
+    context: &mut WorklistContext,
+    environment_location: &Location<QualifiedName>,
+    left: &Type,
+    operator: nodes::Operator,
+    right: &Type,
+) -> GenExprResult<Type> {
+    match (left, right) {
+        (Type::Literal(left), Type::Literal(right)) => {
+            type_literal::call_binary_op(context, left.as_ref(), operator, right.as_ref())
+        }
+        _ => call_operator(context, environment_location, left, operator, right),
+    }
+}
+
 pub fn gen_bin_op(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
@@ -311,19 +406,13 @@ pub fn gen_bin_op(
     let left_result = gen_expr(context, environment_location, &expr_bin_op.left);
     let right_result = gen_expr(context, environment_location, &expr_bin_op.right);
 
-    match (left_result.value, right_result.value) {
-        (Type::Literal(left), Type::Literal(right)) => {
-            type_literal::call_binary_op(context, left.as_ref(), expr_bin_op.op, right.as_ref())
-        }
-        (Type::Instance(left), Type::Instance(right)) => type_instance::call_binary_op(
-            context,
-            environment_location,
-            &left,
-            expr_bin_op.op,
-            &right,
-        ),
-        _ => GenExprResult::unknown(),
-    }
+    call_binary_op(
+        context,
+        environment_location,
+        &left_result.value,
+        expr_bin_op.op,
+        &right_result.value,
+    )
 }
 
 pub fn gen_unary_op(

@@ -976,6 +976,13 @@ impl TypeInstance {
         )
     }
 
+    pub fn typing(name: &str) -> Self {
+        TypeInstance::new(
+            Location::from(QualifiedName::parse(TYPING_MODULE)),
+            Identifier::parse(name),
+        )
+    }
+
     pub fn builtins_list(element_type: Arc<Type>) -> Self {
         TypeInstance::builtins("list").with_arguments(imbl::vector![element_type])
     }

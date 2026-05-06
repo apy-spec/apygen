@@ -6,6 +6,7 @@ use crate::genkill::calls::{Arguments, BoundArguments};
 use crate::genkill::expressions::GenExprResult;
 use crate::worklist::{Dependents, WorklistContext, add_call, add_dependent};
 use apy::v1::{Identifier, QualifiedName};
+use apygen_analysis::cfg::nodes;
 use apygen_analysis::cfg::nodes::Operator;
 use apygen_analysis::namespace::{Location, NamespaceLocation, Namespaces};
 use std::collections::{BTreeMap, HashMap};
@@ -163,59 +164,4 @@ pub fn call_method(
     }
 
     result
-}
-
-pub fn call_operator(
-    context: &mut WorklistContext,
-    environment_location: &Location<QualifiedName>,
-    left: &TypeInstance,
-    operator_name: &str,
-    right: &TypeInstance,
-) -> GenExprResult<Type> {
-    let normal_call = call_method(
-        context,
-        environment_location,
-        left,
-        &Identifier::parse(&format!("__{operator_name}__")),
-        vec![Arc::new(Type::Instance(right.clone()))],
-        BTreeMap::new(),
-    );
-    let reverse_call = call_method(
-        context,
-        environment_location,
-        right,
-        &Identifier::parse(&format!("__r{operator_name}__")),
-        vec![Arc::new(Type::Instance(left.clone()))],
-        BTreeMap::new(),
-    );
-
-    normal_call.union(&context.namespaces, reverse_call)
-}
-
-/// References:
-/// - https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types
-pub fn call_binary_op(
-    context: &mut WorklistContext,
-    environment_location: &Location<QualifiedName>,
-    left: &TypeInstance,
-    operator: Operator,
-    right: &TypeInstance,
-) -> GenExprResult<Type> {
-    let method_name = match operator {
-        Operator::Add => "add",
-        Operator::Sub => "sub",
-        Operator::Mult => "mul",
-        Operator::MatMult => "matmul",
-        Operator::Div => "truediv",
-        Operator::Mod => "mod",
-        Operator::Pow => "pow",
-        Operator::LShift => "lshift",
-        Operator::RShift => "rshift",
-        Operator::BitOr => "or",
-        Operator::BitXor => "xor",
-        Operator::BitAnd => "and",
-        Operator::FloorDiv => "floordiv",
-    };
-
-    call_operator(context, environment_location, left, method_name, right)
 }
