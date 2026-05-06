@@ -1,15 +1,13 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Exception, FunctionType, GetAttributeError, Type, TypeInstance,
-    TypeLiteral, get_attribute,
+    AbstractEnvironment, Exception, GetAttributeError, Type, TypeInstance, TypeLiteral,
+    get_attribute,
 };
-use crate::genkill::calls::{Arguments, BoundArguments};
-use crate::genkill::expressions::GenExprResult;
-use crate::worklist::{Dependents, WorklistContext, add_call, add_dependent};
+use crate::genkill::calls::Arguments;
+use crate::genkill::expressions::{GenExprResult, literal_class, literal_function};
+use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::cfg::nodes;
-use apygen_analysis::cfg::nodes::Operator;
 use apygen_analysis::namespace::{Location, NamespaceLocation, Namespaces};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -47,88 +45,6 @@ pub fn get_instance_environment<'a>(
         .ok_or(GetInstanceEnvironmentError::DoesNotHaveNamespace)
 }
 
-pub fn get_functions(ty: &Type) -> Vec<&FunctionType> {
-    match ty {
-        Type::Union(type_union) => type_union
-            .types()
-            .iter()
-            .flat_map(|union_ty| get_functions(union_ty))
-            .collect(),
-        Type::Literal(type_literal) => {
-            let TypeLiteral::Function(function_type) = type_literal.as_ref() else {
-                return Vec::new();
-            };
-            vec![&function_type.value]
-        }
-        _ => Vec::new(),
-    }
-}
-
-pub fn call_function(
-    namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-    dependents: &mut HashMap<NamespaceLocation<QualifiedName>, Dependents>,
-    calls: &mut HashMap<NamespaceLocation<QualifiedName>, BoundArguments>,
-    environment_location: &Location<QualifiedName>,
-    function_type: &FunctionType,
-    arguments: &Arguments,
-) -> GenExprResult<Type> {
-    let Ok(bindings) = arguments.bind(&function_type.parameters) else {
-        return GenExprResult::raise(Exception::builtins("TypeError"));
-    };
-
-    let result = if let Some(environment) = namespaces
-        .get_abstract_environment(&Location::at_exit(function_type.location.as_sub_location()))
-    {
-        GenExprResult {
-            value: environment
-                .returned_value
-                .as_ref()
-                .map(|value| value.data.as_ref().clone())
-                .unwrap_or(Type::new_literal(TypeLiteral::None)),
-            exceptions: environment.raised_exceptions.data.clone(),
-            pureness: environment.pureness.data,
-            completeness: environment.completeness.data,
-        }
-    } else {
-        GenExprResult::unknown()
-    };
-
-    add_call(
-        calls,
-        namespaces,
-        function_type.location.as_sub_location(),
-        bindings,
-    );
-
-    add_dependent(
-        dependents,
-        function_type.location.as_sub_location(),
-        environment_location.namespace_location.clone(),
-    );
-
-    result
-}
-
-pub fn get_methods<'a>(
-    namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
-    type_instance: &TypeInstance,
-    method_name: &Identifier,
-) -> Vec<&'a FunctionType> {
-    let Ok(environment) = get_instance_environment(namespaces, type_instance) else {
-        return Vec::new();
-    };
-
-    let Some(attribute) = environment.attributes.get(method_name) else {
-        return Vec::new();
-    };
-
-    let Ok(local_attribute) = attribute.resolve(namespaces) else {
-        return Vec::new();
-    };
-
-    get_functions(local_attribute.attribute_type.data.as_ref())
-}
-
 pub fn call_method(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
@@ -137,7 +53,11 @@ pub fn call_method(
     positional: Vec<Arc<Type>>,
     keyword: BTreeMap<Arc<Identifier>, Arc<Type>>,
 ) -> GenExprResult<Type> {
-    let methods = get_methods(&context.namespaces, type_instance, method_name);
+    let methods = get_instance_environment(&context.namespaces, type_instance)
+        .map(|environment| {
+            literal_class::get_methods(&context.namespaces, environment, method_name)
+        })
+        .unwrap_or(Vec::new());
 
     if methods.is_empty() {
         return GenExprResult::raise(Exception::builtins("AttributeError"));
@@ -152,14 +72,8 @@ pub fn call_method(
 
     let mut result = GenExprResult::never();
     for method in methods {
-        let call_result = call_function(
-            &context.namespaces,
-            &mut context.dependents,
-            &mut context.calls,
-            environment_location,
-            method,
-            &arguments,
-        );
+        let call_result =
+            literal_function::call(context, environment_location, &method, &arguments);
         result = result.union(&context.namespaces, call_result);
     }
 

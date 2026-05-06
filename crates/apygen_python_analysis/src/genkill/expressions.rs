@@ -1,8 +1,10 @@
 pub mod literal_boolean;
 pub mod literal_bytes;
+pub mod literal_class;
 pub mod literal_complex;
 pub mod literal_ellipsis;
 pub mod literal_float;
+pub mod literal_function;
 pub mod literal_integer;
 pub mod literal_none;
 pub mod literal_string;
@@ -15,8 +17,9 @@ use crate::abstract_environment::{
 };
 use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::Location;
+use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::calls::Arguments;
-use crate::genkill::expressions::type_instance::{call_function, call_method};
+use crate::genkill::expressions::type_instance::call_method;
 use crate::genkill::literals::{
     gen_expr_boolean_literal, gen_expr_bytes_literal, gen_expr_ellipsis_literal,
     gen_expr_none_literal, gen_expr_number_literal, gen_expr_string_literal,
@@ -433,6 +436,30 @@ pub fn gen_unary_op(
     })
 }
 
+pub fn gen_arguments(
+    context: &mut WorklistContext,
+    environment_location: &Location<QualifiedName>,
+    arguments: &nodes::Arguments,
+) -> Arguments {
+    let mut result = Arguments::new();
+
+    for argument in &arguments.args {
+        result.positional.push(Arc::new(
+            gen_expr(context, environment_location, argument).value,
+        ));
+    }
+    for keyword_argument in &arguments.keywords {
+        if let Some(name) = &keyword_argument.arg {
+            result.keyword.insert(
+                Arc::new(Identifier::parse(&name.id)),
+                Arc::new(gen_expr(context, environment_location, &keyword_argument.value).value),
+            );
+        }
+    }
+
+    result
+}
+
 pub fn gen_call(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
@@ -444,33 +471,31 @@ pub fn gen_call(
         return GenExprResult::unknown();
     };
 
-    let TypeLiteral::Function(literal_function) = literal.as_ref() else {
-        return GenExprResult::unknown();
-    };
+    match literal.as_ref() {
+        TypeLiteral::Function(literal_function) => {
+            let arguments = gen_arguments(context, environment_location, &expr_call.arguments);
 
-    let mut arguments = Arguments::new();
-    for argument in &expr_call.arguments.args {
-        arguments.positional.push(Arc::new(
-            gen_expr(context, environment_location, argument).value,
-        ));
-    }
-    for keyword_argument in &expr_call.arguments.keywords {
-        if let Some(name) = &keyword_argument.arg {
-            arguments.keyword.insert(
-                Arc::new(Identifier::parse(&name.id)),
-                Arc::new(gen_expr(context, environment_location, &keyword_argument.value).value),
-            );
+            literal_function::call(context, environment_location, literal_function, &arguments)
         }
-    }
+        TypeLiteral::Class(literal_class) => {
+            match AssignmentTarget::try_from(expr_call.func.as_ref()) {
+                Ok(AssignmentTarget::Name(name)) => {
+                    let arguments =
+                        gen_arguments(context, environment_location, &expr_call.arguments);
 
-    call_function(
-        &context.namespaces,
-        &mut context.dependents,
-        &mut context.calls,
-        environment_location,
-        literal_function.value.as_ref(),
-        &arguments,
-    )
+                    literal_class::call(
+                        context,
+                        environment_location,
+                        &name,
+                        literal_class,
+                        &arguments,
+                    )
+                }
+                _ => GenExprResult::unknown(),
+            }
+        }
+        _ => GenExprResult::unknown(),
+    }
 }
 
 pub fn gen_expr(

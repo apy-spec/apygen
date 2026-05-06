@@ -1,0 +1,78 @@
+use crate::abstract_environment::{
+    AbstractEnvironment, Exception, LiteralClass, LiteralFunction, Type, TypeInstance,
+    resolve_local_attribute,
+};
+use crate::genkill::calls::Arguments;
+use crate::genkill::expressions::{GenExprResult, literal_function};
+use crate::worklist::WorklistContext;
+use apy::v1::{Identifier, QualifiedName};
+use apygen_analysis::lattice::Lattice;
+use apygen_analysis::namespace::{Location, Namespaces};
+
+pub fn get_methods<'a>(
+    namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
+    environment: &AbstractEnvironment,
+    method_name: &Identifier,
+) -> Vec<LiteralFunction> {
+    let Some(attribute) = environment.attributes.get(method_name) else {
+        return Vec::new();
+    };
+
+    let Ok(local_attribute) = attribute.resolve(namespaces) else {
+        return Vec::new();
+    };
+
+    literal_function::as_literal_functions(local_attribute.attribute_type.data.as_ref())
+}
+
+pub fn call(
+    context: &mut WorklistContext,
+    environment_location: &Location<QualifiedName>,
+    name: &Identifier,
+    literal_class: &LiteralClass,
+    arguments: &Arguments,
+) -> GenExprResult<Type> {
+    let mut found_init = true;
+    let mut found_new = true;
+    let Ok((origin, _)) =
+        resolve_local_attribute(&context.namespaces, environment_location.clone(), name)
+    else {
+        return GenExprResult::unknown();
+    };
+    let mut result = GenExprResult::new(Type::Instance(TypeInstance::new(origin, name.clone())));
+    for (method_name, found) in [("__new__", &mut found_new), ("__init__", &mut found_init)] {
+        let Some(environment) = context
+            .namespaces
+            .get_abstract_environment(&Location::at_exit(
+                literal_class.value.location.as_sub_location(),
+            ))
+        else {
+            return GenExprResult::unknown();
+        };
+
+        let methods = get_methods(
+            &context.namespaces,
+            environment,
+            &Identifier::parse(method_name),
+        );
+
+        if methods.is_empty() {
+            *found = false;
+            continue;
+        }
+
+        for method in methods {
+            let method_result =
+                literal_function::call(context, environment_location, &method, arguments);
+            result.exceptions = result.exceptions.join(&method_result.exceptions);
+            result.pureness = result.pureness.join(&method_result.pureness);
+            result.completeness = result.completeness.join(&method_result.completeness);
+        }
+    }
+
+    if !found_new && !found_init {
+        result = GenExprResult::raise(Exception::builtins("TypeError"));
+    }
+
+    result
+}
