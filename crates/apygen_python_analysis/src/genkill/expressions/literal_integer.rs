@@ -21,6 +21,10 @@ pub fn call_dunder_float(literal_integer: &LiteralInteger) -> GenExprResult<Type
     }
 }
 
+pub fn call_dunder_int(literal_integer: &LiteralInteger) -> Type {
+    Type::new_integer_literal(literal_integer.clone())
+}
+
 pub fn call_dunder_bool(literal_integer: &LiteralInteger) -> Type {
     Type::new_boolean_literal(LiteralBoolean {
         value: as_boolean(literal_integer),
@@ -67,9 +71,9 @@ pub fn call_binary_op(
             let big_right = match right {
                 LiteralInteger::Int(small_right) => {
                     if let Ok(small_right) = usize::try_from(*small_right) {
-                        return GenExprResult::new(
-                            Type::new_integer_literal(left.pow(small_right)),
-                        );
+                        return GenExprResult::new(Type::new_integer_literal(
+                            left.pow(small_right),
+                        ));
                     }
                     &BigInt::from(*small_right)
                 }
@@ -97,9 +101,7 @@ pub fn call_binary_op(
             let (left, right) = match (left, right) {
                 (LiteralInteger::Int(left), LiteralInteger::Int(right)) => {
                     if let Some(value) = Rational64::new(*left, *right).to_f64() {
-                        return GenExprResult::new(Type::new_float_literal(
-                            LiteralFloat { value },
-                        ));
+                        return GenExprResult::new(Type::new_float_literal(LiteralFloat { value }));
                     }
                     (&BigInt::from(*left), &BigInt::from(*right))
                 }

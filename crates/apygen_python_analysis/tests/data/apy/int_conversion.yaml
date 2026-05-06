@@ -72,6 +72,75 @@ modules:
         final: false
         deprecated: false
         visibility: PUBLIC
+      f:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "10"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      g:
+        kind: VARIABLE
+        type:
+          id: float
+          module: builtins
+          history_index: 0
+          arguments: []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      h:
+        kind: VARIABLE
+        type:
+          id: complex
+          module: builtins
+          history_index: 0
+          arguments: []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      i:
+        kind: VARIABLE
+        type:
+          id: str
+          module: builtins
+          history_index: 0
+          arguments: []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      j:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                bool: true
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
       x:
         kind: VARIABLE
         type:
@@ -79,6 +148,21 @@ modules:
           module: builtins
           history_index: 0
           arguments: []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      "y":
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: builtins
+          history_index: 0
+          arguments:
+            - value:
+                int: "10"
         description: ""
         initialised: true
         readonly: false

@@ -3,8 +3,16 @@ use crate::genkill::expressions;
 use crate::genkill::expressions::GenExprResult;
 use apygen_analysis::cfg::nodes;
 
+pub fn as_integer(literal_boolean: &LiteralBoolean) -> i64 {
+    if literal_boolean.value { 1 } else { 0 }
+}
+
 pub fn as_boolean(literal_boolean: &LiteralBoolean) -> bool {
     literal_boolean.value
+}
+
+pub fn call_dunder_int(literal_boolean: &LiteralBoolean) -> Type {
+    Type::new_integer_literal(LiteralInteger::Int(as_integer(literal_boolean)))
 }
 
 pub fn call_dunder_bool(literal_boolean: &LiteralBoolean) -> Type {
@@ -17,10 +25,6 @@ pub fn call_not(literal_boolean: &LiteralBoolean) -> Type {
     Type::new_boolean_literal(LiteralBoolean {
         value: !as_boolean(literal_boolean),
     })
-}
-
-pub fn as_integer(literal_boolean: &LiteralBoolean) -> i64 {
-    if literal_boolean.value { 1 } else { 0 }
 }
 
 pub fn call_dunder_pos(literal_boolean: &LiteralBoolean) -> Type {

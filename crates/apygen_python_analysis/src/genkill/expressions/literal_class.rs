@@ -1,9 +1,11 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Exception, LiteralClass, LiteralFunction, Type, TypeInstance,
+    AbstractEnvironment, Exception, LiteralClass, LiteralFunction, Type, TypeInstance, TypeLiteral,
     resolve_local_attribute,
 };
 use crate::genkill::calls::Arguments;
-use crate::genkill::expressions::{GenExprResult, literal_function};
+use crate::genkill::expressions::{
+    GenExprResult, literal_boolean, literal_function, literal_integer,
+};
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::lattice::Lattice;
@@ -25,6 +27,53 @@ pub fn get_methods<'a>(
     literal_function::as_literal_functions(local_attribute.attribute_type.data.as_ref())
 }
 
+pub fn call_literal(
+    type_instance: &TypeInstance,
+    arguments: &Arguments,
+) -> Option<GenExprResult<Type>> {
+    let identifiers = &type_instance.origin.namespace_location.module.identifiers;
+
+    if identifiers.len() != 1 {
+        return None;
+    }
+
+    match (identifiers.first().as_ref(), type_instance.name.as_ref()) {
+        ("builtins", "int") => match arguments.positional.get(0).map(|arg| arg.as_ref()) {
+            Some(Type::Literal(type_literal))
+                if arguments.positional.len() == 1 && arguments.keyword.is_empty() =>
+            {
+                match type_literal.as_ref() {
+                    TypeLiteral::Integer(literal_integer) => Some(GenExprResult::new(
+                        literal_integer::call_dunder_int(literal_integer),
+                    )),
+                    TypeLiteral::Boolean(literal_boolean) => Some(GenExprResult::new(
+                        literal_boolean::call_dunder_int(literal_boolean),
+                    )),
+                    _ => None,
+                }
+            }
+            _ => None,
+        },
+        ("builtins", "bool") => match arguments.positional.get(0).map(|arg| arg.as_ref()) {
+            Some(Type::Literal(type_literal))
+                if arguments.positional.len() == 1 && arguments.keyword.is_empty() =>
+            {
+                match type_literal.as_ref() {
+                    TypeLiteral::Integer(literal_integer) => Some(GenExprResult::new(
+                        literal_integer::call_dunder_bool(literal_integer),
+                    )),
+                    TypeLiteral::Boolean(literal_boolean) => Some(GenExprResult::new(
+                        literal_boolean::call_dunder_bool(literal_boolean),
+                    )),
+                    _ => None,
+                }
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 pub fn call(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
@@ -39,7 +88,14 @@ pub fn call(
     else {
         return GenExprResult::unknown();
     };
-    let mut result = GenExprResult::new(Type::Instance(TypeInstance::new(origin, name.clone())));
+
+    let type_instance = TypeInstance::new(origin.clone(), name.clone());
+
+    if let Some(result) = call_literal(&type_instance, arguments) {
+        return result;
+    }
+
+    let mut result = GenExprResult::new(Type::Instance(type_instance));
     for (method_name, found) in [("__new__", &mut found_new), ("__init__", &mut found_init)] {
         let Some(environment) = context
             .namespaces
