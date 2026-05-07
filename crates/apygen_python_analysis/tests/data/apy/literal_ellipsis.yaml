@@ -1,0 +1,93 @@
+apy: 1.0.0
+modules:
+  literal_ellipsis:
+    summary: ""
+    description: ""
+    raises: []
+    partial: false
+    visibility: PUBLIC
+    attributes:
+      bool_ellipsis:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: typing
+          history_index: 0
+          arguments:
+            - value:
+                bool: true
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      ellipsis_value:
+        kind: VARIABLE
+        type:
+          id: ellipsis
+          module: builtins
+          history_index: 0
+          arguments: []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      invert_ellipsis:
+        kind: VARIABLE
+        type:
+          id: NoReturn
+          module: typing
+          history_index: 0
+          arguments: []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      neg_ellipsis:
+        kind: VARIABLE
+        type:
+          id: NoReturn
+          module: typing
+          history_index: 0
+          arguments: []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      not_ellipsis:
+        kind: VARIABLE
+        type:
+          id: Literal
+          module: typing
+          history_index: 0
+          arguments:
+            - value:
+                bool: false
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      pos_ellipsis:
+        kind: VARIABLE
+        type:
+          id: NoReturn
+          module: typing
+          history_index: 0
+          arguments: []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+    typing_attributes:
+      {}

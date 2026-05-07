@@ -63,6 +63,7 @@ pub fn analyse_directory(
 #[case::int_conversion("int_conversion")]
 #[case::literal_boolean("literal_boolean")]
 #[case::literal_bytes("literal_bytes")]
+#[case::literal_ellipsis("literal_ellipsis")]
 #[case::int_literal_inference("int_literal_inference")]
 #[case::big_int_literal_inference("big_int_literal_inference")]
 fn test_inference(#[case] module_name: String) {

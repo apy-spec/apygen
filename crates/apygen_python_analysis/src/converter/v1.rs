@@ -324,7 +324,10 @@ pub fn convert_type(
                         Some(apy::v1::Type::Literal(apy::v1::TypeLiteral::None))
                     }
                     apy::v1::PythonValue::Other(apy::v1::OtherPythonValue::Ellipsis) => {
-                        Some(apy::v1::Type::Reference(convert_type_any()))
+                        Some(apy::v1::Type::Reference(
+                            apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("ellipsis"))
+                                .with_module(Some(apy::v1::QualifiedName::parse(BUILTINS_MODULE))),
+                        ))
                     }
                     _ => {
                         unreachable!("Only None and Ellipsis should be converted to Python values")
@@ -379,7 +382,10 @@ pub fn convert_attribute(
                     apy::v1::Type::Literal(apy::v1::TypeLiteral::None)
                 }
                 apy::v1::PythonValue::Other(apy::v1::OtherPythonValue::Ellipsis) => {
-                    apy::v1::Type::Reference(convert_type_any())
+                    apy::v1::Type::Reference(
+                        apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("ellipsis"))
+                            .with_module(Some(apy::v1::QualifiedName::parse(BUILTINS_MODULE))),
+                    )
                 }
                 _ => unreachable!("Only None and Ellipsis should be converted to Python values"),
             },
