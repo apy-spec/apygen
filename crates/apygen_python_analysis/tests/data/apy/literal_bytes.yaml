@@ -30,10 +30,12 @@ modules:
       bool_empty_bytes:
         kind: VARIABLE
         type:
-          id: bool
-          module: builtins
+          id: Literal
+          module: typing
           history_index: 0
-          arguments: []
+          arguments:
+            - value:
+                bool: false
         description: ""
         initialised: true
         readonly: false
@@ -43,10 +45,12 @@ modules:
       bool_multiple_bytes:
         kind: VARIABLE
         type:
-          id: bool
-          module: builtins
+          id: Literal
+          module: typing
           history_index: 0
-          arguments: []
+          arguments:
+            - value:
+                bool: true
         description: ""
         initialised: true
         readonly: false
@@ -56,10 +60,12 @@ modules:
       bool_single_bytes:
         kind: VARIABLE
         type:
-          id: bool
-          module: builtins
+          id: Literal
+          module: typing
           history_index: 0
-          arguments: []
+          arguments:
+            - value:
+                bool: true
         description: ""
         initialised: true
         readonly: false

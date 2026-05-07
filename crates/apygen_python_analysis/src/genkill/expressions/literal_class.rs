@@ -4,7 +4,7 @@ use crate::abstract_environment::{
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::{
-    GenExprResult, literal_boolean, literal_function, literal_integer,
+    GenExprResult, literal_boolean, literal_bytes, literal_function, literal_integer,
 };
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
@@ -64,6 +64,9 @@ pub fn call_literal(
                     )),
                     TypeLiteral::Boolean(literal_boolean) => Some(GenExprResult::new(
                         literal_boolean::call_dunder_bool(literal_boolean),
+                    )),
+                    TypeLiteral::Bytes(literal_bytes) => Some(GenExprResult::new(
+                        literal_bytes::call_dunder_bool(literal_bytes),
                     )),
                     _ => None,
                 }
