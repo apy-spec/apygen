@@ -61,6 +61,7 @@ pub fn analyse_directory(
 #[case::simple_variable_inference("simple_variable_inference")]
 #[case::simple_function_call("simple_function_call")]
 #[case::int_conversion("int_conversion")]
+#[case::literal_boolean("literal_boolean")]
 #[case::int_literal_inference("int_literal_inference")]
 #[case::big_int_literal_inference("big_int_literal_inference")]
 fn test_inference(#[case] module_name: String) {
