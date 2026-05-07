@@ -76,7 +76,7 @@ modules:
         kind: VARIABLE
         type:
           id: Literal
-          module: builtins
+          module: typing
           history_index: 0
           arguments:
             - value:
@@ -130,7 +130,7 @@ modules:
         kind: VARIABLE
         type:
           id: Literal
-          module: builtins
+          module: typing
           history_index: 0
           arguments:
             - value:
@@ -158,7 +158,7 @@ modules:
         kind: VARIABLE
         type:
           id: Literal
-          module: builtins
+          module: typing
           history_index: 0
           arguments:
             - value:

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 pub fn new_literal(arguments: Vec<apy::v1::TypeArgument>) -> apy::v1::TypeReference {
     apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("Literal"))
-        .with_module(Some(apy::v1::QualifiedName::parse(BUILTINS_MODULE)))
+        .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE)))
         .with_arguments(arguments)
 }
 
