@@ -61,6 +61,7 @@ pub fn analyse_directory(
 #[case::simple_variable_inference("simple_variable_inference")]
 #[case::simple_function_call("simple_function_call")]
 #[case::int_conversion("int_conversion")]
+#[case::literal_int("literal_int")]
 #[case::literal_boolean("literal_boolean")]
 #[case::literal_bytes("literal_bytes")]
 #[case::literal_ellipsis("literal_ellipsis")]
