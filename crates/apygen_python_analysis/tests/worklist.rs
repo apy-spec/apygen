@@ -64,6 +64,7 @@ pub fn analyse_directory(
 #[case::literal_int("literal_int")]
 #[case::literal_boolean("literal_boolean")]
 #[case::literal_bytes("literal_bytes")]
+#[case::literal_str("literal_str")]
 #[case::literal_ellipsis("literal_ellipsis")]
 #[case::literal_none("literal_none")]
 #[case::int_literal_inference("int_literal_inference")]
