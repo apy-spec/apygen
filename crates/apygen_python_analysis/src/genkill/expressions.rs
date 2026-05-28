@@ -397,6 +397,7 @@ pub fn call_binary_op(
         (Type::Literal(left), Type::Literal(right)) => {
             type_literal::call_binary_op(context, left.as_ref(), operator, right.as_ref())
         }
+        (Type::Any, _) | (_, Type::Any) => GenExprResult::unknown(),
         _ => call_operator(context, environment_location, left, operator, right),
     }
 }

@@ -60,6 +60,7 @@ pub fn analyse_directory(
 #[rstest]
 #[case::simple_variable_inference("simple_variable_inference")]
 #[case::simple_function_call("simple_function_call")]
+#[case::simple_function_argument_inference("simple_function_argument_inference")]
 #[case::int_conversion("int_conversion")]
 #[case::literal_int("literal_int")]
 #[case::literal_boolean("literal_boolean")]
