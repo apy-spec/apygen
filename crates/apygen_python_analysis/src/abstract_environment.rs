@@ -1685,6 +1685,45 @@ impl AbstractEnvironment {
     pub fn new() -> AbstractEnvironment {
         Self::default()
     }
+
+    pub fn with_attributes(
+        mut self,
+        attributes: imbl::HashMap<Arc<Identifier>, Arc<Attribute>>,
+    ) -> AbstractEnvironment {
+        self.attributes = attributes;
+        self
+    }
+
+    pub fn with_returned_value(mut self, value: Option<Sourced<Arc<Type>>>) -> AbstractEnvironment {
+        self.returned_value = value;
+        self
+    }
+
+    pub fn with_raised_exceptions(
+        mut self,
+        raised_exceptions: Sourced<RaisedExceptions>,
+    ) -> AbstractEnvironment {
+        self.raised_exceptions = raised_exceptions;
+        self
+    }
+
+    pub fn with_completeness(mut self, completeness: Sourced<Completeness>) -> AbstractEnvironment {
+        self.completeness = completeness;
+        self
+    }
+
+    pub fn with_pureness(mut self, pureness: Sourced<Pureness>) -> AbstractEnvironment {
+        self.pureness = pureness;
+        self
+    }
+
+    pub fn with_diagnostics(
+        mut self,
+        diagnostics: imbl::HashSet<Diagnostic>,
+    ) -> AbstractEnvironment {
+        self.diagnostics = diagnostics;
+        self
+    }
 }
 
 impl NamespacesLattice<QualifiedName, AbstractEnvironment> for AbstractEnvironment {

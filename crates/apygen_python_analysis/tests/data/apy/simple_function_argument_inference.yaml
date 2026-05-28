@@ -3,7 +3,13 @@ modules:
   simple_function_argument_inference:
     summary: ""
     description: ""
-    raises: []
+    raises:
+      - exception_type:
+          id: Any
+          module: typing
+          history_index: 0
+          arguments: []
+        description: ""
     partial: false
     visibility: PUBLIC
     attributes:
@@ -53,7 +59,12 @@ modules:
               optional: false
               deprecated: false
           raises:
-            []
+            - exception_type:
+                id: Any
+                module: typing
+                history_index: 0
+                arguments: []
+              description: ""
           partial: false
           pure: false
           deprecated: false

@@ -3,7 +3,19 @@ modules:
   simple_class_init:
     summary: ""
     description: ""
-    raises: []
+    raises:
+      - exception_type:
+          id: Any
+          module: typing
+          history_index: 0
+          arguments: []
+        description: ""
+      - exception_type:
+          id: TypeError
+          module: builtins
+          history_index: 0
+          arguments: []
+        description: ""
     partial: false
     visibility: PUBLIC
     attributes:

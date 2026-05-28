@@ -10,7 +10,7 @@ use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
 use crate::genkill::annotations::gen_annotation;
 use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::calls::BoundArguments;
-use crate::genkill::expressions::gen_expr;
+use crate::genkill::expressions::{GenExprResult, gen_expr};
 use crate::genkill::visibility::gen_visibility;
 use crate::worklist::WorklistContext;
 use apy::OneOrMany;
@@ -28,6 +28,17 @@ pub fn gen_assign(
 
     let gen_result = gen_expr(context, &location, &stmt_assign.value).map(|ty| Arc::new(ty));
 
+    let mut target_abstract_environments: HashMap<EdgeData, AbstractEnvironment> = HashMap::new();
+
+    if !gen_result.exceptions.exceptions.is_empty() {
+        target_abstract_environments.insert(
+            EdgeData::UnhandledException,
+            target_abstract_environment
+                .clone()
+                .with_raised_exceptions(Sourced::inferred(gen_result.exceptions)),
+        );
+    }
+
     for target in &stmt_assign.targets {
         let target = AssignmentTarget::try_from(target);
 
@@ -44,10 +55,9 @@ pub fn gen_assign(
         }
     }
 
-    Ok(HashMap::from_iter([(
-        EdgeData::Unconditional,
-        target_abstract_environment,
-    )]))
+    target_abstract_environments.insert(EdgeData::Unconditional, target_abstract_environment);
+
+    Ok(target_abstract_environments)
 }
 
 pub fn gen_return(
@@ -57,23 +67,34 @@ pub fn gen_return(
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
-    let new_returned_value = Some(Sourced::inferred(Arc::new(
-        if let Some(value) = &stmt_return.value {
-            gen_expr(context, &location, value).value
-        } else {
-            Type::new_literal(TypeLiteral::None)
-        },
-    )));
+    let gen_result = if let Some(value) = &stmt_return.value {
+        gen_expr(context, &location, value)
+    } else {
+        GenExprResult::new(Type::new_literal(TypeLiteral::None))
+    };
+
+    let mut target_abstract_environments: HashMap<EdgeData, AbstractEnvironment> = HashMap::new();
+
+    if !gen_result.exceptions.exceptions.is_empty() {
+        target_abstract_environments.insert(
+            EdgeData::UnhandledException,
+            target_abstract_environment
+                .clone()
+                .with_raised_exceptions(Sourced::inferred(gen_result.exceptions)),
+        );
+    }
 
     target_abstract_environment.returned_value = target_abstract_environment
         .returned_value
-        .join(&context.namespaces, &new_returned_value)
+        .join(
+            &context.namespaces,
+            &Some(Sourced::inferred(Arc::new(gen_result.value))),
+        )
         .unwrap();
 
-    Ok(HashMap::from_iter([(
-        EdgeData::Return,
-        target_abstract_environment,
-    )]))
+    target_abstract_environments.insert(EdgeData::Unconditional, target_abstract_environment);
+
+    Ok(target_abstract_environments)
 }
 
 pub fn gen_ann_assign(
@@ -96,6 +117,23 @@ pub fn gen_ann_assign(
             }
         };
 
+    let mut target_abstract_environments: HashMap<EdgeData, AbstractEnvironment> = HashMap::new();
+
+    if let Some(value) = &stmt_ann_assign.value {
+        let gen_result = gen_expr(context, &location, value);
+
+        if !gen_result.exceptions.exceptions.is_empty() {
+            target_abstract_environments.insert(
+                EdgeData::UnhandledException,
+                target_abstract_environment
+                    .clone()
+                    .with_raised_exceptions(Sourced::inferred(gen_result.exceptions)),
+            );
+        }
+
+        // TODO: compare annotated type with inferred type
+    }
+
     let target = AssignmentTarget::try_from(stmt_ann_assign.target.as_ref());
 
     if let Ok(AssignmentTarget::Name(name)) = target {
@@ -110,10 +148,9 @@ pub fn gen_ann_assign(
         );
     }
 
-    Ok(HashMap::from_iter([(
-        EdgeData::Unconditional,
-        target_abstract_environment,
-    )]))
+    target_abstract_environments.insert(EdgeData::Unconditional, target_abstract_environment);
+
+    Ok(target_abstract_environments)
 }
 
 pub fn gen_import(
