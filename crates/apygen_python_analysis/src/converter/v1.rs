@@ -2,8 +2,8 @@ use crate::abstract_environment::{
     AbstractEnvironment, Attribute, BUILTINS_MODULE, LiteralBoolean, LiteralBytes, LiteralClass,
     LiteralComplex, LiteralDict, LiteralFloat, LiteralFunction, LiteralGeneric,
     LiteralImportedModule, LiteralInteger, LiteralList, LiteralString, LiteralTuple,
-    LiteralTypeAlias, QualifiedName, TYPES_MODULE, TYPING_MODULE, Type, TypeInstance, TypeLiteral,
-    TypeUnion,
+    LiteralTypeAlias, QualifiedName, RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type,
+    TypeInstance, TypeLiteral, TypeUnion,
 };
 use crate::genkill::visibility::visibility_from_module_name;
 use apy;
@@ -130,6 +130,7 @@ pub fn convert_literal_function(
     }
 
     signature.parameters = apy::v1::Parameters::try_from(parameters).ok()?;
+    signature.raises = convert_exceptions(context, &abstract_environment.raised_exceptions.data)?;
 
     let function = apy::v1::Function::new(apy::OneOrMany::one(signature));
 
@@ -157,7 +158,11 @@ pub fn convert_literal_class(
 
     Some(
         apy::v1::Class::new()
-            .with_attributes(convert_abstract_environment(context, abstract_environment)?),
+            .with_attributes(convert_abstract_environment(context, abstract_environment)?)
+            .with_raises(convert_exceptions(
+                context,
+                &abstract_environment.raised_exceptions.data,
+            )?),
     )
 }
 
@@ -358,6 +363,19 @@ pub fn convert_type(
     }))
 }
 
+pub fn convert_exceptions(
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+    raises: &RaisedExceptions,
+) -> Option<Vec<apy::v1::Exception>> {
+    raises
+        .exceptions
+        .iter()
+        .map(|exception| {
+            convert_type(context, exception.exception_type.as_ref()).map(apy::v1::Exception::new)
+        })
+        .collect()
+}
+
 pub fn convert_attribute(
     context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     attribute: &Attribute,
@@ -467,6 +485,10 @@ pub fn convert_module(
             .ok()?,
             apy::v1::ModuleAttributes::new(),
         )
+        .with_raises(convert_exceptions(
+            context,
+            &abstract_environment.raised_exceptions.data,
+        )?)
         .with_visibility(visibility_from_module_name(&module).into()),
     )
 }

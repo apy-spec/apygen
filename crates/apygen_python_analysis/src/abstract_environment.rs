@@ -202,9 +202,9 @@ pub enum ExceptionOrigin {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Exception {
-    exception_type: Arc<Type>,
+    pub exception_type: Arc<Type>,
 
-    origin: ExceptionOrigin,
+    pub origin: ExceptionOrigin,
 }
 
 impl Exception {
