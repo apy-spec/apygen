@@ -1,8 +1,8 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, ClassType, Deprecation, Diagnostic, FunctionType,
+    AbstractEnvironment, Attribute, ClassType, Deprecation, Diagnostic, Exception, FunctionType,
     ImportedAttribute, ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule,
-    LocalAttribute, Parameter, ParameterKind, Sourced, Type, TypeInstance, TypeLiteral,
-    get_attribute,
+    LocalAttribute, Parameter, ParameterKind, RaisedExceptions, Sourced, Type, TypeInstance,
+    TypeLiteral, get_attribute,
 };
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{EdgeData, nodes};
@@ -95,6 +95,39 @@ pub fn gen_return(
     target_abstract_environments.insert(EdgeData::Unconditional, target_abstract_environment);
 
     Ok(target_abstract_environments)
+}
+
+pub fn gen_raise(
+    context: &mut WorklistContext,
+    location: Location<QualifiedName>,
+    stmt_raise: &nodes::StmtRaise,
+) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
+    let mut target_abstract_environment = context.clone_abstract_environment(&location);
+
+    let gen_result = if let Some(value) = &stmt_raise.exc {
+        gen_expr(context, &location, value)
+    } else {
+        GenExprResult::new(Type::Any) // TODO: use the previously raised exception
+    };
+
+    if !gen_result.exceptions.exceptions.is_empty() {
+        target_abstract_environment
+            .raised_exceptions
+            .data
+            .exceptions
+            .extend(gen_result.exceptions.exceptions);
+    }
+
+    target_abstract_environment
+        .raised_exceptions
+        .data
+        .exceptions
+        .insert(Exception::from_type(gen_result.value));
+
+    Ok(HashMap::from_iter([(
+        EdgeData::UnhandledException,
+        target_abstract_environment,
+    )]))
 }
 
 pub fn gen_ann_assign(
@@ -509,6 +542,7 @@ pub fn gen_statement<'a>(
     match statement {
         Stmt::AnnAssign(stmt_ann_assign) => gen_ann_assign(context, location, &stmt_ann_assign),
         Stmt::Return(stmt_return) => gen_return(context, location, &stmt_return),
+        Stmt::Raise(stmt_raise) => gen_raise(context, location, &stmt_raise),
         Stmt::Assign(stmt_assign) => gen_assign(context, location, &stmt_assign),
         Stmt::Import(stmt_import) => gen_import(context, location, &stmt_import),
         Stmt::ImportFrom(stmt_import_from) => gen_import_from(context, location, &stmt_import_from),
