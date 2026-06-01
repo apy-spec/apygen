@@ -270,12 +270,24 @@ impl StructuralDepth for TypeAliasType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Base {
+    pub origin: Location<QualifiedName>,
+    pub name: Identifier,
+}
+
+impl StructuralDepth for Base {
+    fn depth(&self) -> usize {
+        0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ClassType {
     pub location: Location<QualifiedName>,
 
     pub generics: imbl::OrdMap<String, GenericType>,
 
-    pub bases: imbl::Vector<Arc<Type>>,
+    pub bases: imbl::Vector<Base>,
 
     pub keyword_arguments: imbl::OrdMap<String, Arc<Type>>,
 
@@ -801,9 +813,21 @@ pub struct LiteralFunction {
     pub value: Arc<FunctionType>,
 }
 
+impl StructuralDepth for LiteralFunction {
+    fn depth(&self) -> usize {
+        self.value.depth()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralClass {
     pub value: Arc<ClassType>,
+}
+
+impl StructuralDepth for LiteralClass {
+    fn depth(&self) -> usize {
+        self.value.depth()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -811,14 +835,32 @@ pub struct LiteralTypeAlias {
     pub value: Arc<TypeAliasType>,
 }
 
+impl StructuralDepth for LiteralTypeAlias {
+    fn depth(&self) -> usize {
+        self.value.depth()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralGeneric {
     pub value: Arc<GenericType>,
 }
 
+impl StructuralDepth for LiteralGeneric {
+    fn depth(&self) -> usize {
+        self.value.depth()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralImportedModule {
     pub value: Arc<ImportedModuleType>,
+}
+
+impl StructuralDepth for LiteralImportedModule {
+    fn depth(&self) -> usize {
+        0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -854,15 +896,15 @@ impl StructuralDepth for TypeLiteral {
             | TypeLiteral::String(_)
             | TypeLiteral::Bytes(_)
             | TypeLiteral::None
-            | TypeLiteral::Ellipsis
-            | TypeLiteral::ImportedModule(_) => 0,
+            | TypeLiteral::Ellipsis => 0,
             TypeLiteral::List(literal_list) => literal_list.depth(),
             TypeLiteral::Tuple(literal_tuple) => literal_tuple.depth(),
             TypeLiteral::Dict(literal_dict) => literal_dict.depth(),
-            TypeLiteral::Function(literal_function) => literal_function.value.depth(),
-            TypeLiteral::Class(literal_class) => literal_class.value.depth(),
-            TypeLiteral::TypeAlias(literal_type_alias) => literal_type_alias.value.depth(),
-            TypeLiteral::Generic(literal_generic) => literal_generic.value.depth(),
+            TypeLiteral::Function(literal_function) => literal_function.depth(),
+            TypeLiteral::Class(literal_class) => literal_class.depth(),
+            TypeLiteral::TypeAlias(literal_type_alias) => literal_type_alias.depth(),
+            TypeLiteral::Generic(literal_generic) => literal_generic.depth(),
+            TypeLiteral::ImportedModule(literal_imported_module) => literal_imported_module.depth(),
         }
     }
 }
