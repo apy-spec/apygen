@@ -19,7 +19,8 @@ use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::Location;
 use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::calls::Arguments;
-use crate::genkill::expressions::type_instance::call_method;
+use crate::genkill::expressions::literal_class::resolve_class_attribute;
+use crate::genkill::expressions::type_instance::{call_method, get_instance_attribute};
 use crate::genkill::literals::{
     gen_expr_boolean_literal, gen_expr_bytes_literal, gen_expr_ellipsis_literal,
     gen_expr_none_literal, gen_expr_number_literal, gen_expr_string_literal,
@@ -27,7 +28,7 @@ use crate::genkill::literals::{
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::nodes::{
-    Expr, ExprBinOp, ExprBoolOp, ExprCall, ExprName, ExprUnaryOp, Operator,
+    Expr, ExprAttribute, ExprBinOp, ExprBoolOp, ExprCall, ExprName, ExprUnaryOp, Operator,
 };
 use apygen_analysis::lattice::{Lattice, NamespacesLattice};
 use apygen_analysis::namespace::Namespaces;
@@ -499,6 +500,46 @@ pub fn gen_call(
     }
 }
 
+pub fn gen_attribute(
+    context: &mut WorklistContext,
+    environment_location: &Location<QualifiedName>,
+    expr_attribute: &ExprAttribute,
+) -> GenExprResult<Type> {
+    let target_type = gen_expr(context, environment_location, &expr_attribute.value);
+    println!(
+        "{} {} {} {:?}",
+        environment_location, target_type.value, expr_attribute.attr.id, target_type.value
+    );
+
+    let attribute_option = match target_type.value {
+        Type::Instance(type_instance) => get_instance_attribute(
+            &context.namespaces,
+            &type_instance,
+            &Identifier::parse(&expr_attribute.attr.id),
+        )
+        .ok(),
+        Type::Literal(type_literal) => match type_literal.as_ref() {
+            TypeLiteral::Class(literal_class) => resolve_class_attribute(
+                &context.namespaces,
+                literal_class,
+                &Identifier::parse(&expr_attribute.attr.id),
+            ),
+            _ => None,
+        },
+        _ => None,
+    };
+
+    let Some(attribute) = attribute_option else {
+        return GenExprResult::unknown();
+    };
+
+    let Ok(local_attribute) = attribute.resolve(&context.namespaces) else {
+        return GenExprResult::unknown();
+    };
+
+    GenExprResult::new(local_attribute.attribute_type.data.as_ref().clone())
+}
+
 pub fn gen_expr(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
@@ -539,7 +580,9 @@ pub fn gen_expr(
         }
         Expr::NoneLiteral(_) => gen_expr_none_literal(),
         Expr::EllipsisLiteral(_) => gen_expr_ellipsis_literal(),
-        Expr::Attribute(_) => return GenExprResult::unknown(),
+        Expr::Attribute(expr_attribute) => {
+            return gen_attribute(context, environment_location, expr_attribute);
+        }
         Expr::Subscript(_) => return GenExprResult::unknown(),
         Expr::Starred(_) => return GenExprResult::unknown(),
         Expr::Name(expr_name) => return gen_name(context, environment_location, expr_name),

@@ -5,12 +5,6 @@ modules:
     description: ""
     raises:
       - exception_type:
-          id: Any
-          module: typing
-          history_index: 0
-          arguments: []
-        description: ""
-      - exception_type:
           id: TypeError
           module: builtins
           history_index: 0
@@ -151,8 +145,8 @@ modules:
       point_x:
         kind: VARIABLE
         type:
-          id: Any
-          module: typing
+          id: int
+          module: builtins
           history_index: 0
           arguments: []
         description: ""
@@ -164,8 +158,8 @@ modules:
       point_y:
         kind: VARIABLE
         type:
-          id: Any
-          module: typing
+          id: int
+          module: builtins
           history_index: 0
           arguments: []
         description: ""
