@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Base, Exception, LiteralClass, LiteralFunction, Type, TypeInstance,
-    TypeLiteral, get_attribute, resolve_local_attribute,
+    AbstractEnvironment, Attribute, Base, Exception, LiteralClass, LiteralFunction, Type,
+    TypeInstance, TypeLiteral, get_attribute, resolve_local_attribute,
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::{
@@ -12,6 +12,7 @@ use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::lattice::Lattice;
 use apygen_analysis::namespace::{Location, Namespaces};
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 pub fn get_methods<'a>(
     namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
@@ -179,6 +180,39 @@ pub fn method_resolution_order<'a>(
     Some(mro)
 }
 
+pub fn resolve_class_attribute<'a>(
+    namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
+    literal_class: &LiteralClass,
+    name: &Identifier,
+) -> Option<&'a Attribute> {
+    for class in method_resolution_order(namespaces, literal_class)? {
+        let Some(environment) = namespaces
+            .get_abstract_environment(&Location::at_exit(class.value.location.as_sub_location()))
+        else {
+            continue;
+        };
+
+        let Some(attribute) = environment.attributes.get(name) else {
+            continue;
+        };
+
+        return Some(attribute);
+    }
+
+    None
+}
+
+pub fn attribute_as_literal_functions(
+    namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+    attribute: &Attribute,
+) -> Vec<LiteralFunction> {
+    let Ok(local_attribute) = attribute.resolve(namespaces) else {
+        return Vec::new();
+    };
+
+    literal_function::as_literal_functions(local_attribute.attribute_type.data.as_ref())
+}
+
 pub fn call(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
@@ -201,21 +235,17 @@ pub fn call(
     }
 
     let mut result = GenExprResult::new(Type::Instance(type_instance));
-    for (method_name, found) in [("__new__", &mut found_new), ("__init__", &mut found_init)] {
-        let Some(environment) = context
-            .namespaces
-            .get_abstract_environment(&Location::at_exit(
-                literal_class.value.location.as_sub_location(),
-            ))
+    for (method_name, found) in [
+        (Identifier::parse("__new__"), &mut found_new),
+        (Identifier::parse("__init__"), &mut found_init),
+    ] {
+        let Some(attribute) =
+            resolve_class_attribute(&context.namespaces, literal_class, &method_name)
         else {
             return GenExprResult::unknown();
         };
 
-        let methods = get_methods(
-            &context.namespaces,
-            environment,
-            &Identifier::parse(method_name),
-        );
+        let methods = attribute_as_literal_functions(&context.namespaces, &attribute);
 
         if methods.is_empty() {
             *found = false;
