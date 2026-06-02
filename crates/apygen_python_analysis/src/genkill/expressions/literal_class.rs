@@ -242,7 +242,7 @@ pub fn call(
         let Some(attribute) =
             resolve_class_attribute(&context.namespaces, literal_class, &method_name)
         else {
-            return GenExprResult::unknown();
+            continue;
         };
 
         let methods = attribute_as_literal_functions(&context.namespaces, &attribute);
