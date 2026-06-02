@@ -172,6 +172,8 @@ impl StructuralDepth for Parameter {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct GenericType {
+    pub name: Arc<Identifier>,
+
     pub location: Location<QualifiedName>,
 
     pub kind: GenericKind,
@@ -230,6 +232,8 @@ impl Exception {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FunctionType {
+    pub name: Arc<Identifier>,
+
     pub location: Location<QualifiedName>,
 
     pub generics: imbl::OrdMap<String, GenericType>,
@@ -254,6 +258,8 @@ pub enum TypeAliasKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypeAliasType {
+    pub name: Arc<Identifier>,
+
     pub location: Location<QualifiedName>,
 
     pub alias: Arc<Type>,
@@ -270,24 +276,14 @@ impl StructuralDepth for TypeAliasType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Base {
-    pub origin: Location<QualifiedName>,
-    pub name: Identifier,
-}
-
-impl StructuralDepth for Base {
-    fn depth(&self) -> usize {
-        0
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ClassType {
+    pub name: Arc<Identifier>,
+
     pub location: Location<QualifiedName>,
 
     pub generics: imbl::OrdMap<String, GenericType>,
 
-    pub bases: imbl::Vector<Base>,
+    pub bases: imbl::Vector<LiteralClass>,
 
     pub keyword_arguments: imbl::OrdMap<String, Arc<Type>>,
 
@@ -304,6 +300,8 @@ impl StructuralDepth for ClassType {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ImportedModuleType {
+    pub name: Arc<Identifier>,
+
     pub location: Location<QualifiedName>,
 
     pub module: Arc<QualifiedName>,
@@ -1637,12 +1635,11 @@ pub fn get_attribute<'a>(
 pub fn resolve_local_attribute<'a>(
     namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
     location: Location<QualifiedName>,
-    name: &Identifier,
-) -> Result<(Location<QualifiedName>, &'a LocalAttribute), GetAttributeError> {
+    name: &'a Identifier,
+) -> Result<(Location<QualifiedName>, &'a Identifier, &'a LocalAttribute), GetAttributeError> {
     let err = match get_attribute(namespaces, &location, name) {
         Ok(attribute) => {
-            let local_attribute = attribute.resolve(namespaces)?;
-            return Ok((location, local_attribute));
+            return Ok((location, name, attribute.resolve(namespaces)?));
         }
         Err(error) => error,
     };

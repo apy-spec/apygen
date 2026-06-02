@@ -1,8 +1,8 @@
 use crate::abstract_environment::{
     AbstractEnvironment, Attribute, ClassType, Deprecation, Diagnostic, Exception, FunctionType,
     ImportedAttribute, ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule,
-    LocalAttribute, Parameter, ParameterKind, RaisedExceptions, Sourced, Type, TypeInstance,
-    TypeLiteral, get_attribute,
+    LocalAttribute, Parameter, ParameterKind, Sourced, Type, TypeInstance, TypeLiteral,
+    get_attribute,
 };
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{EdgeData, nodes};
@@ -16,6 +16,7 @@ use crate::worklist::WorklistContext;
 use apy::OneOrMany;
 use apy::v1::{Identifier, ParseIdentifierError, ParseQualifiedNameError, QualifiedName};
 use apygen_analysis::lattice::NamespacesLattice;
+use imbl::Vector;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -221,12 +222,14 @@ pub fn gen_import(
             }));
         }
 
+        let identifier = Arc::new(name.identifiers.last().clone());
         target_abstract_environment.attributes.insert(
-            Arc::new(name.identifiers.last().clone()),
+            identifier.clone(),
             Arc::new(Attribute::Local(
                 LocalAttribute::new(Sourced::inferred(Arc::new(Type::new_literal(
                     TypeLiteral::ImportedModule(LiteralImportedModule {
                         value: Arc::new(ImportedModuleType {
+                            name: identifier,
                             location: location.clone(),
                             module: Arc::new(QualifiedName {
                                 identifiers: OneOrMany::one(root_package),
@@ -282,12 +285,12 @@ pub fn gen_import_from(
         };
 
         let visibility = gen_visibility(&context.cfgs, &location.namespace_location, &name);
-        let identifier = Identifier::try_parse(alias.name.id.as_ref())?;
+        let original_name = Identifier::try_parse(alias.name.id.as_ref())?;
 
         match get_attribute(
             &context.namespaces,
             &Location::at_exit(namespace_location.clone()),
-            &identifier,
+            &original_name,
         ) {
             Ok(_) if namespace_location != location.namespace_location => {
                 target_abstract_environment.attributes.insert(
@@ -295,7 +298,7 @@ pub fn gen_import_from(
                     Arc::new(Attribute::Imported(ImportedAttribute {
                         module: namespace_location.module.clone(),
                         visibility: Sourced::inferred(visibility),
-                        name: identifier,
+                        name: original_name,
                         deprecation: Sourced::inferred(Deprecation::NotDeprecated),
                     })),
                 );
@@ -303,17 +306,19 @@ pub fn gen_import_from(
             _ => {
                 let submodule = {
                     let mut identifiers = namespace_location.module.identifiers.clone();
-                    identifiers.push(identifier);
+                    identifiers.push(original_name);
                     Arc::new(QualifiedName { identifiers })
                 };
 
                 if context.cfgs.contains_key(&submodule) {
+                    let identifier = Arc::new(name);
                     target_abstract_environment.attributes.insert(
-                        Arc::new(name),
+                        identifier.clone(),
                         Arc::new(Attribute::Local(
                             LocalAttribute::new(Sourced::inferred(Arc::new(Type::new_literal(
                                 TypeLiteral::ImportedModule(LiteralImportedModule {
                                     value: Arc::new(ImportedModuleType {
+                                        name: identifier,
                                         location: location.clone(),
                                         module: submodule.clone(),
                                         submodules: imbl::OrdSet::new(),
@@ -468,12 +473,14 @@ pub fn gen_function_def(
     }
 
     let visibility = gen_visibility(context.cfgs, &location.namespace_location, &name);
+    let identifier = Arc::new(name);
     target_abstract_environment.attributes.insert(
-        Arc::new(name),
+        identifier.clone(),
         Arc::new(Attribute::Local(
             LocalAttribute::new(Sourced::inferred(Arc::new(Type::new_literal(
                 TypeLiteral::Function(LiteralFunction {
                     value: Arc::new(FunctionType {
+                        name: identifier,
                         location: location.clone(),
                         generics: imbl::OrdMap::new(),
                         is_async: stmt_function_def.is_async,
@@ -503,17 +510,39 @@ pub fn gen_class_def(
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
-    let name = Identifier::try_parse(stmt_class_def.name.id.as_ref())?;
-    let visibility = gen_visibility(context.cfgs, &location.namespace_location, &name);
+    let mut bases: Vector<LiteralClass> = Vector::new();
+    if let Some(arguments) = &stmt_class_def.arguments {
+        for argument in &arguments.args {
+            let base_type = gen_expr(context, &location, &argument);
+
+            let Type::Literal(type_literal) = base_type.value else {
+                continue;
+            };
+
+            let TypeLiteral::Class(literal_class) = type_literal.as_ref() else {
+                continue;
+            };
+
+            bases.push_back(literal_class.clone());
+        }
+    }
+
+    let identifier = Arc::new(Identifier::try_parse(stmt_class_def.name.id.as_ref())?);
+    let visibility = gen_visibility(
+        context.cfgs,
+        &location.namespace_location,
+        identifier.as_ref(),
+    );
     target_abstract_environment.attributes.insert(
-        Arc::new(name),
+        identifier.clone(),
         Arc::new(Attribute::Local(
             LocalAttribute::new(Sourced::inferred(Arc::new(Type::new_literal(
                 TypeLiteral::Class(LiteralClass {
                     value: Arc::new(ClassType {
+                        name: identifier,
                         location: location.clone(),
                         generics: imbl::OrdMap::new(),
-                        bases: imbl::Vector::new(),
+                        bases,
                         is_abstract: false,
                         keyword_arguments: imbl::OrdMap::new(),
                     }),

@@ -62,6 +62,7 @@ pub fn analyse_directory(
 #[case::simple_function_call("simple_function_call")]
 #[case::simple_function_argument_inference("simple_function_argument_inference")]
 #[case::simple_class_init("simple_class_init")]
+#[case::simple_class_inheritance("simple_class_inheritance")]
 #[case::int_conversion("int_conversion")]
 #[case::literal_int("literal_int")]
 #[case::literal_boolean("literal_boolean")]

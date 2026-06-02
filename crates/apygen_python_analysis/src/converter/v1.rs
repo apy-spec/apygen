@@ -158,6 +158,28 @@ pub fn convert_literal_class(
 
     Some(
         apy::v1::Class::new()
+            .with_bases(
+                literal_class
+                    .value
+                    .bases
+                    .iter()
+                    .map(|base| {
+                        apy::v1::Type::Reference(
+                            apy::v1::TypeReference::new(QualifiedName::from(
+                                base.value.name.as_ref().clone(),
+                            ))
+                            .with_module(Some(
+                                base.value
+                                    .location
+                                    .namespace_location
+                                    .module
+                                    .as_ref()
+                                    .clone(),
+                            )),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
             .with_attributes(convert_abstract_environment(context, abstract_environment)?)
             .with_raises(convert_exceptions(
                 context,

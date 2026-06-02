@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, Base, Exception, LiteralClass, LiteralFunction, Type,
-    TypeInstance, TypeLiteral, get_attribute, resolve_local_attribute,
+    AbstractEnvironment, Attribute, Exception, LiteralClass, LiteralFunction, Type, TypeInstance,
+    TypeLiteral, resolve_local_attribute,
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::{
@@ -12,7 +12,6 @@ use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::lattice::Lattice;
 use apygen_analysis::namespace::{Location, Namespaces};
 use std::collections::VecDeque;
-use std::sync::Arc;
 
 pub fn get_methods<'a>(
     namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
@@ -90,28 +89,6 @@ pub fn call_literal(
     }
 }
 
-pub fn resolve_base<'a>(
-    namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
-    base: &Base,
-) -> Option<&'a LiteralClass> {
-    let attribute = get_attribute(namespaces, &base.origin, &base.name)
-        .ok()?
-        .resolve(namespaces)
-        .ok()?;
-
-    match attribute.attribute_type.data.as_ref() {
-        Type::Any => None, // TODO: use the typing.Any class
-        Type::Literal(type_literal) => {
-            if let TypeLiteral::Class(literal_class) = type_literal.as_ref() {
-                Some(literal_class)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
-}
-
 /// References:
 /// - https://docs.python.org/3/glossary.html#term-method-resolution-order
 /// - https://docs.python.org/3/howto/mro.html
@@ -119,12 +96,7 @@ pub fn method_resolution_order<'a>(
     namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
     literal_class: &'a LiteralClass,
 ) -> Option<VecDeque<&'a LiteralClass>> {
-    let mut class_bases = literal_class
-        .value
-        .bases
-        .iter()
-        .map(|base| resolve_base(namespaces, base))
-        .collect::<Option<VecDeque<_>>>()?;
+    let mut class_bases = VecDeque::from_iter(&literal_class.value.bases);
 
     let mut class_bases_mro = class_bases
         .iter()
@@ -222,7 +194,7 @@ pub fn call(
 ) -> GenExprResult<Type> {
     let mut found_init = true;
     let mut found_new = true;
-    let Ok((origin, _)) =
+    let Ok((origin, _, _)) =
         resolve_local_attribute(&context.namespaces, environment_location.clone(), name)
     else {
         return GenExprResult::unknown();
@@ -271,10 +243,10 @@ pub fn call(
 #[cfg(test)]
 mod tests {
     use crate::abstract_environment::{
-        AbstractEnvironment, Attribute, Base, ClassType, LiteralClass, LocalAttribute, Sourced,
-        Type, TypeLiteral,
+        AbstractEnvironment, Attribute, ClassType, LiteralClass, LocalAttribute, Sourced, Type,
+        TypeLiteral,
     };
-    use crate::genkill::expressions::literal_class::{method_resolution_order, resolve_base};
+    use crate::genkill::expressions::literal_class::method_resolution_order;
     use apy::v1::{Identifier, QualifiedName};
     use apygen_analysis::cfg::ProgramPoint;
     use apygen_analysis::namespace::{
@@ -286,6 +258,30 @@ mod tests {
 
     fn create_namespace_location() -> NamespaceLocation<QualifiedName> {
         NamespaceLocation::new(Arc::new(QualifiedName::parse("test_module")))
+    }
+
+    fn get_class<'a>(
+        abstract_environment: &'a AbstractEnvironment,
+        name: &str,
+    ) -> &'a LiteralClass {
+        let attribute = abstract_environment
+            .attributes
+            .get(&Identifier::parse(name))
+            .expect("Attribute not found");
+
+        let Attribute::Local(local_attribute) = attribute.as_ref() else {
+            panic!("Attribute should be local");
+        };
+
+        let Type::Literal(type_literal) = local_attribute.attribute_type.data.as_ref() else {
+            panic!("Attribute type should be literal");
+        };
+
+        let TypeLiteral::Class(literal_class) = type_literal.as_ref() else {
+            panic!("Attribute type literal should be a class");
+        };
+
+        literal_class
     }
 
     fn create_namespaces(
@@ -309,12 +305,13 @@ mod tests {
                 .unwrap_or_default();
 
             let current_point = ProgramPoint::Point(current_point_id);
-
+            let identifier = Arc::new(Identifier::parse(name));
             current_environment.attributes.insert(
-                Arc::new(Identifier::parse(name)),
+                identifier.clone(),
                 Arc::new(Attribute::Local(LocalAttribute::new(Sourced::inferred(
                     Arc::new(Type::Literal(Arc::new(TypeLiteral::Class(LiteralClass {
                         value: Arc::new(ClassType {
+                            name: identifier,
                             location: Location {
                                 namespace_location: namespace_location.clone(),
                                 program_point: current_point,
@@ -322,13 +319,7 @@ mod tests {
                             generics: OrdMap::new(),
                             bases: bases
                                 .iter()
-                                .map(|base| Base {
-                                    name: Identifier::parse(base),
-                                    origin: Location {
-                                        namespace_location: namespace_location.clone(),
-                                        program_point: current_point,
-                                    },
-                                })
+                                .map(|base| get_class(&current_environment, base).clone())
                                 .collect(),
                             keyword_arguments: OrdMap::new(),
                             is_abstract: false,
@@ -358,41 +349,15 @@ mod tests {
         }
     }
 
-    fn create_base(
-        namespace_location: NamespaceLocation<QualifiedName>,
-        program_point: ProgramPoint,
-        name: &str,
-    ) -> Base {
-        Base {
-            origin: Location {
-                namespace_location,
-                program_point,
-            },
-            name: Identifier::parse(name),
-        }
-    }
-
     fn get_class_location<'a>(
         namespaces: &'a NamespaceLocations<QualifiedName, AbstractEnvironment>,
         namespace_location: NamespaceLocation<QualifiedName>,
         name: &'a str,
     ) -> Location<QualifiedName> {
-        let namespace = namespaces
+        let abstract_environment = namespaces
             .get_abstract_environment(&Location::at_exit(namespace_location))
             .expect("Namespace not found");
-        let attribute = namespace
-            .attributes
-            .get(&Identifier::parse(name))
-            .expect("Attribute not found")
-            .resolve(namespaces)
-            .expect("Failed to resolve attribute");
-        let Type::Literal(type_literal) = attribute.attribute_type.data.as_ref() else {
-            panic!("Attribute is not a literal");
-        };
-        let TypeLiteral::Class(literal_class) = type_literal.as_ref() else {
-            panic!("TypeLiteral is not a class");
-        };
-        literal_class.value.location.clone()
+        get_class(abstract_environment, name).value.location.clone()
     }
 
     fn create_target_base<'a>(
@@ -400,11 +365,16 @@ mod tests {
         namespace_location: NamespaceLocation<QualifiedName>,
         name: &'a str,
     ) -> &'a LiteralClass {
-        let base = create_base(namespace_location, ProgramPoint::Exit, name);
-        resolve_base(namespaces, &base).expect("Failed to resolve base")
+        let abstract_environment = namespaces
+            .get_abstract_environment(&Location::at_exit(namespace_location.clone()))
+            .expect("Namespace not found");
+
+        get_class(abstract_environment, name)
     }
 
     fn assert_eq_mro(
+        namespaces: &NamespaceLocations<QualifiedName, AbstractEnvironment>,
+        namespace_location: &NamespaceLocation<QualifiedName>,
         actual_mro: VecDeque<&LiteralClass>,
         expected_mro: Vec<(Location<QualifiedName>, Vec<&str>)>,
     ) {
@@ -416,10 +386,10 @@ mod tests {
                 actual_class.value.bases,
                 expected_bases
                     .iter()
-                    .map(|base| Base {
-                        origin: expected_location.clone(),
-                        name: Identifier::parse(base),
-                    })
+                    .map(
+                        |base| create_target_base(namespaces, namespace_location.clone(), base)
+                            .clone()
+                    )
                     .collect()
             );
         }
@@ -442,6 +412,8 @@ mod tests {
             method_resolution_order(&namespaces, class_c).expect("Failed to compute MRO");
 
         assert_eq_mro(
+            &namespaces,
+            &namespace_location,
             class_c_mro,
             vec![
                 (
@@ -465,6 +437,8 @@ mod tests {
             method_resolution_order(&namespaces, class_b).expect("Failed to compute MRO");
 
         assert_eq_mro(
+            &namespaces,
+            &namespace_location,
             class_b_mro,
             vec![
                 (
@@ -484,6 +458,8 @@ mod tests {
             method_resolution_order(&namespaces, class_a).expect("Failed to compute MRO");
 
         assert_eq_mro(
+            &namespaces,
+            &namespace_location,
             class_a_mro,
             vec![(
                 get_class_location(&namespaces, namespace_location.clone(), "A"),
@@ -520,6 +496,8 @@ mod tests {
             method_resolution_order(&namespaces, class_b).expect("Failed to compute MRO");
 
         assert_eq_mro(
+            &namespaces,
+            &namespace_location,
             class_b_mro,
             vec![
                 (
@@ -547,6 +525,8 @@ mod tests {
             method_resolution_order(&namespaces, class_a).expect("Failed to compute MRO");
 
         assert_eq_mro(
+            &namespaces,
+            &namespace_location,
             class_a_mro,
             vec![
                 (
@@ -592,6 +572,8 @@ mod tests {
             method_resolution_order(&namespaces, class_a).expect("Failed to compute MRO");
 
         assert_eq_mro(
+            &namespaces,
+            &namespace_location,
             class_a_mro,
             vec![
                 (

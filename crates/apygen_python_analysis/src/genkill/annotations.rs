@@ -33,11 +33,12 @@ fn get_type_attribute<'a>(
     location: &Location<QualifiedName>,
     identifiers: &'a [Identifier],
 ) -> Result<(Location<QualifiedName>, &'a Identifier, &'a LocalAttribute), GenAnnotationError> {
-    let (identifier, attribute_identifiers) = identifiers
+    let (attribute_identifier, attribute_identifiers) = identifiers
         .split_first()
         .expect("identifiers should not be empty");
 
-    let (origin, local_attribute) = resolve_local_attribute(context, location.clone(), identifier)?;
+    let (origin, identifier, local_attribute) =
+        resolve_local_attribute(context, location.clone(), attribute_identifier)?;
 
     if attribute_identifiers.is_empty() {
         return Ok((origin, identifier, local_attribute));

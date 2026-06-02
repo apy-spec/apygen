@@ -267,7 +267,7 @@ pub fn gen_name(
         environment_location.clone(),
         &identifier,
     ) {
-        Ok((_, local_attribute)) => {
+        Ok((_, _, local_attribute)) => {
             GenExprResult::new(local_attribute.attribute_type.data.as_ref().clone())
         }
         Err(_) => GenExprResult::unknown(),
