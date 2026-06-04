@@ -176,7 +176,7 @@ macro_rules! pytype_return_unreachable {
     };
 }
 
-macro_rules! pytype_take_or_return {
+macro_rules! pytype_consume_or_return {
     ($effects:expr, $eval:expr) => {{
         let ty = $effects.consume($eval);
 
@@ -365,11 +365,11 @@ pub fn gen_bool_op(
         .expect("A boolean operation must have at least one operand");
     let mut effects = PyEffects::new();
 
-    let mut ty = pytype_take_or_return!(effects, gen_expr(context, environment_location, expr));
+    let mut ty = pytype_consume_or_return!(effects, gen_expr(context, environment_location, expr));
 
     for next_expr in expr_iter {
         let next_ty =
-            pytype_take_or_return!(effects, gen_expr(context, environment_location, next_expr));
+            pytype_consume_or_return!(effects, gen_expr(context, environment_location, next_expr));
 
         if let Some(bool) = gen_bool_value(&ty) {
             if (expr_bool_op.op == nodes::BoolOp::And && !bool)
@@ -489,16 +489,16 @@ pub fn gen_bin_op(
 ) -> PyTypeEval {
     let mut effects = PyEffects::new();
 
-    let left_ty = pytype_take_or_return!(
+    let left_ty = pytype_consume_or_return!(
         effects,
         gen_expr(context, environment_location, &expr_bin_op.left)
     );
-    let right_ty = pytype_take_or_return!(
+    let right_ty = pytype_consume_or_return!(
         effects,
         gen_expr(context, environment_location, &expr_bin_op.right)
     );
 
-    let ty = pytype_take_or_return!(
+    let ty = pytype_consume_or_return!(
         effects,
         call_binary_op(
             context,
@@ -519,7 +519,7 @@ pub fn gen_unary_op(
 ) -> PyTypeEval {
     let mut effects = PyEffects::new();
 
-    let target_ty = pytype_take_or_return!(
+    let target_ty = pytype_consume_or_return!(
         effects,
         gen_expr(context, environment_location, &expr_unary_op.operand)
     );
@@ -530,7 +530,7 @@ pub fn gen_unary_op(
         Type::Union(_) => Type::Any,
         Type::Intersection(_) => Type::Any,
         Type::Literal(type_literal) => {
-            pytype_take_or_return!(
+            pytype_consume_or_return!(
                 effects,
                 type_literal::call_unary_op(type_literal.as_ref(), expr_unary_op.op)
             )
@@ -588,7 +588,7 @@ pub fn gen_call(
 ) -> PyTypeEval {
     let mut effects = PyEffects::new();
 
-    let func_ty = pytype_take_or_return!(
+    let func_ty = pytype_consume_or_return!(
         effects,
         gen_expr(context, environment_location, &expr_call.func)
     );
@@ -645,7 +645,7 @@ pub fn gen_attribute(
 ) -> PyTypeEval {
     let mut effects = PyEffects::new();
 
-    let target_ty = pytype_take_or_return!(
+    let target_ty = pytype_consume_or_return!(
         effects,
         gen_expr(context, environment_location, &expr_attribute.value)
     );
