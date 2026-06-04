@@ -506,10 +506,6 @@ pub fn gen_attribute(
     expr_attribute: &ExprAttribute,
 ) -> GenExprResult<Type> {
     let target_type = gen_expr(context, environment_location, &expr_attribute.value);
-    println!(
-        "{} {} {} {:?}",
-        environment_location, target_type.value, expr_attribute.attr.id, target_type.value
-    );
 
     let attribute_option = match target_type.value {
         Type::Instance(type_instance) => get_instance_attribute(
