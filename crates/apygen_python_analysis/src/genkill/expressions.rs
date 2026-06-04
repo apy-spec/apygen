@@ -209,7 +209,7 @@ pub fn gen_expr_collection(
     for expression in expressions {
         let ty = effects.consume(gen_expr(context, environment_location, expression));
 
-        if matches!(ty, Type::Never | Type::NoReturn) {
+        if is_type_unreachable!(ty) {
             return PyValueEval::new(None, effects);
         }
 
