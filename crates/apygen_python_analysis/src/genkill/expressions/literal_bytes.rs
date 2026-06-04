@@ -1,5 +1,5 @@
 use crate::abstract_environment::{Exception, LiteralBoolean, LiteralBytes, LiteralInteger, Type};
-use crate::genkill::expressions::GenExprResult;
+use crate::genkill::expressions::PyTypeEval;
 use apygen_analysis::cfg::nodes;
 use num_traits::ToPrimitive;
 
@@ -19,15 +19,12 @@ pub fn call_not(literal_bytes: &LiteralBytes) -> Type {
     })
 }
 
-pub fn call_unary_op(
-    literal_bytes: &LiteralBytes,
-    operator: nodes::UnaryOp,
-) -> GenExprResult<Type> {
+pub fn call_unary_op(literal_bytes: &LiteralBytes, operator: nodes::UnaryOp) -> PyTypeEval {
     match operator {
         nodes::UnaryOp::Invert | nodes::UnaryOp::UAdd | nodes::UnaryOp::USub => {
-            GenExprResult::raise(Exception::type_error())
+            PyTypeEval::raise(Exception::type_error())
         }
-        nodes::UnaryOp::Not => GenExprResult::new(call_not(literal_bytes)),
+        nodes::UnaryOp::Not => PyTypeEval::with_default_effects(call_not(literal_bytes)),
     }
 }
 
@@ -35,8 +32,8 @@ pub fn call_binary_op(
     left: &LiteralBytes,
     operator: nodes::Operator,
     right: &LiteralBytes,
-) -> GenExprResult<Type> {
-    GenExprResult::new(match operator {
+) -> PyTypeEval {
+    PyTypeEval::with_default_effects(match operator {
         nodes::Operator::Add => Type::new_bytes_literal(LiteralBytes {
             value: left
                 .value
@@ -45,18 +42,18 @@ pub fn call_binary_op(
                 .cloned()
                 .collect(),
         }),
-        _ => return GenExprResult::raise(Exception::type_error()),
+        _ => return PyTypeEval::raise(Exception::type_error()),
     })
 }
 
-pub fn repeat_bytes(bytes: &LiteralBytes, repetitions: &LiteralInteger) -> GenExprResult<Type> {
+pub fn repeat_bytes(bytes: &LiteralBytes, repetitions: &LiteralInteger) -> PyTypeEval {
     if let Some(repetitions) = repetitions.to_usize() {
-        GenExprResult::new(Type::new_bytes_literal(LiteralBytes {
+        PyTypeEval::with_default_effects(Type::new_bytes_literal(LiteralBytes {
             value: imbl::Vector::from_iter(
                 (0..repetitions).flat_map(|_| bytes.value.iter().cloned()),
             ),
         }))
     } else {
-        GenExprResult::unknown()
+        PyTypeEval::unknown()
     }
 }

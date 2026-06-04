@@ -19,8 +19,6 @@ use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::Location;
 use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::calls::Arguments;
-use crate::genkill::expressions::literal_class::resolve_class_attribute;
-use crate::genkill::expressions::type_instance::{call_method, get_instance_attribute};
 use crate::genkill::literals::{
     gen_expr_boolean_literal, gen_expr_bytes_literal, gen_expr_ellipsis_literal,
     gen_expr_none_literal, gen_expr_number_literal, gen_expr_string_literal,
@@ -35,27 +33,16 @@ use apygen_analysis::namespace::Namespaces;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-#[derive(Debug)]
-pub struct GenExprResult<T> {
-    pub value: T,
+#[derive(Debug, Default)]
+pub struct PyEffects {
     pub exceptions: RaisedExceptions,
     pub pureness: Pureness,
     pub completeness: Completeness,
 }
 
-impl<T> GenExprResult<T> {
-    pub fn new(value: T) -> Self {
-        GenExprResult {
-            value,
-            exceptions: RaisedExceptions::default(),
-            pureness: Pureness::default(),
-            completeness: Completeness::default(),
-        }
-    }
-
-    pub fn with_value(mut self, value: T) -> Self {
-        self.value = value;
-        self
+impl PyEffects {
+    pub fn new() -> Self {
+        Default::default()
     }
 
     pub fn with_exceptions(mut self, exceptions: RaisedExceptions) -> Self {
@@ -73,45 +60,130 @@ impl<T> GenExprResult<T> {
         self
     }
 
-    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> GenExprResult<U> {
-        GenExprResult {
-            value: f(self.value),
-            exceptions: self.exceptions,
-            pureness: self.pureness,
-            completeness: self.completeness,
+    pub fn consume<T>(&mut self, eval: PyValueEval<T>) -> T {
+        self.exceptions = self.exceptions.join(&eval.effects.exceptions);
+        self.pureness = self.pureness.join(&eval.effects.pureness);
+        self.completeness = self.completeness.join(&eval.effects.completeness);
+        eval.value
+    }
+}
+
+impl Lattice for PyEffects {
+    fn includes(&self, other: &Self) -> bool {
+        self.exceptions.includes(&other.exceptions)
+            && self.pureness.includes(&other.pureness)
+            && self.completeness.includes(&other.completeness)
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        PyEffects {
+            exceptions: self.exceptions.join(&other.exceptions),
+            pureness: self.pureness.join(&other.pureness),
+            completeness: self.completeness.join(&other.completeness),
         }
     }
 }
 
-impl GenExprResult<Type> {
+#[derive(Debug)]
+pub struct PyValueEval<T> {
+    pub value: T,
+    pub effects: PyEffects,
+}
+
+impl<T> PyValueEval<T> {
+    pub fn new(value: T, effects: PyEffects) -> Self {
+        PyValueEval { value, effects }
+    }
+
+    pub fn with_default_effects(value: T) -> Self {
+        PyValueEval::new(value, PyEffects::default())
+    }
+
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> PyValueEval<U> {
+        PyValueEval {
+            value: f(self.value),
+            effects: self.effects,
+        }
+    }
+}
+
+impl<L: NamespacesLattice<QualifiedName, AbstractEnvironment>>
+    NamespacesLattice<QualifiedName, AbstractEnvironment> for PyValueEval<L>
+{
+    type Error = L::Error;
+
+    fn includes(
+        &self,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+        other: &Self,
+    ) -> Result<bool, Self::Error> {
+        Ok(self.value.includes(namespaces, &other.value)? && self.effects.includes(&other.effects))
+    }
+
+    fn join(
+        &self,
+        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+        other: &Self,
+    ) -> Result<Self, Self::Error> {
+        Ok(PyValueEval {
+            value: self.value.join(namespaces, &other.value)?,
+            effects: self.effects.join(&other.effects),
+        })
+    }
+}
+
+pub type PyTypeEval = PyValueEval<Type>;
+
+impl PyTypeEval {
     pub fn never() -> Self {
-        GenExprResult::new(Type::Never)
+        PyTypeEval::new(Type::Never, PyEffects::default())
     }
 
     pub fn raise(exception: Exception) -> Self {
-        GenExprResult::new(Type::NoReturn)
-            .with_exceptions(RaisedExceptions::raise(exception))
-            .with_pureness(Pureness::Impure)
-            .with_completeness(Completeness::Partial)
+        PyTypeEval::new(
+            Type::NoReturn,
+            PyEffects {
+                exceptions: RaisedExceptions::raise(exception),
+                pureness: Pureness::Impure,
+                completeness: Completeness::Partial,
+            },
+        )
     }
 
     pub fn unknown() -> Self {
-        GenExprResult::new(Type::Any)
-            .with_exceptions(RaisedExceptions::raise(Exception::any()))
-            .with_pureness(Pureness::Impure)
-            .with_completeness(Completeness::Partial)
+        PyTypeEval::new(
+            Type::Any,
+            PyEffects {
+                exceptions: RaisedExceptions::raise(Exception::any()),
+                pureness: Pureness::Impure,
+                completeness: Completeness::Partial,
+            },
+        )
     }
+}
 
-    pub fn union(
-        self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: GenExprResult<Type>,
-    ) -> GenExprResult<Type> {
-        GenExprResult::new(self.value.join(namespaces, &other.value).unwrap())
-            .with_exceptions(self.exceptions.join(&other.exceptions))
-            .with_pureness(self.pureness.join(&other.pureness))
-            .with_completeness(self.completeness.join(&other.completeness))
-    }
+macro_rules! is_type_unreachable {
+    ($ty:expr) => {
+        matches!($ty, Type::Never | Type::NoReturn)
+    };
+}
+
+macro_rules! pytype_return_unreachable {
+    ($effects:expr, $ty:expr) => {
+        if is_type_unreachable!($ty) {
+            return PyTypeEval::new($ty, $effects);
+        }
+    };
+}
+
+macro_rules! pytype_take_or_return {
+    ($effects:expr, $eval:expr) => {{
+        let ty = $effects.consume($eval);
+
+        pytype_return_unreachable!($effects, ty);
+
+        ty
+    }};
 }
 
 pub fn gen_bool_value(ty: &Type) -> Option<bool> {
@@ -130,41 +202,48 @@ pub fn gen_expr_collection(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     expressions: &Vec<nodes::Expr>,
-) -> GenExprResult<Vec<Type>> {
-    let mut result = GenExprResult::new(Vec::new());
+) -> PyValueEval<Option<Vec<Type>>> {
+    let mut types: Vec<Type> = Vec::new();
+    let mut effects = PyEffects::default();
 
     for expression in expressions {
-        let expression_result = gen_expr(context, environment_location, expression);
-        result.value.push(expression_result.value);
-        result.exceptions = result.exceptions.join(&expression_result.exceptions);
-        result.pureness = result.pureness.join(&expression_result.pureness);
-        result.completeness = result.completeness.join(&expression_result.completeness);
+        let ty = effects.consume(gen_expr(context, environment_location, expression));
+
+        if matches!(ty, Type::Never | Type::NoReturn) {
+            return PyValueEval::new(None, effects);
+        }
+
+        types.push(ty);
     }
 
-    result
+    PyValueEval::new(Some(types), effects)
 }
 
 pub fn gen_expr_list(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     expr_list: &nodes::ExprList,
-) -> GenExprResult<Type> {
+) -> PyTypeEval {
     // SOUNDNESS: A list can either be literal (if all its elements are literals)
     //            or non-literal (if any of its element is non-literal).
     //            Its creation can be non-pure, partial or raise exceptions
     //            if any of its elements is non-pure, partial or can raise exceptions respectively.
-    gen_expr_collection(context, environment_location, &expr_list.elts).map(|list_types_iterator| {
+    gen_expr_collection(context, environment_location, &expr_list.elts).map(|list_types_option| {
+        let Some(list_types) = list_types_option else {
+            return Type::NoReturn;
+        };
+
         let mut literal_values: imbl::Vector<Arc<TypeLiteral>> = imbl::Vector::new();
         let mut non_literal_types: Vec<Arc<Type>> = Vec::new();
 
-        for list_type in list_types_iterator {
+        for list_type in list_types {
             match list_type {
                 Type::Literal(literal_value) => literal_values.push_back(literal_value),
                 non_literal_type => non_literal_types.push(Arc::new(non_literal_type)),
             };
         }
 
-        let value = if non_literal_types.is_empty() {
+        if non_literal_types.is_empty() {
             Type::new_literal(TypeLiteral::List(LiteralList {
                 value: literal_values,
             }))
@@ -175,9 +254,7 @@ pub fn gen_expr_list(
                     .map(|literal_value| Arc::new(Type::Literal(literal_value)))
                     .chain(non_literal_types.into_iter()),
             ))))
-        };
-
-        value
+        }
     })
 }
 
@@ -185,23 +262,27 @@ pub fn gen_expr_set(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     expr_set: &nodes::ExprSet,
-) -> GenExprResult<Type> {
+) -> PyTypeEval {
     // SOUNDNESS: A set can either be literal (if all its elements are literals)
     //            or non-literal (if any of its element is non-literal).
     //            Its creation can be non-pure, partial or raise exceptions
     //            if any of its elements is non-pure, partial or can raise exceptions respectively.
-    gen_expr_collection(context, environment_location, &expr_set.elts).map(|set_types_iterator| {
+    gen_expr_collection(context, environment_location, &expr_set.elts).map(|set_types_option| {
+        let Some(set_types) = set_types_option else {
+            return Type::NoReturn;
+        };
+
         let mut literal_values: imbl::Vector<Arc<TypeLiteral>> = imbl::Vector::new();
         let mut non_literal_types: Vec<Arc<Type>> = Vec::new();
 
-        for list_type in set_types_iterator {
+        for list_type in set_types {
             match list_type {
                 Type::Literal(literal_value) => literal_values.push_back(literal_value),
                 non_literal_type => non_literal_types.push(Arc::new(non_literal_type)),
             };
         }
 
-        let value = if non_literal_types.is_empty() {
+        if non_literal_types.is_empty() {
             Type::new_literal(TypeLiteral::List(LiteralList {
                 value: literal_values,
             }))
@@ -212,9 +293,7 @@ pub fn gen_expr_set(
                     .map(|literal_value| Arc::new(Type::Literal(literal_value)))
                     .chain(non_literal_types.into_iter()),
             ))))
-        };
-
-        value
+        }
     })
 }
 
@@ -222,44 +301,44 @@ pub fn gen_expr_tuple(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     expr_tuple: &nodes::ExprTuple,
-) -> GenExprResult<Type> {
+) -> PyTypeEval {
     // SOUNDNESS: A tuple can either be literal (if all its elements are literals)
     //            or non-literal (if any of its element is non-literal).
     //            Its creation can be non-pure, partial or raise exceptions
     //            if any of its elements is non-pure, partial or can raise exceptions respectively.
-    gen_expr_collection(context, environment_location, &expr_tuple.elts).map(
-        |tuple_types_iterator| {
-            let tuple_types: Vec<Type> = tuple_types_iterator.into_iter().collect();
+    gen_expr_collection(context, environment_location, &expr_tuple.elts).map(|tuple_types_option| {
+        let Some(tuple_types) = tuple_types_option else {
+            return Type::NoReturn;
+        };
 
-            let value = if tuple_types.iter().all(|ty| matches!(ty, Type::Literal(_))) {
-                let tuple_values = tuple_types
-                    .into_iter()
-                    .map(|ty| match ty {
-                        Type::Literal(literal_value) => literal_value,
-                        _ => unreachable!("The if condition ensures that all types are literals"),
-                    })
-                    .collect();
-                Type::new_literal(TypeLiteral::Tuple(LiteralTuple {
-                    value: tuple_values,
-                }))
-            } else {
-                Type::Instance(TypeInstance::builtins_tuple(
-                    tuple_types.into_iter().map(|ty| Arc::new(ty)),
-                ))
-            };
+        let tuple_types: Vec<Type> = tuple_types.into_iter().collect();
 
-            value
-        },
-    )
+        if tuple_types.iter().all(|ty| matches!(ty, Type::Literal(_))) {
+            let tuple_values = tuple_types
+                .into_iter()
+                .map(|ty| match ty {
+                    Type::Literal(literal_value) => literal_value,
+                    _ => unreachable!("The if condition ensures that all types are literals"),
+                })
+                .collect();
+            Type::new_literal(TypeLiteral::Tuple(LiteralTuple {
+                value: tuple_values,
+            }))
+        } else {
+            Type::Instance(TypeInstance::builtins_tuple(
+                tuple_types.into_iter().map(|ty| Arc::new(ty)),
+            ))
+        }
+    })
 }
 
 pub fn gen_name(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     expr_name: &ExprName,
-) -> GenExprResult<Type> {
+) -> PyTypeEval {
     let Ok(identifier) = Identifier::try_parse(expr_name.id.as_ref()) else {
-        return GenExprResult::unknown();
+        return PyTypeEval::unknown();
     };
 
     match resolve_local_attribute(
@@ -268,9 +347,9 @@ pub fn gen_name(
         &identifier,
     ) {
         Ok((_, _, local_attribute)) => {
-            GenExprResult::new(local_attribute.attribute_type.data.as_ref().clone())
+            PyTypeEval::with_default_effects(local_attribute.attribute_type.data.as_ref().clone())
         }
-        Err(_) => GenExprResult::unknown(),
+        Err(_) => PyTypeEval::unknown(),
     }
 }
 
@@ -278,36 +357,33 @@ pub fn gen_bool_op(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     expr_bool_op: &ExprBoolOp,
-) -> GenExprResult<Type> {
+) -> PyTypeEval {
     let mut expr_iter = expr_bool_op.values.iter();
 
     let expr = expr_iter
         .next()
         .expect("A boolean operation must have at least one operand");
-    let mut result = gen_expr(context, environment_location, expr);
+    let mut effects = PyEffects::new();
+
+    let mut ty = pytype_take_or_return!(effects, gen_expr(context, environment_location, expr));
 
     for next_expr in expr_iter {
-        let next_result = gen_expr(context, environment_location, next_expr);
+        let next_ty =
+            pytype_take_or_return!(effects, gen_expr(context, environment_location, next_expr));
 
-        if let Some(bool) = gen_bool_value(&result.value) {
+        if let Some(bool) = gen_bool_value(&ty) {
             if (expr_bool_op.op == nodes::BoolOp::And && !bool)
                 || (expr_bool_op.op == nodes::BoolOp::Or && bool)
             {
                 break;
             }
-            result = next_result;
+            ty = next_ty;
         } else {
-            result.value = result
-                .value
-                .join(&context.namespaces, &next_result.value)
-                .unwrap();
-            result.exceptions = result.exceptions.join(&next_result.exceptions);
-            result.pureness = result.pureness.join(&next_result.pureness);
-            result.completeness = result.completeness.join(&next_result.completeness);
+            ty = ty.join(&context.namespaces, &next_ty).unwrap(); // TODO: remove unwrap
         }
     }
 
-    result
+    PyTypeEval::new(ty, effects)
 }
 
 /// References:
@@ -355,36 +431,39 @@ pub fn call_operator(
     left: &Type,
     operator: nodes::Operator,
     right: &Type,
-) -> GenExprResult<Type> {
+) -> PyTypeEval {
     let operator_name = gen_operator_name(operator);
 
-    let mut result = GenExprResult::never();
+    let mut effects = PyEffects::new();
+    let mut ty = Type::Never;
 
     for left_instance in as_type_instances(left) {
-        let normal_call = call_method(
+        let normal_ty = effects.consume(type_instance::call_method(
             context,
             environment_location,
             &left_instance,
             &Identifier::parse(&format!("__{operator_name}__")),
             vec![Arc::new(right.clone())],
             BTreeMap::new(),
-        );
-        result = result.union(&context.namespaces, normal_call);
+        ));
+        ty = ty.join(&context.namespaces, &normal_ty).unwrap(); // TODO: remove unwrap
     }
 
+    pytype_return_unreachable!(effects, ty);
+
     for right_instance in as_type_instances(right) {
-        let reverse_call = call_method(
+        let reverse_ty = effects.consume(type_instance::call_method(
             context,
             environment_location,
             &right_instance,
             &Identifier::parse(&format!("__r{operator_name}__")),
             vec![Arc::new(left.clone())],
             BTreeMap::new(),
-        );
-        result = result.union(&context.namespaces, reverse_call);
+        ));
+        ty = ty.join(&context.namespaces, &reverse_ty).unwrap(); // TODO: remove unwrap
     }
 
-    result
+    PyTypeEval::new(ty, effects)
 }
 
 pub fn call_binary_op(
@@ -393,12 +472,12 @@ pub fn call_binary_op(
     left: &Type,
     operator: nodes::Operator,
     right: &Type,
-) -> GenExprResult<Type> {
+) -> PyTypeEval {
     match (left, right) {
         (Type::Literal(left), Type::Literal(right)) => {
             type_literal::call_binary_op(context, left.as_ref(), operator, right.as_ref())
         }
-        (Type::Any, _) | (_, Type::Any) => GenExprResult::unknown(),
+        (Type::Any, _) | (_, Type::Any) => PyTypeEval::unknown(),
         _ => call_operator(context, environment_location, left, operator, right),
     }
 }
@@ -407,96 +486,155 @@ pub fn gen_bin_op(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     expr_bin_op: &ExprBinOp,
-) -> GenExprResult<Type> {
-    let left_result = gen_expr(context, environment_location, &expr_bin_op.left);
-    let right_result = gen_expr(context, environment_location, &expr_bin_op.right);
+) -> PyTypeEval {
+    let mut effects = PyEffects::new();
 
-    call_binary_op(
-        context,
-        environment_location,
-        &left_result.value,
-        expr_bin_op.op,
-        &right_result.value,
-    )
+    let left_ty = pytype_take_or_return!(
+        effects,
+        gen_expr(context, environment_location, &expr_bin_op.left)
+    );
+    let right_ty = pytype_take_or_return!(
+        effects,
+        gen_expr(context, environment_location, &expr_bin_op.right)
+    );
+
+    let ty = pytype_take_or_return!(
+        effects,
+        call_binary_op(
+            context,
+            environment_location,
+            &left_ty,
+            expr_bin_op.op,
+            &right_ty,
+        )
+    );
+
+    PyTypeEval::new(ty, effects)
 }
 
 pub fn gen_unary_op(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     expr_unary_op: &ExprUnaryOp,
-) -> GenExprResult<Type> {
-    gen_expr(context, environment_location, &expr_unary_op.operand).map(|ty| match ty {
+) -> PyTypeEval {
+    let mut effects = PyEffects::new();
+
+    let target_ty = pytype_take_or_return!(
+        effects,
+        gen_expr(context, environment_location, &expr_unary_op.operand)
+    );
+
+    let ty = match target_ty {
         Type::Any => Type::Any,
-        Type::Never => Type::Never,
-        Type::NoReturn => Type::NoReturn,
         Type::Instance { .. } => Type::Any,
         Type::Union(_) => Type::Any,
         Type::Intersection(_) => Type::Any,
         Type::Literal(type_literal) => {
-            type_literal::call_unary_op(type_literal.as_ref(), expr_unary_op.op).value
+            pytype_take_or_return!(
+                effects,
+                type_literal::call_unary_op(type_literal.as_ref(), expr_unary_op.op)
+            )
         }
-    })
+        Type::Never | Type::NoReturn => unreachable!("target should not be unreachable"),
+    };
+
+    PyTypeEval::new(ty, effects)
 }
 
 pub fn gen_arguments(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     arguments: &nodes::Arguments,
-) -> Arguments {
-    let mut result = Arguments::new();
+) -> PyValueEval<Option<Arguments>> {
+    let mut effects = PyEffects::new();
+
+    let mut data = Arguments::new();
 
     for argument in &arguments.args {
-        result.positional.push(Arc::new(
-            gen_expr(context, environment_location, argument).value,
-        ));
+        let argument_ty = effects.consume(gen_expr(context, environment_location, argument));
+
+        if is_type_unreachable!(argument_ty) {
+            return PyValueEval::new(None, effects);
+        }
+
+        data.positional.push(Arc::new(argument_ty));
     }
     for keyword_argument in &arguments.keywords {
         if let Some(name) = &keyword_argument.arg {
-            result.keyword.insert(
+            let keyword_argument_ty = effects.consume(gen_expr(
+                context,
+                environment_location,
+                &keyword_argument.value,
+            ));
+
+            if is_type_unreachable!(keyword_argument_ty) {
+                return PyValueEval::new(None, effects);
+            }
+
+            data.keyword.insert(
                 Arc::new(Identifier::parse(&name.id)),
-                Arc::new(gen_expr(context, environment_location, &keyword_argument.value).value),
+                Arc::new(keyword_argument_ty),
             );
         }
     }
 
-    result
+    PyValueEval::new(Some(data), effects)
 }
 
 pub fn gen_call(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     expr_call: &ExprCall,
-) -> GenExprResult<Type> {
-    let func = gen_expr(context, environment_location, &expr_call.func);
+) -> PyTypeEval {
+    let mut effects = PyEffects::new();
 
-    let Type::Literal(literal) = func.value else {
-        return GenExprResult::unknown();
+    let func_ty = pytype_take_or_return!(
+        effects,
+        gen_expr(context, environment_location, &expr_call.func)
+    );
+
+    let Type::Literal(literal) = func_ty else {
+        return PyTypeEval::unknown();
     };
 
     match literal.as_ref() {
         TypeLiteral::Function(literal_function) => {
-            let arguments = gen_arguments(context, environment_location, &expr_call.arguments);
-
-            literal_function::call(context, environment_location, literal_function, &arguments)
+            match effects.consume(gen_arguments(
+                context,
+                environment_location,
+                &expr_call.arguments,
+            )) {
+                Some(arguments) => literal_function::call(
+                    context,
+                    environment_location,
+                    literal_function,
+                    &arguments,
+                ),
+                None => PyTypeEval::new(Type::NoReturn, effects),
+            }
         }
         TypeLiteral::Class(literal_class) => {
             match AssignmentTarget::try_from(expr_call.func.as_ref()) {
                 Ok(AssignmentTarget::Name(name)) => {
-                    let arguments =
-                        gen_arguments(context, environment_location, &expr_call.arguments);
-
-                    literal_class::call(
+                    match effects.consume(gen_arguments(
                         context,
                         environment_location,
-                        &name,
-                        literal_class,
-                        &arguments,
-                    )
+                        &expr_call.arguments,
+                    )) {
+                        Some(arguments) => literal_class::call(
+                            context,
+                            environment_location,
+                            &name,
+                            literal_class,
+                            &arguments,
+                        ),
+                        None => PyTypeEval::new(Type::NoReturn, effects),
+                    }
                 }
-                _ => GenExprResult::unknown(),
+                _ => PyTypeEval::unknown(),
             }
         }
-        _ => GenExprResult::unknown(),
+        _ => PyTypeEval::unknown(),
     }
 }
 
@@ -504,18 +642,23 @@ pub fn gen_attribute(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     expr_attribute: &ExprAttribute,
-) -> GenExprResult<Type> {
-    let target_type = gen_expr(context, environment_location, &expr_attribute.value);
+) -> PyTypeEval {
+    let mut effects = PyEffects::new();
 
-    let attribute_option = match target_type.value {
-        Type::Instance(type_instance) => get_instance_attribute(
+    let target_ty = pytype_take_or_return!(
+        effects,
+        gen_expr(context, environment_location, &expr_attribute.value)
+    );
+
+    let target_attribute_option = match target_ty {
+        Type::Instance(type_instance) => type_instance::get_instance_attribute(
             &context.namespaces,
             &type_instance,
             &Identifier::parse(&expr_attribute.attr.id),
         )
         .ok(),
         Type::Literal(type_literal) => match type_literal.as_ref() {
-            TypeLiteral::Class(literal_class) => resolve_class_attribute(
+            TypeLiteral::Class(literal_class) => literal_class::resolve_class_attribute(
                 &context.namespaces,
                 literal_class,
                 &Identifier::parse(&expr_attribute.attr.id),
@@ -525,49 +668,52 @@ pub fn gen_attribute(
         _ => None,
     };
 
-    let Some(attribute) = attribute_option else {
-        return GenExprResult::unknown();
+    let Some(target_attribute) = target_attribute_option else {
+        return PyTypeEval::unknown();
     };
 
-    let Ok(local_attribute) = attribute.resolve(&context.namespaces) else {
-        return GenExprResult::unknown();
+    let Ok(target_local_attribute) = target_attribute.resolve(&context.namespaces) else {
+        return PyTypeEval::unknown();
     };
 
-    GenExprResult::new(local_attribute.attribute_type.data.as_ref().clone())
+    PyTypeEval::new(
+        target_local_attribute.attribute_type.data.as_ref().clone(),
+        effects,
+    )
 }
 
 pub fn gen_expr(
     context: &mut WorklistContext,
     environment_location: &Location<QualifiedName>,
     expression: &nodes::Expr,
-) -> GenExprResult<Type> {
-    GenExprResult::new(match expression {
+) -> PyTypeEval {
+    PyTypeEval::with_default_effects(match expression {
         Expr::BoolOp(expr_bool_op) => {
             return gen_bool_op(context, environment_location, expr_bool_op);
         }
-        Expr::Named(_) => return GenExprResult::unknown(),
+        Expr::Named(_) => return PyTypeEval::unknown(),
         Expr::BinOp(expr_bin_op) => {
             return gen_bin_op(context, environment_location, expr_bin_op);
         }
         Expr::UnaryOp(expr_unary_op) => {
             return gen_unary_op(context, environment_location, expr_unary_op);
         }
-        Expr::Lambda(_) => return GenExprResult::unknown(),
-        Expr::If(_) => return GenExprResult::unknown(),
-        Expr::Dict(_) => return GenExprResult::unknown(),
+        Expr::Lambda(_) => return PyTypeEval::unknown(),
+        Expr::If(_) => return PyTypeEval::unknown(),
+        Expr::Dict(_) => return PyTypeEval::unknown(),
         Expr::Set(expr_set) => {
             return gen_expr_set(context, environment_location, expr_set);
         }
-        Expr::ListComp(_) => return GenExprResult::unknown(),
-        Expr::SetComp(_) => return GenExprResult::unknown(),
-        Expr::DictComp(_) => return GenExprResult::unknown(),
-        Expr::Generator(_) => return GenExprResult::unknown(),
-        Expr::Await(_) => return GenExprResult::unknown(),
-        Expr::Yield(_) => return GenExprResult::unknown(),
-        Expr::YieldFrom(_) => return GenExprResult::unknown(),
-        Expr::Compare(_) => return GenExprResult::unknown(),
+        Expr::ListComp(_) => return PyTypeEval::unknown(),
+        Expr::SetComp(_) => return PyTypeEval::unknown(),
+        Expr::DictComp(_) => return PyTypeEval::unknown(),
+        Expr::Generator(_) => return PyTypeEval::unknown(),
+        Expr::Await(_) => return PyTypeEval::unknown(),
+        Expr::Yield(_) => return PyTypeEval::unknown(),
+        Expr::YieldFrom(_) => return PyTypeEval::unknown(),
+        Expr::Compare(_) => return PyTypeEval::unknown(),
         Expr::Call(expr_call) => return gen_call(context, environment_location, expr_call),
-        Expr::FString(_) => return GenExprResult::unknown(),
+        Expr::FString(_) => return PyTypeEval::unknown(),
         Expr::StringLiteral(expr_string_literal) => gen_expr_string_literal(expr_string_literal),
         Expr::BytesLiteral(expr_bytes_literal) => gen_expr_bytes_literal(expr_bytes_literal),
         Expr::NumberLiteral(expr_number_literal) => gen_expr_number_literal(expr_number_literal),
@@ -579,8 +725,8 @@ pub fn gen_expr(
         Expr::Attribute(expr_attribute) => {
             return gen_attribute(context, environment_location, expr_attribute);
         }
-        Expr::Subscript(_) => return GenExprResult::unknown(),
-        Expr::Starred(_) => return GenExprResult::unknown(),
+        Expr::Subscript(_) => return PyTypeEval::unknown(),
+        Expr::Starred(_) => return PyTypeEval::unknown(),
         Expr::Name(expr_name) => return gen_name(context, environment_location, expr_name),
         Expr::List(expr_list) => {
             return gen_expr_list(context, environment_location, expr_list);
@@ -588,7 +734,7 @@ pub fn gen_expr(
         Expr::Tuple(expr_tuple) => {
             return gen_expr_tuple(context, environment_location, expr_tuple);
         }
-        Expr::Slice(_) => return GenExprResult::unknown(),
-        Expr::IpyEscapeCommand(_) => return GenExprResult::unknown(),
+        Expr::Slice(_) => return PyTypeEval::unknown(),
+        Expr::IpyEscapeCommand(_) => return PyTypeEval::unknown(),
     })
 }

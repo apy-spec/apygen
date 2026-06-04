@@ -1,18 +1,19 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, Exception, GetAttributeError, LiteralFunction, Type,
+    AbstractEnvironment, Attribute, Exception, GetAttributeError, Type,
     TypeInstance, TypeLiteral, get_attribute,
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::literal_class::{
     attribute_as_literal_functions, resolve_class_attribute,
 };
-use crate::genkill::expressions::{GenExprResult, literal_function};
+use crate::genkill::expressions::{PyTypeEval, literal_function};
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::namespace::{Location, Namespaces};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use thiserror::Error;
+use apygen_analysis::lattice::NamespacesLattice;
 
 #[derive(Error, Debug)]
 pub enum GetInstanceEnvironmentError {
@@ -57,13 +58,13 @@ pub fn call_method(
     method_name: &Identifier,
     positional: Vec<Arc<Type>>,
     keyword: BTreeMap<Arc<Identifier>, Arc<Type>>,
-) -> GenExprResult<Type> {
+) -> PyTypeEval {
     let methods = get_instance_attribute(&context.namespaces, type_instance, method_name)
         .map(|attribute| attribute_as_literal_functions(&context.namespaces, &attribute))
         .unwrap_or(Vec::new());
 
     if methods.is_empty() {
-        return GenExprResult::raise(Exception::builtins("AttributeError"));
+        return PyTypeEval::raise(Exception::builtins("AttributeError"));
     }
 
     let arguments = Arguments {
@@ -73,11 +74,11 @@ pub fn call_method(
         keyword,
     };
 
-    let mut result = GenExprResult::never();
+    let mut result = PyTypeEval::never();
     for method in methods {
         let call_result =
             literal_function::call(context, environment_location, &method, &arguments);
-        result = result.union(&context.namespaces, call_result);
+        result = result.join(&context.namespaces, &call_result).unwrap(); // TODO: remove unwrap
     }
 
     result

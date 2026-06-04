@@ -1,5 +1,5 @@
 use crate::abstract_environment::{Exception, LiteralBoolean, LiteralFloat, Type};
-use crate::genkill::expressions::GenExprResult;
+use crate::genkill::expressions::PyTypeEval;
 use apygen_analysis::cfg::nodes;
 use num_traits::Pow;
 
@@ -31,13 +31,10 @@ pub fn call_dunder_neg(literal_float: &LiteralFloat) -> Type {
     })
 }
 
-pub fn call_unary_op(
-    literal_float: &LiteralFloat,
-    operator: nodes::UnaryOp,
-) -> GenExprResult<Type> {
-    GenExprResult::new(match operator {
+pub fn call_unary_op(literal_float: &LiteralFloat, operator: nodes::UnaryOp) -> PyTypeEval {
+    PyTypeEval::with_default_effects(match operator {
         nodes::UnaryOp::Invert => {
-            return GenExprResult::raise(Exception::type_error());
+            return PyTypeEval::raise(Exception::type_error());
         }
         nodes::UnaryOp::Not => call_not(literal_float),
         nodes::UnaryOp::UAdd => call_dunder_pos(literal_float),
@@ -49,8 +46,8 @@ pub fn call_binary_op(
     left: &LiteralFloat,
     operator: nodes::Operator,
     right: &LiteralFloat,
-) -> GenExprResult<Type> {
-    GenExprResult::new(match operator {
+) -> PyTypeEval {
+    PyTypeEval::with_default_effects(match operator {
         nodes::Operator::Add => Type::new_float_literal(LiteralFloat {
             value: left.value + right.value,
         }),
@@ -65,7 +62,7 @@ pub fn call_binary_op(
         }),
         nodes::Operator::Div => {
             if right.value == 0.0 {
-                return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
+                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError"));
             }
 
             Type::new_float_literal(LiteralFloat {
@@ -74,7 +71,7 @@ pub fn call_binary_op(
         }
         nodes::Operator::FloorDiv => {
             if right.value == 0.0 {
-                return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
+                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError"));
             }
 
             Type::new_float_literal(LiteralFloat {
@@ -83,7 +80,7 @@ pub fn call_binary_op(
         }
         nodes::Operator::Mod => {
             if right.value == 0.0 {
-                return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
+                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError"));
             }
 
             Type::new_float_literal(LiteralFloat {
@@ -95,6 +92,6 @@ pub fn call_binary_op(
         | nodes::Operator::RShift
         | nodes::Operator::BitOr
         | nodes::Operator::BitXor
-        | nodes::Operator::BitAnd => return GenExprResult::raise(Exception::type_error()),
+        | nodes::Operator::BitAnd => return PyTypeEval::raise(Exception::type_error()),
     })
 }

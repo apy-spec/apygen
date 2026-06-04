@@ -1,6 +1,6 @@
 use crate::abstract_environment::{Exception, LiteralBoolean, LiteralFloat, LiteralInteger, Type};
 use crate::genkill::expressions;
-use crate::genkill::expressions::GenExprResult;
+use crate::genkill::expressions::PyTypeEval;
 use apygen_analysis::cfg::nodes;
 use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
@@ -13,11 +13,11 @@ pub fn as_boolean(literal_integer: &LiteralInteger) -> bool {
     }
 }
 
-pub fn call_dunder_float(literal_integer: &LiteralInteger) -> GenExprResult<Type> {
+pub fn call_dunder_float(literal_integer: &LiteralInteger) -> PyTypeEval {
     if let Some(literal_float) = literal_integer.to_literal_float() {
-        GenExprResult::new(Type::new_float_literal(literal_float))
+        PyTypeEval::with_default_effects(Type::new_float_literal(literal_float))
     } else {
-        GenExprResult::unknown()
+        PyTypeEval::unknown()
     }
 }
 
@@ -62,8 +62,8 @@ pub fn call_binary_op(
     left: &LiteralInteger,
     operator: nodes::Operator,
     right: &LiteralInteger,
-) -> GenExprResult<Type> {
-    GenExprResult::new(match operator {
+) -> PyTypeEval {
+    PyTypeEval::with_default_effects(match operator {
         nodes::Operator::Add => Type::new_integer_literal(left + right),
         nodes::Operator::Sub => Type::new_integer_literal(left - right),
         nodes::Operator::Mult => Type::new_integer_literal(left * right),
@@ -71,7 +71,7 @@ pub fn call_binary_op(
             let big_right = match right {
                 LiteralInteger::Int(small_right) => {
                     if let Ok(small_right) = usize::try_from(*small_right) {
-                        return GenExprResult::new(Type::new_integer_literal(
+                        return PyTypeEval::with_default_effects(Type::new_integer_literal(
                             left.pow(small_right),
                         ));
                     }
@@ -90,18 +90,20 @@ pub fn call_binary_op(
                     &LiteralFloat { value: right_float },
                 );
             } else {
-                return GenExprResult::unknown();
+                return PyTypeEval::unknown();
             }
         }
         nodes::Operator::Div => {
             if right.is_zero() {
-                return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
+                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError"));
             }
 
             let (left, right) = match (left, right) {
                 (LiteralInteger::Int(left), LiteralInteger::Int(right)) => {
                     if let Some(value) = Rational64::new(*left, *right).to_f64() {
-                        return GenExprResult::new(Type::new_float_literal(LiteralFloat { value }));
+                        return PyTypeEval::with_default_effects(Type::new_float_literal(
+                            LiteralFloat { value },
+                        ));
                     }
                     (&BigInt::from(*left), &BigInt::from(*right))
                 }
@@ -115,21 +117,21 @@ pub fn call_binary_op(
             };
 
             let Some(value) = BigRational::new(left.clone(), right.clone()).to_f64() else {
-                return GenExprResult::unknown();
+                return PyTypeEval::unknown();
             };
 
             Type::new_float_literal(LiteralFloat { value })
         }
         nodes::Operator::FloorDiv => {
             if right.is_zero() {
-                return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
+                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError"));
             }
 
             Type::new_integer_literal(left / right)
         }
         nodes::Operator::Mod => {
             if right.is_zero() {
-                return GenExprResult::raise(Exception::builtins("ZeroDivisionError"));
+                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError"));
             }
 
             Type::new_integer_literal(left % right)
@@ -141,11 +143,11 @@ pub fn call_binary_op(
                 } else if let Ok(small_right) = isize::try_from(*small_right) {
                     Type::new_integer_literal(left << small_right)
                 } else {
-                    return GenExprResult::unknown();
+                    return PyTypeEval::unknown();
                 }
             }
             LiteralInteger::BigInt(_) => {
-                return GenExprResult::unknown();
+                return PyTypeEval::unknown();
             }
         },
         nodes::Operator::RShift => match right {
@@ -155,16 +157,16 @@ pub fn call_binary_op(
                 } else if let Ok(small_right) = isize::try_from(*small_right) {
                     Type::new_integer_literal(left >> small_right)
                 } else {
-                    return GenExprResult::unknown();
+                    return PyTypeEval::unknown();
                 }
             }
             LiteralInteger::BigInt(_) => {
-                return GenExprResult::unknown();
+                return PyTypeEval::unknown();
             }
         },
         nodes::Operator::BitOr => Type::new_integer_literal(left | right),
         nodes::Operator::BitXor => Type::new_integer_literal(left ^ right),
         nodes::Operator::BitAnd => Type::new_integer_literal(left & right),
-        nodes::Operator::MatMult => return GenExprResult::raise(Exception::type_error()),
+        nodes::Operator::MatMult => return PyTypeEval::raise(Exception::type_error()),
     })
 }

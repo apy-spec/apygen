@@ -4,12 +4,11 @@ use crate::abstract_environment::{
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::{
-    GenExprResult, literal_boolean, literal_bytes, literal_ellipsis, literal_float,
-    literal_function, literal_integer, literal_none, literal_string,
+    PyTypeEval, literal_boolean, literal_bytes, literal_ellipsis, literal_float, literal_function,
+    literal_integer, literal_none, literal_string,
 };
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::lattice::Lattice;
 use apygen_analysis::namespace::{Location, Namespaces};
 use std::collections::VecDeque;
 
@@ -29,10 +28,7 @@ pub fn get_methods<'a>(
     literal_function::as_literal_functions(local_attribute.attribute_type.data.as_ref())
 }
 
-pub fn call_literal(
-    type_instance: &TypeInstance,
-    arguments: &Arguments,
-) -> Option<GenExprResult<Type>> {
+pub fn call_literal(type_instance: &TypeInstance, arguments: &Arguments) -> Option<PyTypeEval> {
     let identifiers = &type_instance.origin.namespace_location.module.identifiers;
 
     if identifiers.len() != 1 {
@@ -45,10 +41,10 @@ pub fn call_literal(
                 if arguments.positional.len() == 1 && arguments.keyword.is_empty() =>
             {
                 match type_literal.as_ref() {
-                    TypeLiteral::Integer(literal_integer) => Some(GenExprResult::new(
+                    TypeLiteral::Integer(literal_integer) => Some(PyTypeEval::with_default_effects(
                         literal_integer::call_dunder_int(literal_integer),
                     )),
-                    TypeLiteral::Boolean(literal_boolean) => Some(GenExprResult::new(
+                    TypeLiteral::Boolean(literal_boolean) => Some(PyTypeEval::with_default_effects(
                         literal_boolean::call_dunder_int(literal_boolean),
                     )),
                     _ => None,
@@ -61,25 +57,27 @@ pub fn call_literal(
                 if arguments.positional.len() == 1 && arguments.keyword.is_empty() =>
             {
                 match type_literal.as_ref() {
-                    TypeLiteral::Integer(literal_integer) => Some(GenExprResult::new(
+                    TypeLiteral::Integer(literal_integer) => Some(PyTypeEval::with_default_effects(
                         literal_integer::call_dunder_bool(literal_integer),
                     )),
-                    TypeLiteral::Float(literal_float) => Some(GenExprResult::new(
+                    TypeLiteral::Float(literal_float) => Some(PyTypeEval::with_default_effects(
                         literal_float::call_dunder_bool(literal_float),
                     )),
-                    TypeLiteral::Boolean(literal_boolean) => Some(GenExprResult::new(
+                    TypeLiteral::Boolean(literal_boolean) => Some(PyTypeEval::with_default_effects(
                         literal_boolean::call_dunder_bool(literal_boolean),
                     )),
-                    TypeLiteral::Bytes(literal_bytes) => Some(GenExprResult::new(
+                    TypeLiteral::Bytes(literal_bytes) => Some(PyTypeEval::with_default_effects(
                         literal_bytes::call_dunder_bool(literal_bytes),
                     )),
-                    TypeLiteral::String(literal_string) => Some(GenExprResult::new(
+                    TypeLiteral::String(literal_string) => Some(PyTypeEval::with_default_effects(
                         literal_string::call_dunder_bool(literal_string),
                     )),
-                    TypeLiteral::Ellipsis => {
-                        Some(GenExprResult::new(literal_ellipsis::call_dunder_bool()))
-                    }
-                    TypeLiteral::None => Some(GenExprResult::new(literal_none::call_dunder_bool())),
+                    TypeLiteral::Ellipsis => Some(PyTypeEval::with_default_effects(
+                        literal_ellipsis::call_dunder_bool(),
+                    )),
+                    TypeLiteral::None => Some(PyTypeEval::with_default_effects(
+                        literal_none::call_dunder_bool(),
+                    )),
                     _ => None,
                 }
             }
@@ -191,22 +189,22 @@ pub fn call(
     name: &Identifier,
     literal_class: &LiteralClass,
     arguments: &Arguments,
-) -> GenExprResult<Type> {
+) -> PyTypeEval {
     let mut found_init = true;
     let mut found_new = true;
     let Ok((origin, _, _)) =
         resolve_local_attribute(&context.namespaces, environment_location.clone(), name)
     else {
-        return GenExprResult::unknown();
+        return PyTypeEval::unknown();
     };
 
     let type_instance = TypeInstance::new(origin.clone(), name.clone());
 
-    if let Some(result) = call_literal(&type_instance, arguments) {
-        return result;
+    if let Some(ty) = call_literal(&type_instance, arguments) {
+        return ty;
     }
 
-    let mut result = GenExprResult::new(Type::Instance(type_instance));
+    let mut ty = PyTypeEval::with_default_effects(Type::Instance(type_instance));
     for (method_name, found) in [
         (Identifier::parse("__new__"), &mut found_new),
         (Identifier::parse("__init__"), &mut found_init),
@@ -225,19 +223,20 @@ pub fn call(
         }
 
         for method in methods {
-            let method_result =
-                literal_function::call(context, environment_location, &method, arguments);
-            result.exceptions = result.exceptions.join(&method_result.exceptions);
-            result.pureness = result.pureness.join(&method_result.pureness);
-            result.completeness = result.completeness.join(&method_result.completeness);
+            ty.effects.consume(literal_function::call(
+                context,
+                environment_location,
+                &method,
+                arguments,
+            ));
         }
     }
 
     if !found_new && !found_init {
-        result = GenExprResult::raise(Exception::builtins("TypeError"));
+        ty = PyTypeEval::raise(Exception::type_error());
     }
 
-    result
+    ty
 }
 
 #[cfg(test)]

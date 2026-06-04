@@ -1,5 +1,5 @@
 use crate::abstract_environment::{Exception, LiteralBoolean, LiteralInteger, LiteralString, Type};
-use crate::genkill::expressions::GenExprResult;
+use crate::genkill::expressions::PyTypeEval;
 use apygen_analysis::cfg::nodes;
 use num_traits::ToPrimitive;
 use std::sync::Arc;
@@ -20,15 +20,12 @@ pub fn call_not(literal_string: &LiteralString) -> Type {
     })
 }
 
-pub fn call_unary_op(
-    literal_string: &LiteralString,
-    operator: nodes::UnaryOp,
-) -> GenExprResult<Type> {
+pub fn call_unary_op(literal_string: &LiteralString, operator: nodes::UnaryOp) -> PyTypeEval {
     match operator {
         nodes::UnaryOp::Invert | nodes::UnaryOp::UAdd | nodes::UnaryOp::USub => {
-            GenExprResult::raise(Exception::type_error())
+            PyTypeEval::raise(Exception::type_error())
         }
-        nodes::UnaryOp::Not => GenExprResult::new(call_not(literal_string)),
+        nodes::UnaryOp::Not => PyTypeEval::with_default_effects(call_not(literal_string)),
     }
 }
 
@@ -36,8 +33,8 @@ pub fn call_binary_op(
     left: &LiteralString,
     operator: nodes::Operator,
     right: &LiteralString,
-) -> GenExprResult<Type> {
-    GenExprResult::new(match operator {
+) -> PyTypeEval {
+    PyTypeEval::with_default_effects(match operator {
         nodes::Operator::Add => Type::new_string_literal({
             let mut value = String::new();
             value.push_str(left.value.as_str());
@@ -46,16 +43,16 @@ pub fn call_binary_op(
                 value: Arc::new(value),
             }
         }),
-        _ => return GenExprResult::raise(Exception::type_error()),
+        _ => return PyTypeEval::raise(Exception::type_error()),
     })
 }
 
-pub fn repeat_string(string: &LiteralString, repetitions: &LiteralInteger) -> GenExprResult<Type> {
+pub fn repeat_string(string: &LiteralString, repetitions: &LiteralInteger) -> PyTypeEval {
     if let Some(repetitions) = repetitions.to_usize() {
-        GenExprResult::new(Type::new_string_literal(LiteralString {
+        PyTypeEval::with_default_effects(Type::new_string_literal(LiteralString {
             value: Arc::new(string.value.repeat(repetitions)),
         }))
     } else {
-        GenExprResult::unknown()
+        PyTypeEval::unknown()
     }
 }

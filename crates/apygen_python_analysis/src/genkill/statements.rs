@@ -10,7 +10,7 @@ use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
 use crate::genkill::annotations::gen_annotation;
 use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::calls::BoundArguments;
-use crate::genkill::expressions::{GenExprResult, gen_expr};
+use crate::genkill::expressions::{PyTypeEval, gen_expr};
 use crate::genkill::visibility::gen_visibility;
 use crate::worklist::WorklistContext;
 use apy::OneOrMany;
@@ -27,16 +27,16 @@ pub fn gen_assign(
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
-    let gen_result = gen_expr(context, &location, &stmt_assign.value).map(|ty| Arc::new(ty));
+    let ty = gen_expr(context, &location, &stmt_assign.value).map(|ty| Arc::new(ty));
 
     let mut target_abstract_environments: HashMap<EdgeData, AbstractEnvironment> = HashMap::new();
 
-    if !gen_result.exceptions.exceptions.is_empty() {
+    if !ty.effects.exceptions.exceptions.is_empty() {
         target_abstract_environments.insert(
             EdgeData::UnhandledException,
             target_abstract_environment
                 .clone()
-                .with_raised_exceptions(Sourced::inferred(gen_result.exceptions)),
+                .with_raised_exceptions(Sourced::inferred(ty.effects.exceptions)),
         );
     }
 
@@ -49,7 +49,7 @@ pub fn gen_assign(
             target_abstract_environment.attributes.insert(
                 Arc::new(name),
                 Arc::new(Attribute::Local(
-                    LocalAttribute::new(Sourced::inferred(gen_result.value.clone()))
+                    LocalAttribute::new(Sourced::inferred(ty.value.clone()))
                         .with_visibility(Sourced::inferred(visibility)),
                 )),
             );
@@ -68,20 +68,20 @@ pub fn gen_return(
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
-    let gen_result = if let Some(value) = &stmt_return.value {
+    let ty = if let Some(value) = &stmt_return.value {
         gen_expr(context, &location, value)
     } else {
-        GenExprResult::new(Type::new_literal(TypeLiteral::None))
+        PyTypeEval::with_default_effects(Type::new_literal(TypeLiteral::None))
     };
 
     let mut target_abstract_environments: HashMap<EdgeData, AbstractEnvironment> = HashMap::new();
 
-    if !gen_result.exceptions.exceptions.is_empty() {
+    if !ty.effects.exceptions.exceptions.is_empty() {
         target_abstract_environments.insert(
             EdgeData::UnhandledException,
             target_abstract_environment
                 .clone()
-                .with_raised_exceptions(Sourced::inferred(gen_result.exceptions)),
+                .with_raised_exceptions(Sourced::inferred(ty.effects.exceptions)),
         );
     }
 
@@ -89,7 +89,7 @@ pub fn gen_return(
         .returned_value
         .join(
             &context.namespaces,
-            &Some(Sourced::inferred(Arc::new(gen_result.value))),
+            &Some(Sourced::inferred(Arc::new(ty.value))),
         )
         .unwrap();
 
@@ -105,25 +105,25 @@ pub fn gen_raise(
 ) -> Result<HashMap<EdgeData, AbstractEnvironment>, ParseQualifiedNameError> {
     let mut target_abstract_environment = context.clone_abstract_environment(&location);
 
-    let gen_result = if let Some(value) = &stmt_raise.exc {
+    let ty = if let Some(value) = &stmt_raise.exc {
         gen_expr(context, &location, value)
     } else {
-        GenExprResult::new(Type::Any) // TODO: use the previously raised exception
+        PyTypeEval::with_default_effects(Type::Any) // TODO: use the previously raised exception
     };
 
-    if !gen_result.exceptions.exceptions.is_empty() {
+    if !ty.effects.exceptions.exceptions.is_empty() {
         target_abstract_environment
             .raised_exceptions
             .data
             .exceptions
-            .extend(gen_result.exceptions.exceptions);
+            .extend(ty.effects.exceptions.exceptions);
     }
 
     target_abstract_environment
         .raised_exceptions
         .data
         .exceptions
-        .insert(Exception::from_type(gen_result.value));
+        .insert(Exception::from_type(ty.value));
 
     Ok(HashMap::from_iter([(
         EdgeData::UnhandledException,
@@ -154,14 +154,14 @@ pub fn gen_ann_assign(
     let mut target_abstract_environments: HashMap<EdgeData, AbstractEnvironment> = HashMap::new();
 
     if let Some(value) = &stmt_ann_assign.value {
-        let gen_result = gen_expr(context, &location, value);
+        let ty = gen_expr(context, &location, value);
 
-        if !gen_result.exceptions.exceptions.is_empty() {
+        if !ty.effects.exceptions.exceptions.is_empty() {
             target_abstract_environments.insert(
                 EdgeData::UnhandledException,
                 target_abstract_environment
                     .clone()
-                    .with_raised_exceptions(Sourced::inferred(gen_result.exceptions)),
+                    .with_raised_exceptions(Sourced::inferred(ty.effects.exceptions)),
             );
         }
 
@@ -358,9 +358,7 @@ pub fn gen_parameter(
 
     let ty = annotation_ty.or_else(|| {
         default.map(|default| {
-            Sourced::inferred(Arc::new(
-                gen_expr(context, location, default.as_ref()).value,
-            ))
+            Sourced::inferred(Arc::new(gen_expr(context, location, default.as_ref()).value))
         })
     });
 

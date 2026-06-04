@@ -1,7 +1,7 @@
 use crate::abstract_environment::{
-    TYPES_MODULE, TYPING_MODULE, Type, TypeAliasKind, TypeInstance, TypeLiteral,
+    TYPES_MODULE, TYPING_MODULE, TypeAliasKind, TypeInstance, TypeLiteral,
 };
-use crate::genkill::expressions::{self, GenExprResult};
+use crate::genkill::expressions::{self, PyTypeEval};
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::nodes;
@@ -87,7 +87,7 @@ pub fn call_binary_op(
     left: &TypeLiteral,
     operator: nodes::Operator,
     right: &TypeLiteral,
-) -> GenExprResult<Type> {
+) -> PyTypeEval {
     match (left, right) {
         (TypeLiteral::Integer(left), TypeLiteral::Integer(right)) => {
             expressions::literal_integer::call_binary_op(left, operator, right)
@@ -99,14 +99,14 @@ pub fn call_binary_op(
             if let Some(right_float) = right.to_literal_float() {
                 expressions::literal_float::call_binary_op(left, operator, &right_float)
             } else {
-                GenExprResult::unknown()
+                PyTypeEval::unknown()
             }
         }
         (TypeLiteral::Integer(left), TypeLiteral::Float(right)) => {
             if let Some(left_float) = left.to_literal_float() {
                 expressions::literal_float::call_binary_op(&left_float, operator, right)
             } else {
-                GenExprResult::unknown()
+                PyTypeEval::unknown()
             }
         }
         (TypeLiteral::Float(left), TypeLiteral::Float(right)) => {
@@ -116,14 +116,14 @@ pub fn call_binary_op(
             if let Some(right_complex) = right.to_literal_complex() {
                 expressions::literal_complex::call_binary_op(left, operator, &right_complex)
             } else {
-                GenExprResult::unknown()
+                PyTypeEval::unknown()
             }
         }
         (TypeLiteral::Float(left), TypeLiteral::Complex(right)) => {
             if let Some(left_complex) = left.to_literal_complex() {
                 expressions::literal_complex::call_binary_op(&left_complex, operator, right)
             } else {
-                GenExprResult::unknown()
+                PyTypeEval::unknown()
             }
         }
         (TypeLiteral::Complex(left), TypeLiteral::Complex(right)) => {
@@ -147,12 +147,12 @@ pub fn call_binary_op(
         (TypeLiteral::Integer(left), TypeLiteral::Bytes(right)) => {
             expressions::literal_bytes::repeat_bytes(right, left)
         }
-        _ => GenExprResult::unknown(),
+        _ => PyTypeEval::unknown(),
     }
 }
 
-pub fn call_unary_op(type_literal: &TypeLiteral, operator: nodes::UnaryOp) -> GenExprResult<Type> {
-    GenExprResult::new(match type_literal {
+pub fn call_unary_op(type_literal: &TypeLiteral, operator: nodes::UnaryOp) -> PyTypeEval {
+    PyTypeEval::with_default_effects(match type_literal {
         TypeLiteral::Integer(literal_integer) => {
             expressions::literal_integer::call_unary_op(literal_integer, operator)
         }
@@ -177,6 +177,6 @@ pub fn call_unary_op(type_literal: &TypeLiteral, operator: nodes::UnaryOp) -> Ge
         TypeLiteral::Ellipsis => {
             return expressions::literal_ellipsis::call_unary_op(operator);
         }
-        _ => return GenExprResult::unknown(),
+        _ => return PyTypeEval::unknown(),
     })
 }

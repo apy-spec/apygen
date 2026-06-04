@@ -1,6 +1,6 @@
 use crate::abstract_environment::{Exception, LiteralFunction, Type, TypeLiteral};
 use crate::genkill::calls::Arguments;
-use crate::genkill::expressions::GenExprResult;
+use crate::genkill::expressions::{PyEffects, PyTypeEval};
 use crate::worklist::{WorklistContext, add_call, add_dependent};
 use apy::v1::QualifiedName;
 use apygen_analysis::namespace::{Location, Namespaces};
@@ -27,9 +27,9 @@ pub fn call(
     environment_location: &Location<QualifiedName>,
     literal_function: &LiteralFunction,
     arguments: &Arguments,
-) -> GenExprResult<Type> {
+) -> PyTypeEval {
     let Ok(bindings) = arguments.bind(&literal_function.value.parameters) else {
-        return GenExprResult::raise(Exception::builtins("TypeError"));
+        return PyTypeEval::raise(Exception::builtins("TypeError"));
     };
 
     let result = if let Some(environment) =
@@ -38,18 +38,20 @@ pub fn call(
             .get_abstract_environment(&Location::at_exit(
                 literal_function.value.location.as_sub_location(),
             )) {
-        GenExprResult {
-            value: environment
+        PyTypeEval::new(
+            environment
                 .returned_value
                 .as_ref()
                 .map(|value| value.data.as_ref().clone())
                 .unwrap_or(Type::new_literal(TypeLiteral::None)),
-            exceptions: environment.raised_exceptions.data.clone(),
-            pureness: environment.pureness.data,
-            completeness: environment.completeness.data,
-        }
+            PyEffects {
+                exceptions: environment.raised_exceptions.data.clone(),
+                pureness: environment.pureness.data,
+                completeness: environment.completeness.data,
+            },
+        )
     } else {
-        GenExprResult::unknown()
+        PyTypeEval::unknown()
     };
 
     add_call(
