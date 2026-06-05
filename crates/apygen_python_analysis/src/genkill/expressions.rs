@@ -687,54 +687,48 @@ pub fn gen_expr(
     environment_location: &Location<QualifiedName>,
     expression: &nodes::Expr,
 ) -> PyTypeEval {
-    PyTypeEval::with_default_effects(match expression {
-        Expr::BoolOp(expr_bool_op) => {
-            return gen_bool_op(context, environment_location, expr_bool_op);
+    match expression {
+        Expr::BoolOp(expr_bool_op) => gen_bool_op(context, environment_location, expr_bool_op),
+        Expr::Named(_) => PyTypeEval::unknown(),
+        Expr::BinOp(expr_bin_op) => gen_bin_op(context, environment_location, expr_bin_op),
+        Expr::UnaryOp(expr_unary_op) => gen_unary_op(context, environment_location, expr_unary_op),
+        Expr::Lambda(_) => PyTypeEval::unknown(),
+        Expr::If(_) => PyTypeEval::unknown(),
+        Expr::Dict(_) => PyTypeEval::unknown(),
+        Expr::Set(expr_set) => gen_expr_set(context, environment_location, expr_set),
+        Expr::ListComp(_) => PyTypeEval::unknown(),
+        Expr::SetComp(_) => PyTypeEval::unknown(),
+        Expr::DictComp(_) => PyTypeEval::unknown(),
+        Expr::Generator(_) => PyTypeEval::unknown(),
+        Expr::Await(_) => PyTypeEval::unknown(),
+        Expr::Yield(_) => PyTypeEval::unknown(),
+        Expr::YieldFrom(_) => PyTypeEval::unknown(),
+        Expr::Compare(_) => PyTypeEval::unknown(),
+        Expr::Call(expr_call) => gen_call(context, environment_location, expr_call),
+        Expr::FString(_) => PyTypeEval::unknown(),
+        Expr::StringLiteral(expr_string_literal) => {
+            PyTypeEval::with_default_effects(gen_expr_string_literal(expr_string_literal))
         }
-        Expr::Named(_) => return PyTypeEval::unknown(),
-        Expr::BinOp(expr_bin_op) => {
-            return gen_bin_op(context, environment_location, expr_bin_op);
+        Expr::BytesLiteral(expr_bytes_literal) => {
+            PyTypeEval::with_default_effects(gen_expr_bytes_literal(expr_bytes_literal))
         }
-        Expr::UnaryOp(expr_unary_op) => {
-            return gen_unary_op(context, environment_location, expr_unary_op);
+        Expr::NumberLiteral(expr_number_literal) => {
+            PyTypeEval::with_default_effects(gen_expr_number_literal(expr_number_literal))
         }
-        Expr::Lambda(_) => return PyTypeEval::unknown(),
-        Expr::If(_) => return PyTypeEval::unknown(),
-        Expr::Dict(_) => return PyTypeEval::unknown(),
-        Expr::Set(expr_set) => {
-            return gen_expr_set(context, environment_location, expr_set);
-        }
-        Expr::ListComp(_) => return PyTypeEval::unknown(),
-        Expr::SetComp(_) => return PyTypeEval::unknown(),
-        Expr::DictComp(_) => return PyTypeEval::unknown(),
-        Expr::Generator(_) => return PyTypeEval::unknown(),
-        Expr::Await(_) => return PyTypeEval::unknown(),
-        Expr::Yield(_) => return PyTypeEval::unknown(),
-        Expr::YieldFrom(_) => return PyTypeEval::unknown(),
-        Expr::Compare(_) => return PyTypeEval::unknown(),
-        Expr::Call(expr_call) => return gen_call(context, environment_location, expr_call),
-        Expr::FString(_) => return PyTypeEval::unknown(),
-        Expr::StringLiteral(expr_string_literal) => gen_expr_string_literal(expr_string_literal),
-        Expr::BytesLiteral(expr_bytes_literal) => gen_expr_bytes_literal(expr_bytes_literal),
-        Expr::NumberLiteral(expr_number_literal) => gen_expr_number_literal(expr_number_literal),
         Expr::BooleanLiteral(expr_boolean_literal) => {
-            gen_expr_boolean_literal(expr_boolean_literal)
+            PyTypeEval::with_default_effects(gen_expr_boolean_literal(expr_boolean_literal))
         }
-        Expr::NoneLiteral(_) => gen_expr_none_literal(),
-        Expr::EllipsisLiteral(_) => gen_expr_ellipsis_literal(),
+        Expr::NoneLiteral(_) => PyTypeEval::with_default_effects(gen_expr_none_literal()),
+        Expr::EllipsisLiteral(_) => PyTypeEval::with_default_effects(gen_expr_ellipsis_literal()),
         Expr::Attribute(expr_attribute) => {
-            return gen_attribute(context, environment_location, expr_attribute);
+            gen_attribute(context, environment_location, expr_attribute)
         }
-        Expr::Subscript(_) => return PyTypeEval::unknown(),
-        Expr::Starred(_) => return PyTypeEval::unknown(),
-        Expr::Name(expr_name) => return gen_name(context, environment_location, expr_name),
-        Expr::List(expr_list) => {
-            return gen_expr_list(context, environment_location, expr_list);
-        }
-        Expr::Tuple(expr_tuple) => {
-            return gen_expr_tuple(context, environment_location, expr_tuple);
-        }
-        Expr::Slice(_) => return PyTypeEval::unknown(),
-        Expr::IpyEscapeCommand(_) => return PyTypeEval::unknown(),
-    })
+        Expr::Subscript(_) => PyTypeEval::unknown(),
+        Expr::Starred(_) => PyTypeEval::unknown(),
+        Expr::Name(expr_name) => gen_name(context, environment_location, expr_name),
+        Expr::List(expr_list) => gen_expr_list(context, environment_location, expr_list),
+        Expr::Tuple(expr_tuple) => gen_expr_tuple(context, environment_location, expr_tuple),
+        Expr::Slice(_) => PyTypeEval::unknown(),
+        Expr::IpyEscapeCommand(_) => PyTypeEval::unknown(),
+    }
 }
