@@ -73,6 +73,7 @@ pub fn analyse_directory(
 #[case::literal_none("literal_none")]
 #[case::int_literal_inference("int_literal_inference")]
 #[case::big_int_literal_inference("big_int_literal_inference")]
+#[case::list_operations("list_operations")]
 fn test_inference(#[case] module_name: String) {
     init_logger();
 
