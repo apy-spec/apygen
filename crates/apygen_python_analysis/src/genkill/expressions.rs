@@ -26,7 +26,8 @@ use crate::genkill::literals::{
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::nodes::{
-    Expr, ExprAttribute, ExprBinOp, ExprBoolOp, ExprCall, ExprName, ExprUnaryOp, Operator,
+    Expr, ExprAttribute, ExprBinOp, ExprBoolOp, ExprCall, ExprName, ExprSubscript, ExprUnaryOp,
+    Operator,
 };
 use apygen_analysis::lattice::{Lattice, NamespacesLattice};
 use apygen_analysis::namespace::Namespaces;
@@ -104,6 +105,11 @@ impl<T> PyValueEval<T> {
             value: f(self.value),
             effects: self.effects,
         }
+    }
+
+    pub fn extend_effects(mut self, effects: &PyEffects) -> Self {
+        self.effects = self.effects.join(effects);
+        self
     }
 }
 
@@ -594,7 +600,7 @@ pub fn gen_call(
     );
 
     let Type::Literal(literal) = func_ty else {
-        return PyTypeEval::unknown();
+        return PyTypeEval::unknown().extend_effects(&effects);
     };
 
     match literal.as_ref() {
@@ -631,10 +637,10 @@ pub fn gen_call(
                         None => PyTypeEval::new(Type::NoReturn, effects),
                     }
                 }
-                _ => PyTypeEval::unknown(),
+                _ => PyTypeEval::unknown().extend_effects(&effects),
             }
         }
-        _ => PyTypeEval::unknown(),
+        _ => PyTypeEval::unknown().extend_effects(&effects),
     }
 }
 
@@ -669,17 +675,38 @@ pub fn gen_attribute(
     };
 
     let Some(target_attribute) = target_attribute_option else {
-        return PyTypeEval::unknown();
+        return PyTypeEval::unknown().extend_effects(&effects);
     };
 
     let Ok(target_local_attribute) = target_attribute.resolve(&context.namespaces) else {
-        return PyTypeEval::unknown();
+        return PyTypeEval::unknown().extend_effects(&effects);
     };
 
     PyTypeEval::new(
         target_local_attribute.attribute_type.data.as_ref().clone(),
         effects,
     )
+}
+
+pub fn gen_subscript(
+    context: &mut WorklistContext,
+    environment_location: &Location<QualifiedName>,
+    expr_subscript: &ExprSubscript,
+) -> PyTypeEval {
+    let mut effects = PyEffects::new();
+
+    let target_ty = pytype_consume_or_return!(
+        effects,
+        gen_expr(context, environment_location, &expr_subscript.value)
+    );
+    let slice_ty = pytype_consume_or_return!(
+        effects,
+        gen_expr(context, environment_location, &expr_subscript.slice)
+    );
+
+    let ty = pytype_consume_or_return!(effects, PyValueEval::unknown());  // TODO: fix subscript
+
+    PyTypeEval::new(ty, effects)
 }
 
 pub fn gen_expr(
@@ -723,7 +750,9 @@ pub fn gen_expr(
         Expr::Attribute(expr_attribute) => {
             gen_attribute(context, environment_location, expr_attribute)
         }
-        Expr::Subscript(_) => PyTypeEval::unknown(),
+        Expr::Subscript(expr_subscript) => {
+            gen_subscript(context, environment_location, expr_subscript)
+        }
         Expr::Starred(_) => PyTypeEval::unknown(),
         Expr::Name(expr_name) => gen_name(context, environment_location, expr_name),
         Expr::List(expr_list) => gen_expr_list(context, environment_location, expr_list),

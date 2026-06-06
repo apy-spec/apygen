@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, Exception, GetAttributeError, Type,
-    TypeInstance, TypeLiteral, get_attribute,
+    AbstractEnvironment, Attribute, Exception, GetAttributeError, Type, TypeInstance, TypeLiteral,
+    get_attribute,
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::literal_class::{
@@ -9,11 +9,11 @@ use crate::genkill::expressions::literal_class::{
 use crate::genkill::expressions::{PyTypeEval, literal_function};
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
+use apygen_analysis::lattice::NamespacesLattice;
 use apygen_analysis::namespace::{Location, Namespaces};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use thiserror::Error;
-use apygen_analysis::lattice::NamespacesLattice;
 
 #[derive(Error, Debug)]
 pub enum GetInstanceEnvironmentError {
