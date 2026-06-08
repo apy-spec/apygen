@@ -32,7 +32,11 @@ modules:
           id: list
           module: builtins
           history_index: 0
-          arguments: []
+          arguments:
+            - id: int
+              module: builtins
+              history_index: 0
+              arguments: []
         description: ""
         initialised: true
         readonly: false

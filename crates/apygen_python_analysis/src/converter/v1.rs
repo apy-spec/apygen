@@ -294,15 +294,33 @@ pub fn convert_type_no_return() -> apy::v1::TypeReference {
         .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE)))
 }
 
-pub fn convert_type_instance(type_instance: &TypeInstance) -> apy::v1::TypeReference {
-    apy::v1::TypeReference::new(QualifiedName::from(type_instance.name.clone())).with_module(Some(
-        type_instance
-            .origin
-            .namespace_location
-            .module
-            .as_ref()
-            .clone(),
-    ))
+pub fn convert_type_instance(
+    context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
+    type_instance: &TypeInstance,
+) -> Option<apy::v1::TypeReference> {
+    Some(
+        apy::v1::TypeReference::new(QualifiedName::from(type_instance.name.clone()))
+            .with_module(Some(
+                type_instance
+                    .origin
+                    .namespace_location
+                    .module
+                    .as_ref()
+                    .clone(),
+            ))
+            .with_arguments(
+                type_instance
+                    .arguments
+                    .iter()
+                    .map(|argument| {
+                        Some(apy::v1::TypeArgument::Type(convert_type(
+                            context,
+                            argument.as_ref(),
+                        )?))
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+    )
 }
 
 pub fn convert_type_union(
@@ -340,7 +358,7 @@ pub fn convert_type(
         Type::Any => convert_type_any(),
         Type::Never => convert_type_never(),
         Type::NoReturn => convert_type_no_return(),
-        Type::Instance(type_instance) => convert_type_instance(type_instance),
+        Type::Instance(type_instance) => convert_type_instance(context, type_instance)?,
         Type::Union(type_union) => convert_type_union(context, type_union)?,
         Type::Intersection(_) => convert_type_intersection(),
         Type::Literal(type_literal) => match convert_type_literal(context, type_literal)? {
@@ -409,7 +427,7 @@ pub fn convert_attribute(
         Type::Never => apy::v1::Type::Reference(convert_type_never()),
         Type::NoReturn => apy::v1::Type::Reference(convert_type_no_return()),
         Type::Instance(type_instance) => {
-            apy::v1::Type::Reference(convert_type_instance(type_instance))
+            apy::v1::Type::Reference(convert_type_instance(context, type_instance)?)
         }
         Type::Union(type_union) => {
             apy::v1::Type::Reference(convert_type_union(context, type_union)?)
