@@ -255,6 +255,24 @@ pub struct OverloadedFunctionType {
     pub target: Option<LiteralFunction>,
 }
 
+impl OverloadedFunctionType {
+    pub fn add_overload(&self, overload: LiteralFunction) -> Self {
+        let mut overloads = self.overloads.clone();
+        overloads.push_back(overload);
+        OverloadedFunctionType {
+            overloads,
+            target: self.target.clone(),
+        }
+    }
+
+    pub fn with_target(&self, target: Option<LiteralFunction>) -> Self {
+        OverloadedFunctionType {
+            overloads: self.overloads.clone(),
+            target,
+        }
+    }
+}
+
 impl StructuralDepth for OverloadedFunctionType {
     fn depth(&self) -> usize {
         1 + self.overloads.depth() + self.target.depth()

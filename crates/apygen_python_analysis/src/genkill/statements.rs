@@ -1,8 +1,8 @@
 use crate::abstract_environment::{
     AbstractEnvironment, Attribute, ClassType, Deprecation, Diagnostic, Exception, FunctionType,
     ImportedAttribute, ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule,
-    LocalAttribute, Parameter, ParameterKind, Sourced, Type, TypeInstance, TypeLiteral,
-    get_attribute,
+    LiteralOverloadedFunction, LocalAttribute, OverloadedFunctionType, Parameter, ParameterKind,
+    Sourced, TYPING_MODULE, Type, TypeInstance, TypeLiteral, get_attribute,
 };
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{EdgeData, nodes};
@@ -358,7 +358,9 @@ pub fn gen_parameter(
 
     let ty = annotation_ty.or_else(|| {
         default.map(|default| {
-            Sourced::inferred(Arc::new(gen_expr(context, location, default.as_ref()).value))
+            Sourced::inferred(Arc::new(
+                gen_expr(context, location, default.as_ref()).value,
+            ))
         })
     });
 
@@ -375,6 +377,30 @@ pub fn gen_parameter(
         },
         ty,
     ))
+}
+
+pub fn is_overload(ty: &Type) -> bool {
+    let Type::Literal(type_literal) = ty else {
+        return false;
+    };
+
+    let TypeLiteral::Function(literal_function) = type_literal.as_ref() else {
+        return false;
+    };
+
+    literal_function.value.location.namespace_location
+        == NamespaceLocation::new(Arc::new(QualifiedName::parse(TYPING_MODULE)))
+        && literal_function.value.name.as_ref() == &Identifier::parse("overload")
+}
+
+pub fn as_overloaded_function(ty: &Type) -> Option<&LiteralOverloadedFunction> {
+    let Type::Literal(type_literal) = ty else {
+        return None;
+    };
+    let TypeLiteral::OverloadedFunction(literal_overloaded_function) = type_literal.as_ref() else {
+        return None;
+    };
+    Some(literal_overloaded_function)
 }
 
 pub fn gen_function_def(
@@ -470,23 +496,81 @@ pub fn gen_function_def(
         }
     }
 
+    let decorators = stmt_function_def
+        .decorator_list
+        .iter()
+        .map(|decorator| gen_expr(context, &location, &decorator.expression))
+        .collect::<Vec<_>>();
+
     let visibility = gen_visibility(context.cfgs, &location.namespace_location, &name);
     let identifier = Arc::new(name);
-    target_abstract_environment.attributes.insert(
-        identifier.clone(),
-        Arc::new(Attribute::Local(
-            LocalAttribute::new(Sourced::inferred(Arc::new(Type::new_literal(
-                TypeLiteral::Function(LiteralFunction {
-                    value: Arc::new(FunctionType {
-                        name: identifier,
-                        location: location.clone(),
-                        generics: imbl::OrdMap::new(),
-                        is_async: stmt_function_def.is_async,
-                        parameters,
+
+    let literal_function = LiteralFunction {
+        value: Arc::new(FunctionType {
+            name: identifier.clone(),
+            location: location.clone(),
+            generics: imbl::OrdMap::new(),
+            is_async: stmt_function_def.is_async,
+            parameters,
+        }),
+    };
+
+    let existing_local_attribute = target_abstract_environment
+        .attributes
+        .get(&identifier)
+        .and_then(|existing_attribute| existing_attribute.resolve(&context.namespaces).ok());
+
+    let is_overload = decorators
+        .iter()
+        .any(|decorator_eval| is_overload(&decorator_eval.value));
+
+    let ty = match existing_local_attribute {
+        None => {
+            if is_overload {
+                Type::new_literal(TypeLiteral::OverloadedFunction(LiteralOverloadedFunction {
+                    value: Arc::new(OverloadedFunctionType {
+                        overloads: imbl::vector![literal_function],
+                        target: None,
                     }),
-                }),
-            ))))
-            .with_visibility(Sourced::inferred(visibility)),
+                }))
+            } else {
+                Type::new_literal(TypeLiteral::Function(literal_function))
+            }
+        }
+        Some(local_attribute) => {
+            if let Some(literal_overloaded_function) =
+                as_overloaded_function(local_attribute.attribute_type.data.as_ref())
+            {
+                if is_overload {
+                    Type::new_literal(TypeLiteral::OverloadedFunction(LiteralOverloadedFunction {
+                        value: Arc::new(
+                            literal_overloaded_function
+                                .value
+                                .clone()
+                                .add_overload(literal_function),
+                        ),
+                    }))
+                } else {
+                    Type::new_literal(TypeLiteral::OverloadedFunction(LiteralOverloadedFunction {
+                        value: Arc::new(
+                            literal_overloaded_function
+                                .value
+                                .clone()
+                                .with_target(Some(literal_function)),
+                        ),
+                    }))
+                }
+            } else {
+                Type::new_literal(TypeLiteral::Function(literal_function))
+            }
+        }
+    };
+
+    target_abstract_environment.attributes.insert(
+        identifier,
+        Arc::new(Attribute::Local(
+            LocalAttribute::new(Sourced::inferred(Arc::new(ty)))
+                .with_visibility(Sourced::inferred(visibility)),
         )),
     );
 
