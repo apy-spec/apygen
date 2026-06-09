@@ -261,6 +261,12 @@ pub fn convert_type_literal(
         TypeLiteral::Function(literal_function) => {
             ConvertedTypeLiteral::Function(convert_literal_function(context, literal_function)?)
         }
+        TypeLiteral::OverloadedFunction(literal_overloaded_function) => {
+            ConvertedTypeLiteral::Function(convert_literal_function(
+                context,
+                literal_overloaded_function.value.target.as_ref()?,
+            )?) // TODO: improve the conversion
+        }
         TypeLiteral::Class(literal_class) => {
             ConvertedTypeLiteral::Class(convert_literal_class(context, literal_class)?)
         }

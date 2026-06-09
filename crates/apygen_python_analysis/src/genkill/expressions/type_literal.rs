@@ -33,6 +33,7 @@ pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
         TypeLiteral::Tuple(tuple) => Some(!tuple.value.is_empty()),
         TypeLiteral::Dict(dict) => Some(!dict.values.is_empty()),
         TypeLiteral::Function(_) => None,
+        TypeLiteral::OverloadedFunction(_) => None,
         TypeLiteral::Class(_) => None,
         TypeLiteral::TypeAlias(_) => None,
         TypeLiteral::Generic(_) => None,
@@ -60,6 +61,10 @@ pub fn as_type_instance(type_literal: &TypeLiteral) -> TypeInstance {
         TypeLiteral::Tuple(_) => TypeInstance::builtins("tuple"),
         TypeLiteral::Dict(_) => TypeInstance::builtins("dict"),
         TypeLiteral::Function(_) => TypeInstance::new(
+            Location::from(QualifiedName::parse(TYPES_MODULE)),
+            Identifier::parse("FunctionType"),
+        ),
+        TypeLiteral::OverloadedFunction(_) => TypeInstance::new(
             Location::from(QualifiedName::parse(TYPES_MODULE)),
             Identifier::parse("FunctionType"),
         ),

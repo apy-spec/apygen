@@ -250,6 +250,18 @@ impl StructuralDepth for FunctionType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct OverloadedFunctionType {
+    pub overloads: imbl::Vector<LiteralFunction>,
+    pub target: Option<LiteralFunction>,
+}
+
+impl StructuralDepth for OverloadedFunctionType {
+    fn depth(&self) -> usize {
+        1 + self.overloads.depth() + self.target.depth()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeAliasKind {
     Type,
     String,
@@ -763,6 +775,7 @@ pub enum TypeLiteralKey {
     Tuple(LiteralTuple),
 
     Function(LiteralFunction),
+    OverloadedFunction(LiteralOverloadedFunction),
     Class(LiteralClass),
     TypeAlias(LiteralTypeAlias),
     Generic(LiteralGeneric),
@@ -783,6 +796,9 @@ impl StructuralDepth for TypeLiteralKey {
             | TypeLiteralKey::ImportedModule(_) => 0,
             TypeLiteralKey::Tuple(literal_tuple) => literal_tuple.depth(),
             TypeLiteralKey::Function(literal_function) => literal_function.value.depth(),
+            TypeLiteralKey::OverloadedFunction(literal_overloaded_function) => {
+                literal_overloaded_function.value.depth()
+            }
             TypeLiteralKey::Class(literal_class) => literal_class.value.depth(),
             TypeLiteralKey::TypeAlias(literal_type_alias) => literal_type_alias.value.depth(),
             TypeLiteralKey::Generic(literal_generic) => literal_generic.value.depth(),
@@ -812,6 +828,17 @@ pub struct LiteralFunction {
 }
 
 impl StructuralDepth for LiteralFunction {
+    fn depth(&self) -> usize {
+        self.value.depth()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralOverloadedFunction {
+    pub value: Arc<OverloadedFunctionType>,
+}
+
+impl StructuralDepth for LiteralOverloadedFunction {
     fn depth(&self) -> usize {
         self.value.depth()
     }
@@ -878,6 +905,7 @@ pub enum TypeLiteral {
     Dict(LiteralDict),
 
     Function(LiteralFunction),
+    OverloadedFunction(LiteralOverloadedFunction),
     Class(LiteralClass),
     TypeAlias(LiteralTypeAlias),
     Generic(LiteralGeneric),
@@ -899,6 +927,9 @@ impl StructuralDepth for TypeLiteral {
             TypeLiteral::Tuple(literal_tuple) => literal_tuple.depth(),
             TypeLiteral::Dict(literal_dict) => literal_dict.depth(),
             TypeLiteral::Function(literal_function) => literal_function.depth(),
+            TypeLiteral::OverloadedFunction(literal_overloaded_function) => {
+                literal_overloaded_function.depth()
+            }
             TypeLiteral::Class(literal_class) => literal_class.depth(),
             TypeLiteral::TypeAlias(literal_type_alias) => literal_type_alias.depth(),
             TypeLiteral::Generic(literal_generic) => literal_generic.depth(),
@@ -975,6 +1006,9 @@ impl Display for TypeLiteral {
                     .join(", ")
             ),
             TypeLiteral::Function(_) => {
+                write!(f, "types.FunctionType")
+            }
+            TypeLiteral::OverloadedFunction(_) => {
                 write!(f, "types.FunctionType")
             }
             TypeLiteral::Class(_) => {
