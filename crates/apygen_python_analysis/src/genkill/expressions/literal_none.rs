@@ -1,4 +1,4 @@
-use crate::abstract_environment::{Exception, LiteralBoolean, Type};
+use crate::abstract_environment::{Exception, ExceptionOrigin, LiteralBoolean, Type};
 use crate::genkill::expressions::PyTypeEval;
 use apygen_analysis::cfg::nodes;
 
@@ -21,7 +21,7 @@ pub fn call_not() -> Type {
 pub fn call_unary_op(operator: nodes::UnaryOp) -> PyTypeEval {
     match operator {
         nodes::UnaryOp::Invert | nodes::UnaryOp::UAdd | nodes::UnaryOp::USub => {
-            PyTypeEval::raise(Exception::type_error())
+            PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown))
         }
         nodes::UnaryOp::Not => PyTypeEval::with_default_effects(call_not()),
     }

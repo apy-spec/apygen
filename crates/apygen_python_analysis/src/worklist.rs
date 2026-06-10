@@ -13,7 +13,7 @@ use apygen_analysis::namespace::{
 };
 use apygen_finder::filesystem::{Error as FilesystemError, Filesystem};
 use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
-use log::{debug, info};
+use log::{debug, info, warn};
 use rayon::iter::once;
 use rayon::prelude::*;
 use std::collections::btree_map;
@@ -61,8 +61,8 @@ pub fn add_call(
             let existing_arguments = call_entry.get_mut();
             for (parameter, ty) in arguments.variables {
                 match existing_arguments.variables.entry(parameter) {
-                    btree_map::Entry::Vacant(_) => {
-                        panic!("Should not happen");
+                    btree_map::Entry::Vacant(entry) => {
+                        entry.insert(ty);
                     }
                     btree_map::Entry::Occupied(mut type_entry) => {
                         let existing_type = type_entry.get_mut();
@@ -228,9 +228,20 @@ pub fn worklist(
                 .expect("Should exist since successor is returned by cfg.successors");
 
             for edge in edges {
-                if let Some(res_abstract_environment) = res_abstract_environments
-                    .get(edge)
-                    .or_else(|| res_abstract_environments.get(&EdgeData::Unconditional))
+                if let Some(res_abstract_environment) =
+                    res_abstract_environments.get(edge).or_else(|| match edge {
+                        // TODO: fix when all statements are implemented
+                        EdgeData::Unconditional
+                        | EdgeData::Conditional(_)
+                        | EdgeData::Match(_)
+                        | EdgeData::Break
+                        | EdgeData::Continue
+                        | EdgeData::Return => {
+                            res_abstract_environments.get(&EdgeData::Unconditional)
+                        }
+                        EdgeData::Exception(_, _) => None,
+                        EdgeData::UnhandledException => None,
+                    })
                 {
                     let new_successor_environment = match context
                         .namespaces
@@ -645,6 +656,12 @@ pub fn cfg_worklist<'a, F: Filesystem>(
             "Created the new worklist (after {:?})",
             iteration_start.elapsed()
         );
+
+        if iteration > 100 {
+            // TODO: fix me when more features are implemented
+            warn!("Infinite loop");
+            break;
+        }
     }
 
     Some((namespaces, cfgs))

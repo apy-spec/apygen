@@ -1,4 +1,6 @@
-use crate::abstract_environment::{Exception, LiteralBoolean, LiteralBytes, LiteralInteger, Type};
+use crate::abstract_environment::{
+    Exception, ExceptionOrigin, LiteralBoolean, LiteralBytes, LiteralInteger, Type,
+};
 use crate::genkill::expressions::PyTypeEval;
 use apygen_analysis::cfg::nodes;
 use num_traits::ToPrimitive;
@@ -22,7 +24,7 @@ pub fn call_not(literal_bytes: &LiteralBytes) -> Type {
 pub fn call_unary_op(literal_bytes: &LiteralBytes, operator: nodes::UnaryOp) -> PyTypeEval {
     match operator {
         nodes::UnaryOp::Invert | nodes::UnaryOp::UAdd | nodes::UnaryOp::USub => {
-            PyTypeEval::raise(Exception::type_error())
+            PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown))
         }
         nodes::UnaryOp::Not => PyTypeEval::with_default_effects(call_not(literal_bytes)),
     }
@@ -42,7 +44,7 @@ pub fn call_binary_op(
                 .cloned()
                 .collect(),
         }),
-        _ => return PyTypeEval::raise(Exception::type_error()),
+        _ => return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown)),
     })
 }
 

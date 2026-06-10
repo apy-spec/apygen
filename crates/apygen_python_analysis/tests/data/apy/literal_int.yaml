@@ -3,13 +3,7 @@ modules:
   literal_int:
     summary: ""
     description: ""
-    raises:
-      - exception_type:
-          id: TypeError
-          module: builtins
-          history_index: 0
-          arguments: []
-        description: ""
+    raises: []
     partial: false
     visibility: PUBLIC
     attributes:

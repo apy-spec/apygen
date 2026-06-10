@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, Exception, LiteralClass, LiteralFunction, Type, TypeInstance,
-    TypeLiteral, resolve_local_attribute,
+    AbstractEnvironment, Attribute, Exception, ExceptionOrigin, LiteralClass, LiteralFunction,
+    Type, TypeInstance, TypeLiteral, resolve_local_attribute,
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::{
@@ -41,12 +41,16 @@ pub fn call_literal(type_instance: &TypeInstance, arguments: &Arguments) -> Opti
                 if arguments.positional.len() == 1 && arguments.keyword.is_empty() =>
             {
                 match type_literal.as_ref() {
-                    TypeLiteral::Integer(literal_integer) => Some(PyTypeEval::with_default_effects(
-                        literal_integer::call_dunder_int(literal_integer),
-                    )),
-                    TypeLiteral::Boolean(literal_boolean) => Some(PyTypeEval::with_default_effects(
-                        literal_boolean::call_dunder_int(literal_boolean),
-                    )),
+                    TypeLiteral::Integer(literal_integer) => {
+                        Some(PyTypeEval::with_default_effects(
+                            literal_integer::call_dunder_int(literal_integer),
+                        ))
+                    }
+                    TypeLiteral::Boolean(literal_boolean) => {
+                        Some(PyTypeEval::with_default_effects(
+                            literal_boolean::call_dunder_int(literal_boolean),
+                        ))
+                    }
                     _ => None,
                 }
             }
@@ -57,15 +61,19 @@ pub fn call_literal(type_instance: &TypeInstance, arguments: &Arguments) -> Opti
                 if arguments.positional.len() == 1 && arguments.keyword.is_empty() =>
             {
                 match type_literal.as_ref() {
-                    TypeLiteral::Integer(literal_integer) => Some(PyTypeEval::with_default_effects(
-                        literal_integer::call_dunder_bool(literal_integer),
-                    )),
+                    TypeLiteral::Integer(literal_integer) => {
+                        Some(PyTypeEval::with_default_effects(
+                            literal_integer::call_dunder_bool(literal_integer),
+                        ))
+                    }
                     TypeLiteral::Float(literal_float) => Some(PyTypeEval::with_default_effects(
                         literal_float::call_dunder_bool(literal_float),
                     )),
-                    TypeLiteral::Boolean(literal_boolean) => Some(PyTypeEval::with_default_effects(
-                        literal_boolean::call_dunder_bool(literal_boolean),
-                    )),
+                    TypeLiteral::Boolean(literal_boolean) => {
+                        Some(PyTypeEval::with_default_effects(
+                            literal_boolean::call_dunder_bool(literal_boolean),
+                        ))
+                    }
                     TypeLiteral::Bytes(literal_bytes) => Some(PyTypeEval::with_default_effects(
                         literal_bytes::call_dunder_bool(literal_bytes),
                     )),
@@ -233,7 +241,9 @@ pub fn call(
     }
 
     if !found_new && !found_init {
-        ty = PyTypeEval::raise(Exception::type_error());
+        ty = PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Raised(
+            environment_location.clone(),
+        )));
     }
 
     ty

@@ -58,7 +58,7 @@ impl Arguments {
                         bindings
                             .variables
                             .insert(parameter.clone(), Some(Sourced::inferred(argument)));
-                    } else {
+                    } else if !parameter.is_optional {
                         return Err(BindError::MissingPositionalArgument);
                     }
                 }
@@ -71,7 +71,7 @@ impl Arguments {
                         bindings
                             .variables
                             .insert(parameter.clone(), Some(Sourced::inferred(argument.clone())));
-                    } else {
+                    } else if !parameter.is_optional {
                         return Err(BindError::MissingPositionalOrKeywordArgument);
                     }
                 }
@@ -109,7 +109,7 @@ impl Arguments {
                         bindings
                             .variables
                             .insert(parameter.clone(), Some(Sourced::inferred(argument.clone())));
-                    } else {
+                    } else if !parameter.is_optional {
                         return Err(BindError::MissingKeywordArgument);
                     }
                 }

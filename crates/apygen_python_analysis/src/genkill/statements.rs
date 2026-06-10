@@ -1,8 +1,9 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, ClassType, Deprecation, Diagnostic, Exception, FunctionType,
-    ImportedAttribute, ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule,
-    LiteralOverloadedFunction, LocalAttribute, OverloadedFunctionType, Parameter, ParameterKind,
-    Sourced, TYPING_MODULE, Type, TypeInstance, TypeLiteral, get_attribute,
+    AbstractEnvironment, Attribute, ClassType, Deprecation, Diagnostic, Exception, ExceptionOrigin,
+    FunctionType, ImportedAttribute, ImportedModuleType, LiteralClass, LiteralFunction,
+    LiteralImportedModule, LiteralOverloadedFunction, LocalAttribute, OverloadedFunctionType,
+    Parameter, ParameterKind, Sourced, TYPING_MODULE, Type, TypeInstance, TypeLiteral,
+    get_attribute,
 };
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{EdgeData, nodes};
@@ -123,7 +124,7 @@ pub fn gen_raise(
         .raised_exceptions
         .data
         .exceptions
-        .insert(Exception::from_type(ty.value));
+        .insert(Exception::new(Arc::new(ty.value), ExceptionOrigin::Unknown));
 
     Ok(HashMap::from_iter([(
         EdgeData::UnhandledException,

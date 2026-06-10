@@ -1,6 +1,6 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, Attribute, Exception, GetAttributeError, Type, TypeInstance, TypeLiteral,
-    get_attribute,
+    AbstractEnvironment, Attribute, Exception, ExceptionOrigin, GetAttributeError, Type,
+    TypeInstance, TypeLiteral, get_attribute,
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::literal_class::{
@@ -64,7 +64,10 @@ pub fn call_method(
         .unwrap_or(Vec::new());
 
     if methods.is_empty() {
-        return PyTypeEval::raise(Exception::builtins("AttributeError"));
+        return PyTypeEval::raise(Exception::builtins(
+            "AttributeError",
+            ExceptionOrigin::Raised(environment_location.clone()),
+        ));
     }
 
     let arguments = Arguments {

@@ -31,6 +31,12 @@ pub enum Source {
 
 impl OrdLattice for Source {}
 
+impl Display for Source {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct Sourced<T: Clone> {
     pub data: T,
@@ -118,6 +124,12 @@ impl<M: Clone + PartialEq + Eq + Hash, E: Clone + Default, T: Clone + Namespaces
     }
 }
 
+impl<T: Clone + Display> Display for Sourced<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Sourced(data={}, source={})", self.data, self.source)
+    }
+}
+
 fn iter_depth<'a, S: StructuralDepth + 'a>(iter: impl Iterator<Item = &'a S>) -> usize {
     iter.map(|item| item.depth()).max().unwrap_or(0)
 }
@@ -197,9 +209,23 @@ impl StructuralDepth for GenericType {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ExceptionOrigin {
-    Raised,
+    Unknown,
+    Raised(Location<QualifiedName>),
     Specified,
     Propagated(NamespaceLocation<QualifiedName>),
+}
+
+impl Display for ExceptionOrigin {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExceptionOrigin::Unknown => write!(f, "Unknown"),
+            ExceptionOrigin::Raised(location) => write!(f, "Raised({location})"),
+            ExceptionOrigin::Specified => write!(f, "Specified"),
+            ExceptionOrigin::Propagated(namespace_location) => {
+                write!(f, "Propagated({namespace_location})")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -210,23 +236,36 @@ pub struct Exception {
 }
 
 impl Exception {
-    pub fn from_type(exception_type: Type) -> Self {
+    pub fn new(exception_type: Arc<Type>, origin: ExceptionOrigin) -> Self {
         Exception {
-            exception_type: Arc::new(exception_type),
-            origin: ExceptionOrigin::Raised,
+            exception_type,
+            origin,
         }
     }
 
     pub fn any() -> Self {
-        Exception::from_type(Type::Any)
+        Exception::new(Arc::new(Type::Any), ExceptionOrigin::Unknown)
     }
 
-    pub fn builtins(name: &str) -> Self {
-        Exception::from_type(Type::Instance(TypeInstance::builtins(name)))
+    pub fn builtins(name: &str, origin: ExceptionOrigin) -> Self {
+        Exception::new(
+            Arc::new(Type::Instance(TypeInstance::builtins(name))),
+            origin,
+        )
     }
 
-    pub fn type_error() -> Self {
-        Exception::builtins("TypeError")
+    pub fn type_error(origin: ExceptionOrigin) -> Self {
+        Exception::builtins("TypeError", origin)
+    }
+}
+
+impl Display for Exception {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Exception(type={}, origin={})",
+            self.exception_type, self.origin
+        )
     }
 }
 
@@ -1736,6 +1775,19 @@ impl Lattice for RaisedExceptions {
         let mut exceptions = self.exceptions.clone();
         exceptions.extend(other.exceptions.clone());
         RaisedExceptions { exceptions }
+    }
+}
+
+impl Display for RaisedExceptions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{")?;
+        for (i, exception) in self.exceptions.iter().enumerate() {
+            if i != 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", exception)?;
+        }
+        write!(f, "}}")
     }
 }
 

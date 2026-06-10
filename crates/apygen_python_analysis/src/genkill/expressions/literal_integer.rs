@@ -1,4 +1,4 @@
-use crate::abstract_environment::{Exception, LiteralBoolean, LiteralFloat, LiteralInteger, Type};
+use crate::abstract_environment::{Exception, ExceptionOrigin, LiteralBoolean, LiteralFloat, LiteralInteger, Type};
 use crate::genkill::expressions;
 use crate::genkill::expressions::PyTypeEval;
 use apygen_analysis::cfg::nodes;
@@ -95,7 +95,7 @@ pub fn call_binary_op(
         }
         nodes::Operator::Div => {
             if right.is_zero() {
-                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError"));
+                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
             }
 
             let (left, right) = match (left, right) {
@@ -124,14 +124,14 @@ pub fn call_binary_op(
         }
         nodes::Operator::FloorDiv => {
             if right.is_zero() {
-                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError"));
+                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
             }
 
             Type::new_integer_literal(left / right)
         }
         nodes::Operator::Mod => {
             if right.is_zero() {
-                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError"));
+                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
             }
 
             Type::new_integer_literal(left % right)
@@ -167,6 +167,6 @@ pub fn call_binary_op(
         nodes::Operator::BitOr => Type::new_integer_literal(left | right),
         nodes::Operator::BitXor => Type::new_integer_literal(left ^ right),
         nodes::Operator::BitAnd => Type::new_integer_literal(left & right),
-        nodes::Operator::MatMult => return PyTypeEval::raise(Exception::type_error()),
+        nodes::Operator::MatMult => return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown)),
     })
 }

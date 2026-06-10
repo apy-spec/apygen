@@ -10,6 +10,42 @@ modules:
           history_index: 0
           arguments: []
         description: ""
+      - exception_type:
+          id: TypeError
+          module: builtins
+          history_index: 0
+          arguments: []
+        description: ""
+      - exception_type:
+          id: TypeError
+          module: builtins
+          history_index: 0
+          arguments: []
+        description: ""
+      - exception_type:
+          id: TypeError
+          module: builtins
+          history_index: 0
+          arguments: []
+        description: ""
+      - exception_type:
+          id: TypeError
+          module: builtins
+          history_index: 0
+          arguments: []
+        description: ""
+      - exception_type:
+          id: TypeError
+          module: builtins
+          history_index: 0
+          arguments: []
+        description: ""
+      - exception_type:
+          id: TypeError
+          module: builtins
+          history_index: 0
+          arguments: []
+        description: ""
     partial: false
     visibility: PUBLIC
     attributes:

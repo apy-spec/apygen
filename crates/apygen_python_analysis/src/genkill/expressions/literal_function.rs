@@ -1,4 +1,4 @@
-use crate::abstract_environment::{Exception, LiteralFunction, Type, TypeLiteral};
+use crate::abstract_environment::{Exception, ExceptionOrigin, LiteralFunction, Type, TypeLiteral};
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::{PyEffects, PyTypeEval};
 use crate::worklist::{WorklistContext, add_call, add_dependent};
@@ -12,12 +12,13 @@ pub fn as_literal_functions(ty: &Type) -> Vec<LiteralFunction> {
             .iter()
             .flat_map(|union_ty| as_literal_functions(union_ty))
             .collect(),
-        Type::Literal(type_literal) => {
-            let TypeLiteral::Function(function_type) = type_literal.as_ref() else {
-                return Vec::new();
-            };
-            vec![function_type.clone()]
-        }
+        Type::Literal(type_literal) => match type_literal.as_ref() {
+            TypeLiteral::Function(function_type) => vec![function_type.clone()],
+            TypeLiteral::OverloadedFunction(overloaded_function_type) => {
+                Vec::from_iter(overloaded_function_type.value.overloads.clone())
+            }
+            _ => Vec::new(),
+        },
         _ => Vec::new(),
     }
 }
@@ -29,7 +30,9 @@ pub fn call(
     arguments: &Arguments,
 ) -> PyTypeEval {
     let Ok(bindings) = arguments.bind(&literal_function.value.parameters) else {
-        return PyTypeEval::raise(Exception::builtins("TypeError"));
+        return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Raised(
+            environment_location.clone(),
+        )));
     };
 
     let result = if let Some(environment) =
