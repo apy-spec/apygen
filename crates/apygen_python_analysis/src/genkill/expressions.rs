@@ -704,7 +704,20 @@ pub fn gen_subscript(
         gen_expr(context, environment_location, &expr_subscript.slice)
     );
 
-    let ty = pytype_consume_or_return!(effects, PyValueEval::unknown());  // TODO: fix subscript
+    let ty = match target_ty {
+        Type::Instance(type_instance) => pytype_consume_or_return!(
+            effects,
+            type_instance::call_method(
+                context,
+                environment_location,
+                &type_instance,
+                &Identifier::parse("__getitem__"),
+                vec![Arc::new(slice_ty)],
+                BTreeMap::new(),
+            )
+        ),
+        _ => return PyTypeEval::unknown().extend_effects(&effects),
+    };
 
     PyTypeEval::new(ty, effects)
 }

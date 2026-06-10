@@ -3,23 +3,22 @@ modules:
   list_operations:
     summary: ""
     description: ""
-    raises:
-      - exception_type:
-          id: Any
-          module: typing
-          history_index: 0
-          arguments: []
-        description: ""
+    raises: []
     partial: false
     visibility: PUBLIC
     attributes:
       first:
         kind: VARIABLE
         type:
-          id: Any
+          id: Union
           module: typing
           history_index: 0
-          arguments: []
+          arguments:
+            - id: Never
+              module: typing
+              history_index: 0
+              arguments: []
+            - None
         description: ""
         initialised: true
         readonly: false
@@ -46,10 +45,15 @@ modules:
       second:
         kind: VARIABLE
         type:
-          id: Any
+          id: Union
           module: typing
           history_index: 0
-          arguments: []
+          arguments:
+            - id: Never
+              module: typing
+              history_index: 0
+              arguments: []
+            - None
         description: ""
         initialised: true
         readonly: false
