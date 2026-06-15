@@ -266,7 +266,7 @@ mod tests {
     use std::sync::Arc;
 
     fn create_namespace_location() -> NamespaceLocation<QualifiedName> {
-        NamespaceLocation::new(Arc::new(QualifiedName::parse("test_module")))
+        NamespaceLocation::from(Arc::new(QualifiedName::parse("test_module")))
     }
 
     fn get_class<'a>(
@@ -303,12 +303,12 @@ mod tests {
         let mut current_point_id: usize = 0;
 
         namespace
-            .environments
+            .abstract_environments
             .insert(previous_point, AbstractEnvironment::new());
 
         for (name, bases) in classes {
             let mut current_environment = namespace
-                .environments
+                .abstract_environments
                 .get(&previous_point)
                 .cloned()
                 .unwrap_or_default();
@@ -338,16 +338,16 @@ mod tests {
             );
 
             namespace
-                .environments
+                .abstract_environments
                 .insert(current_point, current_environment);
             previous_point = current_point;
             current_point_id = current_point_id + 1;
         }
 
-        namespace.environments.insert(
+        namespace.abstract_environments.insert(
             ProgramPoint::Exit,
             namespace
-                .environments
+                .abstract_environments
                 .get(&previous_point)
                 .cloned()
                 .unwrap_or_default(),

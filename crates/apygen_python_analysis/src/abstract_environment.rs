@@ -1740,7 +1740,7 @@ pub fn resolve_local_attribute<'a>(
     }
 
     let builtins_namespace_location =
-        NamespaceLocation::new(Arc::new(QualifiedName::parse(BUILTINS_MODULE)));
+        NamespaceLocation::from(Arc::new(QualifiedName::parse(BUILTINS_MODULE)));
 
     if location.namespace_location != builtins_namespace_location {
         return resolve_local_attribute(

@@ -85,7 +85,11 @@ pub fn gen_expr_qualified_name(
     };
 
     if origin.namespace_location.module.identifiers.first() != TYPING_MODULE
-        || !origin.namespace_location.program_points.is_empty()
+        || !origin
+            .namespace_location
+            .sublocation
+            .program_points
+            .is_empty()
     {
         return Ok(Type::Instance(TypeInstance::new(origin, name.clone())));
     }

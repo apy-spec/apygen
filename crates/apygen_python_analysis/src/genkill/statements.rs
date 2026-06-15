@@ -390,7 +390,7 @@ pub fn is_overload(ty: &Type) -> bool {
     };
 
     literal_function.value.location.namespace_location
-        == NamespaceLocation::new(Arc::new(QualifiedName::parse(TYPING_MODULE)))
+        == NamespaceLocation::from(Arc::new(QualifiedName::parse(TYPING_MODULE)))
         && literal_function.value.name.as_ref() == &Identifier::parse("overload")
 }
 

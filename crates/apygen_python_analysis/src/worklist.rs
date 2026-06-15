@@ -493,7 +493,7 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                     {
                         context
                             .dependents
-                            .entry(NamespaceLocation::new(Arc::new(QualifiedName::parse(
+                            .entry(NamespaceLocation::from(Arc::new(QualifiedName::parse(
                                 BUILTINS_MODULE,
                             ))))
                             .or_default()
@@ -602,7 +602,7 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                 .into_par_iter()
                 .filter_map(|(location, namespace)| {
                     if let Some(existing_namespace) = namespaces_ref.locations.get(&location) {
-                        if existing_namespace.environments != namespace.environments {
+                        if existing_namespace.abstract_environments != namespace.abstract_environments {
                             Some((location, namespace))
                         } else {
                             None
@@ -648,7 +648,7 @@ pub fn cfg_worklist<'a, F: Filesystem>(
 
         cfg_worklist.extend(
             cfgs.keys()
-                .map(|module| NamespaceLocation::new(module.clone()))
+                .map(|module| NamespaceLocation::from(module.clone()))
                 .filter(|module| !namespaces.locations.contains_key(module)),
         );
 

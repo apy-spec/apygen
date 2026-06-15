@@ -17,7 +17,7 @@ pub fn is_internal_mangled_name(name: &str) -> bool {
     name.starts_with("__") && !name.ends_with("__")
 }
 
-pub fn visibility_from_module_name(name: &QualifiedName) -> Visibility {
+pub fn visibility_from_name(name: &QualifiedName) -> Visibility {
     if name
         .identifiers
         .iter()
@@ -59,6 +59,7 @@ pub fn gen_visibility(
             let data = cfg
                 .node_data(
                     &namespace_location
+                        .sublocation
                         .program_points
                         .last()
                         .expect("Program point not found"),

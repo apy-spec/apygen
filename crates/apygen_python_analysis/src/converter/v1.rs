@@ -5,7 +5,7 @@ use crate::abstract_environment::{
     LiteralTypeAlias, QualifiedName, RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type,
     TypeInstance, TypeLiteral, TypeUnion,
 };
-use crate::genkill::visibility::visibility_from_module_name;
+use crate::genkill::visibility::visibility_from_name;
 use apy;
 use apygen_analysis::namespace::{Location, NamespaceLocation, Namespaces};
 use rayon::iter::IntoParallelIterator;
@@ -514,7 +514,7 @@ pub fn convert_module(
     context: &impl Namespaces<QualifiedName, AbstractEnvironment>,
     module: &Arc<apy::v1::QualifiedName>,
 ) -> Option<apy::v1::Module> {
-    let namespace_location = NamespaceLocation::new(module.clone());
+    let namespace_location = NamespaceLocation::from(module.clone());
 
     let Some(abstract_environment) =
         context.get_abstract_environment(&Location::at_exit(namespace_location))
@@ -535,7 +535,7 @@ pub fn convert_module(
             context,
             &abstract_environment.raised_exceptions.data,
         )?)
-        .with_visibility(visibility_from_module_name(&module).into()),
+        .with_visibility(visibility_from_name(&module).into()),
     )
 }
 
