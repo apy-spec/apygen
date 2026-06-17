@@ -378,7 +378,7 @@ pub struct ImportedModuleType {
     pub submodules: imbl::OrdSet<Arc<QualifiedName>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LiteralInteger {
     Int(i64),
     BigInt(BigInt),
@@ -692,7 +692,7 @@ impl Display for LiteralInteger {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LiteralBoolean {
     pub value: bool,
 }
@@ -714,7 +714,7 @@ impl LiteralFloat {
     }
 }
 
-// LiteralFloat is metadata about a float literal so we can implement Eq and Ord.
+// LiteralFloat is metadata about a float literal so we can implement Eq, Ord and Hash.
 impl PartialEq<Self> for LiteralFloat {
     fn eq(&self, other: &Self) -> bool {
         if self.value.is_nan() {
@@ -745,12 +745,18 @@ impl Ord for LiteralFloat {
     }
 }
 
+impl Hash for LiteralFloat {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.value.to_bits().hash(state);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LiteralComplex {
     pub value: Complex64,
 }
 
-// LiteralComplex is metadata about a complex literal so we can implement Eq and Ord.
+// LiteralComplex is metadata about a complex literal so we can implement Eq, Ord and Hash.
 impl PartialEq for LiteralComplex {
     fn eq(&self, other: &Self) -> bool {
         LiteralFloat::new(self.value.re) == LiteralFloat::new(other.value.re)
@@ -777,7 +783,14 @@ impl Ord for LiteralComplex {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+impl Hash for LiteralComplex {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.value.re.to_bits().hash(state);
+        self.value.im.to_bits().hash(state);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LiteralString {
     pub value: Arc<String>,
 }
@@ -790,7 +803,7 @@ impl LiteralString {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LiteralBytes {
     pub value: imbl::Vector<u8>,
 }

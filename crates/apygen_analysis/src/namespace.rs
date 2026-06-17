@@ -165,7 +165,7 @@ impl<E: Clone + Default> Namespace<E> {
         self.abstract_environments.get(&ProgramPoint::Exit)
     }
 
-    pub fn clone_abstract_environment(&self, program_point: ProgramPoint) -> E {
+    pub fn clone_abstract_environment_or_default(&self, program_point: ProgramPoint) -> E {
         self.abstract_environments
             .get(&program_point)
             .cloned()
