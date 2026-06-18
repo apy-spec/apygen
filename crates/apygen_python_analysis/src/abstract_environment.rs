@@ -1,4 +1,4 @@
-use crate::analysis::lattice::NamespacesLattice;
+use crate::analysis::lattice::ContextualLattice;
 use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
 pub use apy::OneOrMany;
 pub use apy::v1::{GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName};
@@ -90,32 +90,26 @@ impl<T: Clone + Lattice> Lattice for Sourced<T> {
     }
 }
 
-impl<M: Clone + PartialEq + Eq + Hash, E: Clone + Default, T: Clone + NamespacesLattice<M, E>>
-    NamespacesLattice<M, E> for Sourced<T>
-{
+impl<C, T: ContextualLattice<C> + Clone> ContextualLattice<C> for Sourced<T> {
     type Error = T::Error;
 
-    fn includes(
-        &self,
-        namespaces: &impl Namespaces<M, E>,
-        other: &Self,
-    ) -> Result<bool, Self::Error> {
+    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
         match (&self.source, &other.source) {
-            (Source::Specified, Source::Specified) => self.data.includes(namespaces, &other.data),
-            (Source::Inferred, Source::Inferred) => self.data.includes(namespaces, &other.data),
+            (Source::Specified, Source::Specified) => self.data.includes(context, &other.data),
+            (Source::Inferred, Source::Inferred) => self.data.includes(context, &other.data),
             (Source::Inferred, Source::Specified) => Ok(false),
             (Source::Specified, Source::Inferred) => Ok(true),
         }
     }
 
-    fn join(&self, namespaces: &impl Namespaces<M, E>, other: &Self) -> Result<Self, Self::Error> {
+    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
         match (&self.source, &other.source) {
             (Source::Specified, Source::Specified) => Ok(Sourced {
-                data: self.data.join(namespaces, &other.data)?,
+                data: self.data.join(context, &other.data)?,
                 source: Source::Specified,
             }),
             (Source::Inferred, Source::Inferred) => Ok(Sourced {
-                data: self.data.join(namespaces, &other.data)?,
+                data: self.data.join(context, &other.data)?,
                 source: Source::Inferred,
             }),
             (Source::Inferred, Source::Specified) => Ok(other.clone()),
@@ -1304,14 +1298,10 @@ impl Type {
     }
 }
 
-impl NamespacesLattice<QualifiedName, AbstractEnvironment> for Type {
+impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C> for Type {
     type Error = GetAttributeError;
 
-    fn includes(
-        &self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: &Self,
-    ) -> Result<bool, Self::Error> {
+    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
         if self == other {
             return Ok(true);
         }
@@ -1331,23 +1321,19 @@ impl NamespacesLattice<QualifiedName, AbstractEnvironment> for Type {
                 if let Type::Intersection(other_type_intersection) = other {
                     Ok(type_intersection.is_subset(other_type_intersection))
                 } else {
-                    other.includes(namespaces, self)
+                    other.includes(context, self)
                 }
             }
             Type::Literal(_) => Ok(false),
         }
     }
 
-    fn join(
-        &self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: &Self,
-    ) -> Result<Self, Self::Error> {
+    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
         Ok(if self == other {
             self.clone()
-        } else if self.includes(namespaces, other)? {
+        } else if self.includes(context, other)? {
             self.clone()
-        } else if other.includes(namespaces, self)? {
+        } else if other.includes(context, self)? {
             other.clone()
         } else {
             let mut type_union = TypeUnion::new();
@@ -1522,21 +1508,17 @@ impl LocalAttribute {
     }
 }
 
-impl NamespacesLattice<QualifiedName, AbstractEnvironment> for LocalAttribute {
+impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C> for LocalAttribute {
     type Error = GetAttributeError;
 
-    fn includes(
-        &self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: &Self,
-    ) -> Result<bool, Self::Error> {
+    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
         if self == other {
             return Ok(true);
         }
 
         Ok(self
             .attribute_type
-            .includes(namespaces, &other.attribute_type)?
+            .includes(context, &other.attribute_type)?
             && self.visibility.includes(&other.visibility)
             && self.initialisation.includes(&other.initialisation)
             && self.mutability.includes(&other.mutability)
@@ -1544,18 +1526,12 @@ impl NamespacesLattice<QualifiedName, AbstractEnvironment> for LocalAttribute {
             && self.deprecation.includes(&other.deprecation))
     }
 
-    fn join(
-        &self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: &Self,
-    ) -> Result<Self, Self::Error> {
+    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
         if self == other {
             return Ok(self.clone());
         }
 
-        let mut attribute_type = self
-            .attribute_type
-            .join(namespaces, &other.attribute_type)?;
+        let mut attribute_type = self.attribute_type.join(context, &other.attribute_type)?;
 
         if attribute_type.data.depth() > DEPTH_LIMIT {
             attribute_type.data = Arc::new(Type::Any);
@@ -1633,34 +1609,26 @@ impl Attribute {
     }
 }
 
-impl NamespacesLattice<QualifiedName, AbstractEnvironment> for Attribute {
+impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C> for Attribute {
     type Error = GetAttributeError;
 
-    fn includes(
-        &self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: &Self,
-    ) -> Result<bool, Self::Error> {
+    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
         if self == other {
             return Ok(true);
         }
 
-        self.as_local(namespaces)?
-            .includes(namespaces, &other.as_local(namespaces)?)
+        self.as_local(context)?
+            .includes(context, &other.as_local(context)?)
     }
 
-    fn join(
-        &self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: &Self,
-    ) -> Result<Self, Self::Error> {
+    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
         if self == other {
             return Ok(self.clone());
         }
 
         Ok(match (self, other) {
             (Attribute::Local(self_local_attribute), Attribute::Local(other_local_attribute)) => {
-                Attribute::Local(self_local_attribute.join(namespaces, other_local_attribute)?)
+                Attribute::Local(self_local_attribute.join(context, other_local_attribute)?)
             }
             (
                 Attribute::Imported(self_imported_attribute),
@@ -1682,8 +1650,8 @@ impl NamespacesLattice<QualifiedName, AbstractEnvironment> for Attribute {
                 } else {
                     Attribute::Local(
                         self_imported_attribute
-                            .as_local(namespaces)?
-                            .join(namespaces, &other_imported_attribute.as_local(namespaces)?)?,
+                            .as_local(context)?
+                            .join(context, &other_imported_attribute.as_local(context)?)?,
                     )
                 }
             }
@@ -1691,16 +1659,15 @@ impl NamespacesLattice<QualifiedName, AbstractEnvironment> for Attribute {
                 Attribute::Local(self_local_attribute),
                 Attribute::Imported(other_imported_attribute),
             ) => Attribute::Local(
-                self_local_attribute
-                    .join(namespaces, &other_imported_attribute.as_local(namespaces)?)?,
+                self_local_attribute.join(context, &other_imported_attribute.as_local(context)?)?,
             ),
             (
                 Attribute::Imported(self_imported_attribute),
                 Attribute::Local(other_local_attribute),
             ) => Attribute::Local(
                 self_imported_attribute
-                    .as_local(namespaces)?
-                    .join(namespaces, other_local_attribute)?,
+                    .as_local(context)?
+                    .join(context, other_local_attribute)?,
             ),
         })
     }
@@ -1882,18 +1849,16 @@ impl AbstractEnvironment {
     }
 }
 
-impl NamespacesLattice<QualifiedName, AbstractEnvironment> for AbstractEnvironment {
+impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C>
+    for AbstractEnvironment
+{
     type Error = GetAttributeError;
 
-    fn includes(
-        &self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: &Self,
-    ) -> Result<bool, Self::Error> {
+    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
         for (name, other_attribute) in &other.attributes {
             match self.attributes.get(name) {
                 Some(self_attribute) => {
-                    if !self_attribute.includes(namespaces, &other_attribute)? {
+                    if !self_attribute.includes(context, &other_attribute)? {
                         return Ok(false);
                     }
                 }
@@ -1903,18 +1868,14 @@ impl NamespacesLattice<QualifiedName, AbstractEnvironment> for AbstractEnvironme
 
         Ok(self
             .returned_value
-            .includes(namespaces, &other.returned_value)?
+            .includes(context, &other.returned_value)?
             && self.raised_exceptions.includes(&other.raised_exceptions)
             && self.completeness.includes(&other.completeness)
             && self.pureness.includes(&other.pureness)
             && other.diagnostics.is_subset(&self.diagnostics))
     }
 
-    fn join(
-        &self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: &Self,
-    ) -> Result<Self, Self::Error> {
+    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
         let mut attributes = self.attributes.clone();
 
         for (name, other_attribute) in &other.attributes {
@@ -1922,7 +1883,7 @@ impl NamespacesLattice<QualifiedName, AbstractEnvironment> for AbstractEnvironme
                 imbl::hashmap::Entry::Occupied(mut entry) => {
                     let self_attribute = entry.get_mut();
 
-                    *self_attribute = self_attribute.join(namespaces, other_attribute)?;
+                    *self_attribute = self_attribute.join(context, other_attribute)?;
                 }
                 imbl::hashmap::Entry::Vacant(entry) => {
                     entry.insert(other_attribute.clone());
@@ -1935,9 +1896,7 @@ impl NamespacesLattice<QualifiedName, AbstractEnvironment> for AbstractEnvironme
 
         Ok(AbstractEnvironment {
             attributes,
-            returned_value: self
-                .returned_value
-                .join(namespaces, &other.returned_value)?,
+            returned_value: self.returned_value.join(context, &other.returned_value)?,
             raised_exceptions: self.raised_exceptions.join(&other.raised_exceptions),
             completeness: self.completeness.join(&other.completeness),
             pureness: self.pureness.join(&other.pureness),

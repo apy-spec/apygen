@@ -1,63 +1,39 @@
-use crate::namespace::Namespaces;
 use std::convert::Infallible;
-use std::hash::Hash;
 use std::sync::Arc;
 
-pub trait NamespacesLattice<M: Clone + PartialEq + Eq + Hash, E: Clone + Default>: Sized {
+pub trait ContextualLattice<C>: Sized {
     type Error;
 
-    fn includes(
-        &self,
-        namespaces: &impl Namespaces<M, E>,
-        other: &Self,
-    ) -> Result<bool, Self::Error>;
+    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error>;
 
-    fn join(&self, namespaces: &impl Namespaces<M, E>, other: &Self) -> Result<Self, Self::Error>;
+    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error>;
 }
 
-impl<
-    M: Clone + PartialEq + Eq + Hash,
-    E: Clone + Default,
-    L: NamespacesLattice<M, E> + PartialEq + Eq,
-> NamespacesLattice<M, E> for Arc<L>
-{
-    type Error = L::Error;
+impl<C, T: ContextualLattice<C> + PartialEq + Eq> ContextualLattice<C> for Arc<T> {
+    type Error = T::Error;
 
-    fn includes(
-        &self,
-        namespaces: &impl Namespaces<M, E>,
-        other: &Self,
-    ) -> Result<bool, Self::Error> {
+    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
         if self == other {
             return Ok(true);
         }
-        self.as_ref().includes(namespaces, other)
+        self.as_ref().includes(context, other.as_ref())
     }
 
-    fn join(&self, namespaces: &impl Namespaces<M, E>, other: &Self) -> Result<Self, Self::Error> {
+    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
         if self == other {
             return Ok(self.clone());
         }
-        Ok(Arc::new(self.as_ref().join(namespaces, other)?))
+        Ok(Arc::new(self.as_ref().join(context, other.as_ref())?))
     }
 }
 
-impl<
-    M: Clone + PartialEq + Eq + Hash,
-    E: Clone + Default,
-    L: NamespacesLattice<M, E> + PartialEq + Eq + Clone,
-> NamespacesLattice<M, E> for Option<L>
-{
-    type Error = L::Error;
+impl<C, T: ContextualLattice<C> + Clone> ContextualLattice<C> for Option<T> {
+    type Error = T::Error;
 
-    fn includes(
-        &self,
-        namespaces: &impl Namespaces<M, E>,
-        other: &Self,
-    ) -> Result<bool, Self::Error> {
+    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
         Ok(match (self, other) {
             (Some(self_lattice), Some(other_lattice)) => {
-                self_lattice.includes(namespaces, other_lattice)?
+                self_lattice.includes(context, other_lattice)?
             }
             (Some(_), None) => true,
             (None, Some(_)) => false,
@@ -65,10 +41,10 @@ impl<
         })
     }
 
-    fn join(&self, namespaces: &impl Namespaces<M, E>, other: &Self) -> Result<Self, Self::Error> {
+    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
         Ok(match (self, other) {
             (Some(self_lattice), Some(other_lattice)) => {
-                Some(self_lattice.join(namespaces, other_lattice)?)
+                Some(self_lattice.join(context, other_lattice)?)
             }
             (Some(self_lattice), None) => Some(self_lattice.clone()),
             (None, Some(other_lattice)) => Some(other_lattice.clone()),
@@ -83,7 +59,7 @@ pub trait Lattice {
     fn join(&self, other: &Self) -> Self;
 }
 
-impl<L: Lattice + PartialEq + Eq> Lattice for Arc<L> {
+impl<T: Lattice + PartialEq + Eq> Lattice for Arc<T> {
     fn includes(&self, other: &Self) -> bool {
         if self == other {
             return true;
@@ -99,7 +75,7 @@ impl<L: Lattice + PartialEq + Eq> Lattice for Arc<L> {
     }
 }
 
-impl<L: Lattice + PartialEq + Eq + Clone> Lattice for Option<L> {
+impl<T: Lattice + Clone> Lattice for Option<T> {
     fn includes(&self, other: &Self) -> bool {
         match (self, other) {
             (Some(self_lattice), Some(other_lattice)) => self_lattice.includes(other_lattice),
@@ -121,20 +97,14 @@ impl<L: Lattice + PartialEq + Eq + Clone> Lattice for Option<L> {
 
 pub trait InfallibleLattice: Lattice {}
 
-impl<L: InfallibleLattice, M: Clone + PartialEq + Eq + Hash, E: Clone + Default>
-    NamespacesLattice<M, E> for L
-{
+impl<C, T: InfallibleLattice> ContextualLattice<C> for T {
     type Error = Infallible;
 
-    fn includes(
-        &self,
-        _namespaces: &impl Namespaces<M, E>,
-        other: &Self,
-    ) -> Result<bool, Self::Error> {
+    fn includes(&self, _context: &C, other: &Self) -> Result<bool, Self::Error> {
         Ok(self.includes(other))
     }
 
-    fn join(&self, _namespaces: &impl Namespaces<M, E>, other: &Self) -> Result<Self, Self::Error> {
+    fn join(&self, _context: &C, other: &Self) -> Result<Self, Self::Error> {
         Ok(self.join(other))
     }
 }

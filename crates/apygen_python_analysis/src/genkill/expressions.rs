@@ -29,7 +29,7 @@ use apygen_analysis::cfg::nodes::{
     Expr, ExprAttribute, ExprBinOp, ExprBoolOp, ExprCall, ExprName, ExprSubscript, ExprUnaryOp,
     Operator,
 };
-use apygen_analysis::lattice::{Lattice, NamespacesLattice};
+use apygen_analysis::lattice::{ContextualLattice, Lattice};
 use apygen_analysis::namespace::Namespaces;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -113,26 +113,16 @@ impl<T> PyValueEval<T> {
     }
 }
 
-impl<L: NamespacesLattice<QualifiedName, AbstractEnvironment>>
-    NamespacesLattice<QualifiedName, AbstractEnvironment> for PyValueEval<L>
-{
+impl<C, L: ContextualLattice<C>> ContextualLattice<C> for PyValueEval<L> {
     type Error = L::Error;
 
-    fn includes(
-        &self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: &Self,
-    ) -> Result<bool, Self::Error> {
-        Ok(self.value.includes(namespaces, &other.value)? && self.effects.includes(&other.effects))
+    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
+        Ok(self.value.includes(context, &other.value)? && self.effects.includes(&other.effects))
     }
 
-    fn join(
-        &self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-        other: &Self,
-    ) -> Result<Self, Self::Error> {
+    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
         Ok(PyValueEval {
-            value: self.value.join(namespaces, &other.value)?,
+            value: self.value.join(context, &other.value)?,
             effects: self.effects.join(&other.effects),
         })
     }

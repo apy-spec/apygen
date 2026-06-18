@@ -7,7 +7,7 @@ use crate::genkill::visibility::gen_visibility;
 use apy::OneOrMany;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint};
-pub use apygen_analysis::lattice::NamespacesLattice;
+pub use apygen_analysis::lattice::ContextualLattice;
 use apygen_analysis::namespace::{
     Location, NamespaceLocation, NamespaceLocations, NamespaceLocationsProxy, Namespaces,
 };
@@ -602,7 +602,9 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                 .into_par_iter()
                 .filter_map(|(location, namespace)| {
                     if let Some(existing_namespace) = namespaces_ref.locations.get(&location) {
-                        if existing_namespace.abstract_environments != namespace.abstract_environments {
+                        if existing_namespace.abstract_environments
+                            != namespace.abstract_environments
+                        {
                             Some((location, namespace))
                         } else {
                             None

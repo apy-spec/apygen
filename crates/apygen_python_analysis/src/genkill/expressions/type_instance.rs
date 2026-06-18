@@ -9,7 +9,7 @@ use crate::genkill::expressions::literal_class::{
 use crate::genkill::expressions::{PyTypeEval, literal_function};
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::lattice::NamespacesLattice;
+use apygen_analysis::lattice::ContextualLattice;
 use apygen_analysis::namespace::{Location, Namespaces};
 use std::collections::BTreeMap;
 use std::sync::Arc;

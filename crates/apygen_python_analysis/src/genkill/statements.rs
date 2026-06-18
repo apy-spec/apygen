@@ -16,7 +16,7 @@ use crate::genkill::visibility::gen_visibility;
 use crate::worklist::WorklistContext;
 use apy::OneOrMany;
 use apy::v1::{Identifier, ParseIdentifierError, ParseQualifiedNameError, QualifiedName};
-use apygen_analysis::lattice::NamespacesLattice;
+use apygen_analysis::lattice::ContextualLattice;
 use imbl::Vector;
 use std::collections::HashMap;
 use std::sync::Arc;
