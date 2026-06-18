@@ -830,6 +830,52 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(target_abstract_environment)
     }
 
+    pub fn gen_stmt_ann_assign(
+        &self,
+        namespace: &Namespace<AbstractEnvironment>,
+        program_point: ProgramPoint,
+        stmt_ann_assign: &nodes::StmtAnnAssign,
+    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
+        let mut target_abstract_environment =
+            namespace.clone_abstract_environment_or_default(program_point);
+
+        let Ok(target) = AssignmentTarget::try_from(stmt_ann_assign.target.as_ref()) else {
+            todo!("add the right error");
+        };
+
+        match target {
+            AssignmentTarget::Name(target_name) => {
+                let identifier: VariableName = Arc::new(target_name);
+                if let Some(value) = &stmt_ann_assign.value {
+                    target_abstract_environment
+                        .contraints
+                        .insert(Arc::new(Constraint::Type(ConstraintDefinition::equal(
+                            TypeExpression::Variable(ExpressionVariable::new(
+                                identifier.clone(),
+                                program_point,
+                            )),
+                            self.gen_expr(namespace, program_point, value.as_ref())?,
+                        ))));
+                    match target_abstract_environment.variables.entry(identifier) {
+                        imbl::ordmap::Entry::Vacant(entry) => {
+                            entry.insert(imbl::ordset![program_point]);
+                        }
+                        imbl::ordmap::Entry::Occupied(mut entry) => {
+                            entry.get_mut().insert(program_point);
+                        }
+                    }
+                }
+            }
+            AssignmentTarget::Attribute { .. } => todo!(),
+            AssignmentTarget::Subscript { .. } => todo!(),
+            AssignmentTarget::Starred(_) => todo!("impossible"),
+            AssignmentTarget::Tuple(_) => todo!("impossible"),
+            AssignmentTarget::List(_) => todo!("impossible"),
+        }
+
+        Ok(target_abstract_environment)
+    }
+
     pub fn gen_stmt(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
@@ -855,8 +901,8 @@ impl<'a> ConstraintsBuilder<'a> {
             nodes::Stmt::AugAssign(_) => {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
             }
-            nodes::Stmt::AnnAssign(_) => {
-                Ok(namespace.clone_abstract_environment_or_default(program_point))
+            nodes::Stmt::AnnAssign(stmt_ann_assign) => {
+                self.gen_stmt_ann_assign(namespace, program_point, stmt_ann_assign)
             }
             nodes::Stmt::TypeAlias(_) => {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
@@ -1248,7 +1294,10 @@ mod tests {
 
         assert_eq!(
             abstract_environment.contraints,
-            imbl::OrdSet::from_iter([equal_constraint(variable_expr("a", 0), literal_int_expr(42))])
+            imbl::OrdSet::from_iter([equal_constraint(
+                variable_expr("a", 0),
+                literal_int_expr(42)
+            )])
         );
     }
 
