@@ -6,7 +6,7 @@ use apy::OneOrMany;
 use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
 use apygen_analysis::CfgAnalyser;
 use apygen_analysis::cfg::nodes::Number;
-use apygen_analysis::cfg::{Cfg, NodeData, ProgramPoint, nodes};
+use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint, nodes};
 use apygen_analysis::lattice::{ContextualLattice, Lattice};
 use apygen_analysis::namespace::Namespace;
 use num_bigint::BigInt;
@@ -128,20 +128,6 @@ pub struct ExpressionImportFrom {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Guard {
-    IsTrue(Arc<TypeExpression>),
-    IsFalse(Arc<TypeExpression>),
-    Succeed(Arc<TypeExpression>),
-    Fail(Arc<TypeExpression>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ExpressionGuarded {
-    guard: Guard,
-    expression: Arc<TypeExpression>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionJoin {
     values: imbl::OrdSet<Arc<TypeExpression>>,
 }
@@ -216,7 +202,6 @@ pub enum TypeExpression {
     LiteralBoolean(LiteralBoolean),
     LiteralNone,
     LiteralEllipsis,
-    Guarded(ExpressionGuarded),
     Join(ExpressionJoin),
 }
 
@@ -224,6 +209,23 @@ pub enum TypeExpression {
 pub enum ExceptionExpression {
     Scope(ScopeId),
     Type(Arc<TypeExpression>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Guard {
+    IsTrue(Arc<TypeExpression>),
+    IsFalse(Arc<TypeExpression>),
+    Succeed(Arc<TypeExpression>),
+    Raise {
+        expression: Arc<TypeExpression>,
+        exception: Option<Arc<TypeExpression>>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ConstraintGuarded {
+    guards: imbl::OrdSet<Guard>,
+    constraint: Arc<Constraint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -257,6 +259,7 @@ impl<T: Clone> ConstraintDefinition<T> {
 pub enum Constraint {
     Type(ConstraintDefinition<TypeExpression>),
     Exception(ConstraintDefinition<ExceptionExpression>),
+    Guarded(ConstraintGuarded),
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -334,108 +337,30 @@ impl Lattice for Constraints {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AbstractEnvironment {
+    pub current_guards: imbl::OrdSet<Guard>,
     pub variables: VariableLocations,
     pub constraints: Constraints,
-}
-
-impl AbstractEnvironment {
-    pub fn is_bottom(&self) -> bool {
-        self.variables.names.is_empty() && self.constraints.values.is_empty()
-    }
 }
 
 impl ContextualLattice<ProgramPoint> for AbstractEnvironment {
     type Error = Infallible;
 
     fn includes(&self, _context: &ProgramPoint, other: &Self) -> Result<bool, Self::Error> {
-        Ok(self.variables.includes(&other.variables)
+        Ok(other.current_guards.is_subset(&self.current_guards)
+            && self.variables.includes(&other.variables)
             && self.constraints.includes(&other.constraints))
     }
 
     fn join(&self, context: &ProgramPoint, other: &Self) -> Result<Self, Self::Error> {
-        if self.is_bottom() {
-            return Ok(other.clone());
-        }
-        if other.is_bottom() {
-            return Ok(self.clone());
-        }
+        let mut current_guards = self.current_guards.clone();
+        current_guards.extend(other.current_guards.clone());
 
-        let mut variables = self.variables.join(&other.variables);
+        let variables = self.variables.join(&other.variables);
 
-        let mut constraints = self.constraints.join(&other.constraints);
-
-        let mut new_variables = VariableLocations::default();
-        for variable in variables.names.keys() {
-            let self_location_option = self
-                .variables
-                .names
-                .get(variable)
-                .and_then(|self_locations| self_locations.get_prev(context));
-            let other_location_option = other
-                .variables
-                .names
-                .get(variable)
-                .and_then(|other_locations| other_locations.get_prev(context));
-
-            let variable_expression = TypeExpression::Variable(ExpressionVariable::new(
-                variable.clone(),
-                context.clone(),
-            ));
-            match (self_location_option, other_location_option) {
-                (Some(self_location), Some(other_location)) => {
-                    let type_expression = if self_location == other_location {
-                        TypeExpression::Variable(ExpressionVariable::new(
-                            variable.clone(),
-                            self_location.clone(),
-                        ))
-                    } else {
-                        TypeExpression::Join(ExpressionJoin {
-                            values: imbl::OrdSet::from_iter([
-                                Arc::new(TypeExpression::Variable(ExpressionVariable::new(
-                                    variable.clone(),
-                                    self_location.clone(),
-                                ))),
-                                Arc::new(TypeExpression::Variable(ExpressionVariable::new(
-                                    variable.clone(),
-                                    other_location.clone(),
-                                ))),
-                            ]),
-                        })
-                    };
-                    constraints.insert(Arc::new(Constraint::Type(ConstraintDefinition::equal(
-                        variable_expression,
-                        type_expression,
-                    ))));
-                }
-                (Some(self_location), None) => {
-                    constraints.insert(Arc::new(Constraint::Type(ConstraintDefinition::include(
-                        variable_expression,
-                        TypeExpression::Variable(ExpressionVariable::new(
-                            variable.clone(),
-                            self_location.clone(),
-                        )),
-                    ))));
-                }
-                (None, Some(other_location)) => {
-                    constraints.insert(Arc::new(Constraint::Type(ConstraintDefinition::include(
-                        variable_expression,
-                        TypeExpression::Variable(ExpressionVariable::new(
-                            variable.clone(),
-                            other_location.clone(),
-                        )),
-                    ))))
-                }
-                (None, None) => {
-                    continue;
-                }
-            }
-
-            new_variables.insert(variable.clone(), context.clone());
-        }
-
-        variables.names.extend(new_variables.names);
+        let constraints = self.constraints.join(&other.constraints);
 
         Ok(Self {
+            current_guards,
             variables,
             constraints,
         })
@@ -1091,15 +1016,26 @@ impl<'a> ConstraintsBuilder<'a> {
             match target {
                 AssignmentTarget::Name(target_name) => {
                     let identifier = Arc::new(target_name);
+                    let constraint = Constraint::Type(ConstraintDefinition::equal(
+                        TypeExpression::Variable(ExpressionVariable::new(
+                            identifier.clone(),
+                            program_point,
+                        )),
+                        type_expression.clone(),
+                    ));
+
                     variables.insert(
-                        identifier.clone(),
-                        imbl::OrdSet::from_iter([Constraint::Type(ConstraintDefinition::equal(
-                            TypeExpression::Variable(ExpressionVariable::new(
-                                identifier,
-                                program_point,
-                            )),
-                            type_expression.clone(),
-                        ))]),
+                        identifier,
+                        imbl::OrdSet::from_iter([
+                            if target_abstract_environment.current_guards.is_empty() {
+                                constraint
+                            } else {
+                                Constraint::Guarded(ConstraintGuarded {
+                                    guards: target_abstract_environment.current_guards.clone(),
+                                    constraint: Arc::new(constraint),
+                                })
+                            },
+                        ]),
                     );
                 }
                 AssignmentTarget::Attribute { .. } => todo!(),
@@ -1109,6 +1045,8 @@ impl<'a> ConstraintsBuilder<'a> {
                 AssignmentTarget::List(_) => todo!(),
             }
         }
+
+        target_abstract_environment.current_guards.clear();
 
         for (variable, constraints) in variables {
             target_abstract_environment
@@ -1173,6 +1111,30 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(target_abstract_environment)
     }
 
+    pub fn gen_stmt_if(
+        &self,
+        namespace: &Namespace<AbstractEnvironment>,
+        program_point: ProgramPoint,
+        stmt_if: &nodes::StmtIf,
+    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
+        let mut target_abstract_environment =
+            namespace.clone_abstract_environment_or_default(program_point);
+
+        let condition_expression =
+            Arc::new(self.gen_expr(namespace, program_point, &stmt_if.test)?);
+
+        target_abstract_environment.current_guards.extend([
+            Guard::IsTrue(condition_expression.clone()),
+            Guard::IsFalse(condition_expression.clone()),
+            Guard::Raise {
+                expression: condition_expression,
+                exception: None,
+            },
+        ]);
+
+        Ok(target_abstract_environment)
+    }
+
     pub fn gen_stmt(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
@@ -1210,9 +1172,7 @@ impl<'a> ConstraintsBuilder<'a> {
             nodes::Stmt::While(_) => {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
             }
-            nodes::Stmt::If(_) => {
-                Ok(namespace.clone_abstract_environment_or_default(program_point))
-            }
+            nodes::Stmt::If(stmt_if) => self.gen_stmt_if(namespace, program_point, stmt_if),
             nodes::Stmt::With(_) => {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
             }
@@ -1296,10 +1256,43 @@ impl CfgAnalyser<AbstractEnvironment, Namespace<AbstractEnvironment>> for Constr
         &self,
         _namespace: &Namespace<AbstractEnvironment>,
         abstract_environment: &AbstractEnvironment,
-        _from: ProgramPoint,
-        _to: ProgramPoint,
+        from: ProgramPoint,
+        to: ProgramPoint,
     ) -> Result<Option<AbstractEnvironment>, ConstraintsBuilderError> {
-        Ok(Some(abstract_environment.clone()))
+        let Some(edge_datas) = self.cfg.edge_data(from, to) else {
+            return Ok(None);
+        };
+
+        let mut target_abstract_environment = abstract_environment.clone();
+
+        target_abstract_environment.current_guards = target_abstract_environment
+            .current_guards
+            .into_iter()
+            .filter(|guard| match guard {
+                Guard::IsTrue(_) => edge_datas.contains(&EdgeData::Conditional(true)),
+                Guard::IsFalse(_) => edge_datas.contains(&EdgeData::Conditional(false)),
+                Guard::Succeed(_) => edge_datas.iter().any(|edge_data| match edge_data {
+                    EdgeData::Unconditional
+                    | EdgeData::Conditional(_)
+                    | EdgeData::Match(_)
+                    | EdgeData::Break
+                    | EdgeData::Continue
+                    | EdgeData::Return => true,
+                    EdgeData::Exception(_, _) | EdgeData::UnhandledException => false,
+                }),
+                Guard::Raise { .. } => edge_datas.iter().any(|edge_data| match edge_data {
+                    EdgeData::Unconditional
+                    | EdgeData::Conditional(_)
+                    | EdgeData::Match(_)
+                    | EdgeData::Break
+                    | EdgeData::Continue
+                    | EdgeData::Return => false,
+                    EdgeData::Exception(_, _) | EdgeData::UnhandledException => true,
+                }),
+            })
+            .collect();
+
+        Ok(Some(target_abstract_environment))
     }
 
     fn get_abstract_environment(
@@ -1821,6 +1814,48 @@ mod tests {
                     binary_operation(left.clone(), BinaryOperator::NotIn, right.clone())
                 )
             ])
+        );*/
+    }
+
+    #[test]
+    fn test_if_statement() {
+        let source = source_code(
+            r#"
+        x = True
+
+        if x:
+            a = 42
+        else:
+            a = 67
+        "#,
+        );
+
+        let (namespace, imports) = generate_constraints(&source);
+
+        assert!(imports.is_empty());
+
+        assert_eq!(
+            program_points(&namespace),
+            [
+                ProgramPoint::Entry,
+                ProgramPoint::Point(0),
+                ProgramPoint::Point(1),
+                ProgramPoint::Point(2),
+                ProgramPoint::Point(3),
+                ProgramPoint::Exit
+            ]
+        );
+
+        let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
+
+        assert_eq!(abstract_environment.variables.names.len(), 2);
+
+        /*assert_eq!(
+            abstract_environment.constraints.values,
+            imbl::OrdSet::from_iter([equal_constraint(
+                variable_expr("a", 0),
+                literal_bigint_expr("4200000000000000000000000000")
+            )])
         );*/
     }
 }
