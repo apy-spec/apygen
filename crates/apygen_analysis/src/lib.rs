@@ -33,17 +33,24 @@ pub trait CfgAnalyser<A, N> {
     fn set_abstract_environment(
         &self,
         abstract_environments: &mut N,
-        abstract_environment: &A,
         program_point: cfg::ProgramPoint,
+        abstract_environment: &A,
     ) -> Result<(), Self::Error>;
 
     fn includes(
         &self,
         abstract_environments: &N,
+        program_point: cfg::ProgramPoint,
         including: &A,
         included: &A,
     ) -> Result<bool, Self::Error>;
-    fn join(&self, abstract_environments: &N, left: &A, right: &A) -> Result<A, Self::Error>;
+    fn join(
+        &self,
+        abstract_environments: &N,
+        program_point: cfg::ProgramPoint,
+        left: &A,
+        right: &A,
+    ) -> Result<A, Self::Error>;
 }
 
 pub fn worklist<A: Default, N, E, T: CfgAnalyser<A, N, Error = E>>(analyser: &T) -> Result<N, E> {
@@ -71,6 +78,7 @@ pub fn worklist<A: Default, N, E, T: CfgAnalyser<A, N, Error = E>>(analyser: &T)
                     Some(successor_abstract_environment) => (
                         analyser.includes(
                             &abstract_environments,
+                            successor,
                             &successor_abstract_environment,
                             &res_cond_abstract_environment,
                         )?,
@@ -82,13 +90,14 @@ pub fn worklist<A: Default, N, E, T: CfgAnalyser<A, N, Error = E>>(analyser: &T)
             if !successor_is_included {
                 let joined_abstract_environment = analyser.join(
                     &abstract_environments,
+                    successor,
                     &successor_abstract_environment,
                     &res_cond_abstract_environment,
                 )?;
                 analyser.set_abstract_environment(
                     &mut abstract_environments,
-                    &joined_abstract_environment,
                     successor,
+                    &joined_abstract_environment,
                 )?;
                 worklist.insert(successor);
             }
