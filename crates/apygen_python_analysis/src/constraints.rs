@@ -1636,7 +1636,7 @@ impl CfgAnalyser<AbstractEnvironment, Namespace<AbstractEnvironment>> for Constr
 mod tests {
     use super::*;
     use apygen_analysis::worklist;
-    use std::str::FromStr;
+    use rstest::rstest;
     use std::sync::mpsc;
 
     fn source_code(text: &str) -> String {
@@ -1667,456 +1667,165 @@ mod tests {
         (namespace, imports)
     }
 
-    fn program_points(namespace: &Namespace<AbstractEnvironment>) -> Vec<ProgramPoint> {
-        let mut program_points = namespace
-            .abstract_environments
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        program_points.sort();
-        program_points
-    }
-
-    fn variable_expr(name: &str, program_point: usize) -> TypeExpression {
-        TypeExpression::Variable(ExpressionVariable::new(
-            Arc::new(Identifier::parse(name)),
-            ProgramPoint::Point(program_point),
-        ))
-    }
-
-    fn import_expr(module: &str) -> TypeExpression {
-        TypeExpression::Import(ExpressionImport::new(Arc::new(QualifiedName::parse(
-            module,
-        ))))
-    }
-
-    fn literal_int_expr(value: i64) -> TypeExpression {
-        TypeExpression::LiteralInteger(LiteralInteger::Int(value))
-    }
-
-    fn literal_bigint_expr(value: &str) -> TypeExpression {
-        TypeExpression::LiteralInteger(LiteralInteger::BigInt(
-            BigInt::from_str(value).expect("value should be a valid integer"),
-        ))
-    }
-
-    fn binary_operation(
-        left: TypeExpression,
-        operator: BinaryOperator,
-        right: TypeExpression,
-    ) -> TypeExpression {
-        TypeExpression::Binary(ExpressionBinary {
-            left: Arc::new(left),
-            operator,
-            right: Arc::new(right),
-        })
-    }
-
-    fn equal_constraint(left: TypeExpression, right: TypeExpression) -> Constraint {
-        Constraint::Type(ConstraintDefinition::equal(left, right))
-    }
-
-    #[test]
-    fn test_import() {
-        let source = source_code(
-            r#"
-        import some_module
-        "#,
-        );
-
-        let (namespace, imports) = generate_constraints(&source);
-
-        assert_eq!(imports, ["some_module"]);
-
-        assert_eq!(
-            program_points(&namespace),
-            [
-                ProgramPoint::Entry,
-                ProgramPoint::Point(0),
-                ProgramPoint::Exit
-            ]
-        );
-
-        let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
-
-        assert_eq!(abstract_environment.variable_locations.values.len(), 1);
-
-        /*assert_eq!(
-            abstract_environment.constraints.values,
-            imbl::OrdSet::from_iter([equal_constraint(
-                variable_expr("some_module", 0),
-                import_expr("some_module"),
-            )])
-        );*/
-    }
-
-    #[test]
-    fn test_import_as() {
-        let source = source_code(
-            r#"
-        import some_module as mod
-        "#,
-        );
-
-        let (namespace, imports) = generate_constraints(&source);
-
-        assert_eq!(imports, ["some_module"]);
-
-        assert_eq!(
-            program_points(&namespace),
-            [
-                ProgramPoint::Entry,
-                ProgramPoint::Point(0),
-                ProgramPoint::Exit
-            ]
-        );
-
-        let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
-
-        assert_eq!(abstract_environment.variable_locations.values.len(), 1);
-
-        /*assert_eq!(
-            abstract_environment.constraints.values,
-            imbl::OrdSet::from_iter([equal_constraint(
-                variable_expr("mod", 0),
-                import_expr("some_module"),
-            )])
-        );*/
-    }
-
-    #[test]
-    fn test_multiple_import() {
-        let source = source_code(
-            r#"
-        import some_module, another_module
-        "#,
-        );
-
-        let (namespace, imports) = generate_constraints(&source);
-
-        assert_eq!(imports, ["some_module", "another_module"]);
-
-        assert_eq!(
-            program_points(&namespace),
-            [
-                ProgramPoint::Entry,
-                ProgramPoint::Point(0),
-                ProgramPoint::Exit
-            ]
-        );
-
-        let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
-
-        assert_eq!(abstract_environment.variable_locations.values.len(), 2);
-
-        /*assert_eq!(
-            abstract_environment.constraints.values,
-            imbl::OrdSet::from_iter([
-                equal_constraint(variable_expr("some_module", 0), import_expr("some_module"),),
-                equal_constraint(
-                    variable_expr("another_module", 0),
-                    import_expr("another_module"),
-                )
-            ])
-        );*/
-    }
-
-    #[test]
-    fn test_multiple_import_override() {
-        let source = source_code(
-            r#"
-        import some_module as mod, another_module as mod
-        "#,
-        );
-
-        let (namespace, imports) = generate_constraints(&source);
-
-        assert_eq!(imports, ["some_module", "another_module"]);
-
-        assert_eq!(
-            program_points(&namespace),
-            [
-                ProgramPoint::Entry,
-                ProgramPoint::Point(0),
-                ProgramPoint::Exit
-            ]
-        );
-
-        let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
-
-        assert_eq!(abstract_environment.variable_locations.values.len(), 1);
-
-        /*assert_eq!(
-            abstract_environment.constraints.values,
-            imbl::OrdSet::from_iter([equal_constraint(
-                variable_expr("mod", 0),
-                import_expr("another_module"),
-            ),])
-        );*/
-    }
-
-    #[test]
-    fn test_int_constant_assignment() {
-        let source = source_code(
-            r#"
-        a = 42
-        "#,
-        );
-
-        let (namespace, imports) = generate_constraints(&source);
-
-        assert!(imports.is_empty());
-
-        assert_eq!(
-            program_points(&namespace),
-            [
-                ProgramPoint::Entry,
-                ProgramPoint::Point(0),
-                ProgramPoint::Exit
-            ]
-        );
-
-        let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
-
-        assert_eq!(abstract_environment.variable_locations.values.len(), 1);
-
-        /*assert_eq!(
-            abstract_environment.constraints.values,
-            imbl::OrdSet::from_iter([equal_constraint(
-                variable_expr("a", 0),
-                literal_int_expr(42)
-            )])
-        );*/
-    }
-
-    #[test]
-    fn test_big_int_constant_assignment() {
-        let source = source_code(
-            r#"
-        a = 4200000000000000000000000000
-        "#,
-        );
-
-        let (namespace, imports) = generate_constraints(&source);
-
-        assert!(imports.is_empty());
-
-        assert_eq!(
-            program_points(&namespace),
-            [
-                ProgramPoint::Entry,
-                ProgramPoint::Point(0),
-                ProgramPoint::Exit
-            ]
-        );
-
-        let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
-
-        assert_eq!(abstract_environment.variable_locations.values.len(), 1);
-
-        /*assert_eq!(
-            abstract_environment.constraints.values,
-            imbl::OrdSet::from_iter([equal_constraint(
-                variable_expr("a", 0),
-                literal_bigint_expr("4200000000000000000000000000")
-            )])
-        );*/
-    }
-
-    #[test]
-    fn test_binary_operation() {
-        let source = source_code(
-            r#"
-        left = 42
-        right = 67
-        add = left + right
-        sub = left - right
-        mult = left * right
-        mat_mult = left @ right
-        div = left / right
-        floor_div = left // right
-        mod = left % right
-        pow = left ** right
-        shl = left << right
-        shr = left >> right
-        bit_or = left | right
-        bit_xor = left ^ right
-        bit_and = left & right
-
-        and_ = left and right
-        or_ = left or right
-
-        eq = left == right
-        not_eq = left != right
-        lt = left < right
-        gt = left > right
-        lte = left <= right
-        gte = left >= right
-        is_ = left is right
-        is_not = left is not right
-        in_ = left in right
-        not_in = left not in right
-        "#,
-        );
-
-        let (namespace, imports) = generate_constraints(&source);
-
-        assert!(imports.is_empty());
-
-        assert_eq!(
-            program_points(&namespace),
-            [
-                ProgramPoint::Entry,
-                ProgramPoint::Point(0),
-                ProgramPoint::Point(1),
-                ProgramPoint::Point(2),
-                ProgramPoint::Point(3),
-                ProgramPoint::Point(4),
-                ProgramPoint::Point(5),
-                ProgramPoint::Point(6),
-                ProgramPoint::Point(7),
-                ProgramPoint::Point(8),
-                ProgramPoint::Point(9),
-                ProgramPoint::Point(10),
-                ProgramPoint::Point(11),
-                ProgramPoint::Point(12),
-                ProgramPoint::Point(13),
-                ProgramPoint::Point(14),
-                ProgramPoint::Point(15),
-                ProgramPoint::Point(16),
-                ProgramPoint::Point(17),
-                ProgramPoint::Point(18),
-                ProgramPoint::Point(19),
-                ProgramPoint::Point(20),
-                ProgramPoint::Point(21),
-                ProgramPoint::Point(22),
-                ProgramPoint::Point(23),
-                ProgramPoint::Point(24),
-                ProgramPoint::Point(25),
-                ProgramPoint::Point(26),
-                ProgramPoint::Exit
-            ]
-        );
-
-        let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
-
-        assert_eq!(abstract_environment.variable_locations.values.len(), 27);
-        /*
-        let left = variable_expr("left", 0);
-        let right = variable_expr("right", 1);
-        assert_eq!(
-            abstract_environment.constraints.values,
-            imbl::OrdSet::from_iter([
-                equal_constraint(left.clone(), literal_int_expr(42)),
-                equal_constraint(right.clone(), literal_int_expr(67)),
-                equal_constraint(
-                    variable_expr("add", 2),
-                    binary_operation(left.clone(), BinaryOperator::Add, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("sub", 3),
-                    binary_operation(left.clone(), BinaryOperator::Sub, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("mult", 4),
-                    binary_operation(left.clone(), BinaryOperator::Mult, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("mat_mult", 5),
-                    binary_operation(left.clone(), BinaryOperator::MatMult, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("div", 6),
-                    binary_operation(left.clone(), BinaryOperator::Div, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("floor_div", 7),
-                    binary_operation(left.clone(), BinaryOperator::FloorDiv, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("mod", 8),
-                    binary_operation(left.clone(), BinaryOperator::Mod, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("pow", 9),
-                    binary_operation(left.clone(), BinaryOperator::Pow, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("shl", 10),
-                    binary_operation(left.clone(), BinaryOperator::LShift, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("shr", 11),
-                    binary_operation(left.clone(), BinaryOperator::RShift, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("bit_or", 12),
-                    binary_operation(left.clone(), BinaryOperator::BitOr, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("bit_xor", 13),
-                    binary_operation(left.clone(), BinaryOperator::BitXor, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("bit_and", 14),
-                    binary_operation(left.clone(), BinaryOperator::BitAnd, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("and_", 15),
-                    binary_operation(left.clone(), BinaryOperator::And, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("or_", 16),
-                    binary_operation(left.clone(), BinaryOperator::Or, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("eq", 17),
-                    binary_operation(left.clone(), BinaryOperator::Eq, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("not_eq", 18),
-                    binary_operation(left.clone(), BinaryOperator::NotEq, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("lt", 19),
-                    binary_operation(left.clone(), BinaryOperator::Lt, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("gt", 20),
-                    binary_operation(left.clone(), BinaryOperator::Gt, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("lte", 21),
-                    binary_operation(left.clone(), BinaryOperator::LtE, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("gte", 22),
-                    binary_operation(left.clone(), BinaryOperator::GtE, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("is_", 23),
-                    binary_operation(left.clone(), BinaryOperator::Is, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("is_not", 24),
-                    binary_operation(left.clone(), BinaryOperator::IsNot, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("in_", 25),
-                    binary_operation(left.clone(), BinaryOperator::In, right.clone())
-                ),
-                equal_constraint(
-                    variable_expr("not_in", 26),
-                    binary_operation(left.clone(), BinaryOperator::NotIn, right.clone())
-                )
-            ])
-        );*/
-    }
-
-    #[test]
-    fn test_if_statement() {
-        let source = source_code(
-            r#"
+    #[rstest]
+    #[case::import(
+        "import some_module",
+        "{some_module@Point(0) = import(some_module)}",
+        vec!["some_module"],
+    )]
+    #[case::import_as(
+        "import some_module as mod",
+        "{mod@Point(0) = import(some_module)}",
+        vec!["some_module"],
+    )]
+    #[case::multiple_import(
+        "import some_module, another_module",
+        "{another_module@Point(0) = import(another_module), some_module@Point(0) = import(some_module)}",
+        vec!["some_module", "another_module"],
+    )]
+    #[case::multiple_import_override(
+        "import some_module as mod, another_module as mod",
+        "{mod@Point(0) = import(another_module)}",
+        vec!["some_module", "another_module"],
+    )]
+    #[case::int_constant_assignment(
+        "a = 42",
+        "{({succeed(42)}) => (a@Point(0) = 42)}",
+        vec![],
+    )]
+    #[case::int_constant_assignment(
+        "a = 4200000000000000000000000000",
+        "{({succeed(4200000000000000000000000000)}) => (a@Point(0) = 4200000000000000000000000000)}",
+        vec![],
+    )]
+    #[case::add_operation(
+        "add = 42 + 67",
+        "{({succeed((42) + (67))}) => (add@Point(0) = (42) + (67))}",
+        vec![],
+    )]
+    #[case::sub_operation(
+        "sub = 42 - 67",
+        "{({succeed((42) - (67))}) => (sub@Point(0) = (42) - (67))}",
+        vec![],
+    )]
+    #[case::mult_operation(
+        "mult = 42 * 67",
+        "{({succeed((42) * (67))}) => (mult@Point(0) = (42) * (67))}",
+        vec![],
+    )]
+    #[case::mat_mult_operation(
+        "mat_mult = 42 @ 67",
+        "{({succeed((42) @ (67))}) => (mat_mult@Point(0) = (42) @ (67))}",
+        vec![],
+    )]
+    #[case::div_operation(
+        "div = 42 / 67",
+        "{({succeed((42) / (67))}) => (div@Point(0) = (42) / (67))}",
+        vec![],
+    )]
+    #[case::floor_div_operation(
+        "floor_div = 42 // 67",
+        "{({succeed((42) // (67))}) => (floor_div@Point(0) = (42) // (67))}",
+        vec![],
+    )]
+    #[case::mod_operation(
+        "mod = 42 % 67",
+        "{({succeed((42) % (67))}) => (mod@Point(0) = (42) % (67))}",
+        vec![],
+    )]
+    #[case::pow_operation(
+        "pow = 42 ** 67",
+        "{({succeed((42) ** (67))}) => (pow@Point(0) = (42) ** (67))}",
+        vec![],
+    )]
+    #[case::shl_operation(
+        "shl = 42 << 67",
+        "{({succeed((42) << (67))}) => (shl@Point(0) = (42) << (67))}",
+        vec![],
+    )]
+    #[case::shr_operation(
+        "shr = 42 >> 67",
+        "{({succeed((42) >> (67))}) => (shr@Point(0) = (42) >> (67))}",
+        vec![],
+    )]
+    #[case::bit_or_operation(
+        "bit_or = 42 | 67",
+        "{({succeed((42) | (67))}) => (bit_or@Point(0) = (42) | (67))}",
+        vec![],
+    )]
+    #[case::bit_xor_operation(
+        "bit_xor = 42 ^ 67",
+        "{({succeed((42) ^ (67))}) => (bit_xor@Point(0) = (42) ^ (67))}",
+        vec![],
+    )]
+    #[case::bit_and_operation(
+        "bit_and = 42 & 67",
+        "{({succeed((42) & (67))}) => (bit_and@Point(0) = (42) & (67))}",
+        vec![],
+    )]
+    #[case::and_operation(
+        "and_ = 42 and 67",
+        "{({succeed((42) and (67))}) => (and_@Point(0) = (42) and (67))}",
+        vec![],
+    )]
+    #[case::or_operation(
+        "or_ = 42 or 67",
+        "{({succeed((42) or (67))}) => (or_@Point(0) = (42) or (67))}",
+        vec![],
+    )]
+    #[case::eq_operation(
+        "eq = 42 == 67",
+        "{({succeed((42) == (67))}) => (eq@Point(0) = (42) == (67))}",
+        vec![],
+    )]
+    #[case::not_eq_operation(
+        "not_eq = 42 != 67",
+        "{({succeed((42) != (67))}) => (not_eq@Point(0) = (42) != (67))}",
+        vec![],
+    )]
+    #[case::lt_operation(
+        "lt = 42 < 67",
+        "{({succeed((42) < (67))}) => (lt@Point(0) = (42) < (67))}",
+        vec![],
+    )]
+    #[case::gt_operation(
+        "gt = 42 > 67",
+        "{({succeed((42) > (67))}) => (gt@Point(0) = (42) > (67))}",
+        vec![],
+    )]
+    #[case::lte_operation(
+        "lte = 42 <= 67",
+        "{({succeed((42) <= (67))}) => (lte@Point(0) = (42) <= (67))}",
+        vec![],
+    )]
+    #[case::gte_operation(
+        "gte = 42 >= 67",
+        "{({succeed((42) >= (67))}) => (gte@Point(0) = (42) >= (67))}",
+        vec![],
+    )]
+    #[case::is_operation(
+        "is_ = 42 is 67",
+        "{({succeed((42) is (67))}) => (is_@Point(0) = (42) is (67))}",
+        vec![],
+    )]
+    #[case::is_not_operation(
+        "is_not = 42 is not 67",
+        "{({succeed((42) is not (67))}) => (is_not@Point(0) = (42) is not (67))}",
+        vec![],
+    )]
+    #[case::in_operation(
+        "in_ = 42 in 67",
+        "{({succeed((42) in (67))}) => (in_@Point(0) = (42) in (67))}",
+        vec![],
+    )]
+    #[case::not_in_operation(
+        "not_in = 42 not in 67",
+        "{({succeed((42) not in (67))}) => (not_in@Point(0) = (42) not in (67))}",
+        vec![],
+    )]
+    #[case::not_in_operation(
+        &source_code(
+        r#"
         x = True
 
         if x:
@@ -2126,35 +1835,23 @@ mod tests {
 
         b = a
         "#,
-        );
-
+        ),
+        "{({(x@Point(0)) is True, succeed(42)}) => (a@Point(2) = 42), ({(x@Point(0)) is False, succeed(67)}) => (a@Point(3) = 67), ({succeed(True)}) => (x@Point(0) = True), ({succeed((a@Point(2)) ⊔ (a@Point(3)))}) => (b@Point(4) = (a@Point(2)) ⊔ (a@Point(3)))}",
+        vec![],
+    )]
+    fn test_constraints_generation(
+        #[case] source: &str,
+        #[case] expected_constraints: &str,
+        #[case] expected_imports: Vec<&str>,
+    ) {
         let (namespace, imports) = generate_constraints(&source);
 
-        assert!(imports.is_empty());
-
         assert_eq!(
-            program_points(&namespace),
-            [
-                ProgramPoint::Entry,
-                ProgramPoint::Point(0),
-                ProgramPoint::Point(1),
-                ProgramPoint::Point(2),
-                ProgramPoint::Point(3),
-                ProgramPoint::Point(4),
-                ProgramPoint::Exit
-            ]
+            namespace.abstract_environments[&ProgramPoint::Exit]
+                .constraints
+                .to_string(),
+            expected_constraints
         );
-
-        let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
-
-        assert_eq!(abstract_environment.variable_locations.values.len(), 3);
-
-        /*assert_eq!(
-            abstract_environment.constraints.values,
-            imbl::OrdSet::from_iter([equal_constraint(
-                variable_expr("a", 0),
-                literal_bigint_expr("4200000000000000000000000000")
-            )])
-        );*/
+        assert_eq!(imports, expected_imports);
     }
 }
