@@ -691,6 +691,16 @@ pub struct LiteralBoolean {
     pub value: bool,
 }
 
+impl Display for LiteralBoolean {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.value {
+            write!(f, "True")
+        } else {
+            write!(f, "False")
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LiteralFloat {
     pub value: f64,
@@ -745,6 +755,12 @@ impl Hash for LiteralFloat {
     }
 }
 
+impl Display for LiteralFloat {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LiteralComplex {
     pub value: Complex64,
@@ -784,6 +800,12 @@ impl Hash for LiteralComplex {
     }
 }
 
+impl Display for LiteralComplex {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LiteralString {
     pub value: Arc<String>,
@@ -797,9 +819,24 @@ impl LiteralString {
     }
 }
 
+impl Display for LiteralString {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LiteralBytes {
     pub value: imbl::Vector<u8>,
+}
+
+impl Display for LiteralBytes {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for element in &self.value {
+            write!(f, "{:02X}", element)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

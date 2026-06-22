@@ -7,12 +7,12 @@ use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
 use apygen_analysis::CfgAnalyser;
 use apygen_analysis::cfg::nodes::Number;
 use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint, nodes};
-use apygen_analysis::lattice::{ContextualLattice, Lattice};
+use apygen_analysis::lattice::Lattice;
 use apygen_analysis::namespace::Namespace;
 use num_bigint::BigInt;
 use num_complex::Complex64;
 use num_traits::Num;
-use std::convert::Infallible;
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use std::sync::mpsc::{SendError, Sender};
 use thiserror::Error;
@@ -21,10 +21,118 @@ pub type ModuleName = Arc<QualifiedName>;
 pub type VariableName = Arc<Identifier>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct GuardId(pub usize);
+pub struct LatticeSet<T: Ord> {
+    pub values: imbl::OrdSet<T>,
+}
+
+impl<T: Ord> LatticeSet<T> {
+    pub fn new(values: imbl::OrdSet<T>) -> Self {
+        Self { values }
+    }
+}
+
+impl<T: Clone + Ord> Lattice for LatticeSet<T> {
+    fn includes(&self, other: &Self) -> bool {
+        other.values.is_subset(&self.values)
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        if self.values.is_empty() {
+            other.clone()
+        } else if other.values.is_empty() {
+            self.clone()
+        } else {
+            Self::new(self.values.clone().union(other.values.clone()))
+        }
+    }
+}
+
+impl<T: Ord> Default for LatticeSet<T> {
+    fn default() -> Self {
+        Self::new(imbl::OrdSet::default())
+    }
+}
+
+impl<T: Clone + Ord> FromIterator<T> for LatticeSet<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self::new(imbl::OrdSet::from_iter(iter))
+    }
+}
+
+impl<T: Ord + Display> Display for LatticeSet<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{")?;
+        for (i, value) in self.values.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", value)?;
+        }
+        write!(f, "}}")
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ScopeId(pub usize);
+pub struct LatticeMap<K: Ord, V> {
+    pub values: imbl::OrdMap<K, V>,
+}
+
+impl<K: Ord, V> LatticeMap<K, V> {
+    pub fn new(values: imbl::OrdMap<K, V>) -> Self {
+        Self { values }
+    }
+}
+
+impl<K: Clone + Ord, V: Clone + Lattice> Lattice for LatticeMap<K, V> {
+    fn includes(&self, other: &Self) -> bool {
+        other
+            .values
+            .is_submap_by(&self.values, |self_value, other_value| {
+                self_value.includes(other_value)
+            })
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        if self.values.is_empty() {
+            other.clone()
+        } else if other.values.is_empty() {
+            self.clone()
+        } else {
+            Self::new(
+                self.values
+                    .clone()
+                    .union_with(other.values.clone(), |self_value, other_value| {
+                        self_value.join(&other_value)
+                    }),
+            )
+        }
+    }
+}
+
+impl<K: Ord, V> Default for LatticeMap<K, V> {
+    fn default() -> Self {
+        Self::new(imbl::OrdMap::default())
+    }
+}
+
+impl<K: Clone + Ord, V: Clone> FromIterator<(K, V)> for LatticeMap<K, V> {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        Self::new(imbl::OrdMap::from_iter(iter))
+    }
+}
+
+impl<K: Ord + Display, V: Display> Display for LatticeMap<K, V> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{")?;
+        for (i, (key, value)) in self.values.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}: {}", key, value)?;
+        }
+        write!(f, "}}")
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionVariable {
@@ -41,14 +149,9 @@ impl ExpressionVariable {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ExpressionUninitialisedVariable {
-    pub name: VariableName,
-}
-
-impl ExpressionUninitialisedVariable {
-    pub fn new(name: VariableName) -> Self {
-        Self { name }
+impl Display for ExpressionVariable {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.name, self.program_point)
     }
 }
 
@@ -63,10 +166,26 @@ impl ExpressionImport {
     }
 }
 
+impl Display for ExpressionImport {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "import({})", self.module)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct KeywordArgument {
     pub name: Option<VariableName>,
     pub value: Arc<TypeExpression>,
+}
+
+impl Display for KeywordArgument {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if let Some(name) = &self.name {
+            write!(f, "{}={}", name, self.value)
+        } else {
+            write!(f, "**({})", self.value)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -76,16 +195,50 @@ pub struct ExpressionCall {
     pub keyword_arguments: imbl::Vector<KeywordArgument>,
 }
 
+impl Display for ExpressionCall {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({})(", self.target)?;
+
+        for (i, arg) in self.positional_arguments.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", arg)?;
+        }
+
+        for (i, keyword_argument) in self.keyword_arguments.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", keyword_argument)?;
+        }
+
+        write!(f, ")")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionAttribute {
     pub value: Arc<TypeExpression>,
     pub attribute: VariableName,
 }
 
+impl Display for ExpressionAttribute {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({}).{}", self.value, self.attribute)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionSubscript {
     pub value: Arc<TypeExpression>,
     pub slice: Arc<TypeExpression>,
+}
+
+impl Display for ExpressionSubscript {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({})[{}]", self.value, self.slice)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -132,6 +285,30 @@ pub struct ExpressionJoin {
     values: imbl::OrdSet<Arc<TypeExpression>>,
 }
 
+impl Display for ExpressionJoin {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.values.is_empty() {
+            write!(f, "⊥")
+        } else if self.values.len() == 1 {
+            write!(
+                f,
+                "{}",
+                self.values
+                    .get_min()
+                    .expect("should exist cause of the check above")
+            )
+        } else {
+            for (i, value) in self.values.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " ⊔ ")?;
+                }
+                write!(f, "({})", value)?;
+            }
+            Ok(())
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BinaryOperator {
     Add,
@@ -163,11 +340,51 @@ pub enum BinaryOperator {
     NotIn,
 }
 
+impl Display for BinaryOperator {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let symbol = match self {
+            BinaryOperator::Add => "+",
+            BinaryOperator::Sub => "-",
+            BinaryOperator::Mult => "*",
+            BinaryOperator::MatMult => "@",
+            BinaryOperator::Div => "/",
+            BinaryOperator::FloorDiv => "//",
+            BinaryOperator::Mod => "%",
+            BinaryOperator::Pow => "**",
+            BinaryOperator::LShift => "<<",
+            BinaryOperator::RShift => ">>",
+            BinaryOperator::BitOr => "|",
+            BinaryOperator::BitXor => "^",
+            BinaryOperator::BitAnd => "&",
+            BinaryOperator::And => "and",
+            BinaryOperator::Or => "or",
+            BinaryOperator::Eq => "==",
+            BinaryOperator::NotEq => "!=",
+            BinaryOperator::Lt => "<",
+            BinaryOperator::LtE => "<=",
+            BinaryOperator::Gt => ">",
+            BinaryOperator::GtE => ">=",
+            BinaryOperator::Is => "is",
+            BinaryOperator::IsNot => "is not",
+            BinaryOperator::In => "in",
+            BinaryOperator::NotIn => "not in",
+        };
+
+        write!(f, "{}", symbol)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionBinary {
     left: Arc<TypeExpression>,
     operator: BinaryOperator,
     right: Arc<TypeExpression>,
+}
+
+impl Display for ExpressionBinary {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({}) {} ({})", self.left, self.operator, self.right)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -178,16 +395,36 @@ pub enum UnaryOperator {
     USub,
 }
 
+impl Display for UnaryOperator {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let symbol = match self {
+            UnaryOperator::Invert => "~",
+            UnaryOperator::Not => "not",
+            UnaryOperator::UAdd => "+",
+            UnaryOperator::USub => "-",
+        };
+
+        write!(f, "{}", symbol)
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionUnary {
     operator: UnaryOperator,
     operand: Arc<TypeExpression>,
 }
 
+impl Display for ExpressionUnary {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.operator {
+            UnaryOperator::Not => write!(f, "{} ({})", self.operator, self.operand),
+            _ => write!(f, "{}({})", self.operator, self.operand),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TypeExpression {
     Variable(ExpressionVariable),
-    UninitialisedVariable(ExpressionUninitialisedVariable),
     Import(ExpressionImport),
     Attribute(ExpressionAttribute),
     Subscript(ExpressionSubscript),
@@ -205,10 +442,42 @@ pub enum TypeExpression {
     Join(ExpressionJoin),
 }
 
+impl Display for TypeExpression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeExpression::Variable(expression_variable) => write!(f, "{}", expression_variable),
+            TypeExpression::Import(expression_import) => write!(f, "{}", expression_import),
+            TypeExpression::Attribute(expression_attribute) => {
+                write!(f, "{}", expression_attribute)
+            }
+            TypeExpression::Subscript(expression_subscript) => {
+                write!(f, "{}", expression_subscript)
+            }
+            TypeExpression::Call(expression_call) => write!(f, "{}", expression_call),
+            TypeExpression::Unary(expression_unary) => write!(f, "{}", expression_unary),
+            TypeExpression::Binary(expression_binary) => write!(f, "{}", expression_binary),
+            TypeExpression::LiteralInteger(literal_integer) => write!(f, "{}", literal_integer),
+            TypeExpression::LiteralFloat(literal_float) => write!(f, "{}", literal_float),
+            TypeExpression::LiteralComplex(literal_complex) => write!(f, "{}", literal_complex),
+            TypeExpression::LiteralString(literal_string) => write!(f, "{}", literal_string),
+            TypeExpression::LiteralBytes(literal_bytes) => write!(f, "{}", literal_bytes),
+            TypeExpression::LiteralBoolean(literal_boolean) => write!(f, "{}", literal_boolean),
+            TypeExpression::LiteralNone => write!(f, "None"),
+            TypeExpression::LiteralEllipsis => write!(f, "..."),
+            TypeExpression::Join(expression_join) => write!(f, "{}", expression_join),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ExceptionExpression {
-    Scope(ScopeId),
     Type(Arc<TypeExpression>),
+}
+
+impl Display for ExceptionExpression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "exception({})", self)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -222,10 +491,33 @@ pub enum Guard {
     },
 }
 
+impl Display for Guard {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Guard::IsTrue(expression) => write!(f, "({}) is True", expression),
+            Guard::IsFalse(expression) => write!(f, "({}) is False", expression),
+            Guard::Succeed(expression) => write!(f, "succeed({})", expression),
+            Guard::Raise {
+                expression,
+                exception,
+            } => match exception {
+                Some(exception) => write!(f, "fail({}, {})", expression, exception),
+                None => write!(f, "fail({})", expression),
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConstraintGuarded {
-    guards: imbl::OrdSet<Guard>,
+    guards: LatticeSet<Guard>,
     constraint: Arc<Constraint>,
+}
+
+impl Display for ConstraintGuarded {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({}) => ({})", self.guards, self.constraint)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -234,8 +526,18 @@ pub enum ConstraintKind {
     Equal,
 }
 
+impl Display for ConstraintKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let symbol = match self {
+            ConstraintKind::Include => "⊑",
+            ConstraintKind::Equal => "=",
+        };
+
+        write!(f, "{}", symbol)
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ConstraintDefinition<T: Clone> {
+pub struct ConstraintDefinition<T> {
     left: Arc<T>,
     kind: ConstraintKind,
     right: Arc<T>,
@@ -255,6 +557,12 @@ impl<T: Clone> ConstraintDefinition<T> {
     }
 }
 
+impl<T: Display> Display for ConstraintDefinition<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {} {}", self.left, self.kind, self.right)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Constraint {
     Type(ConstraintDefinition<TypeExpression>),
@@ -262,108 +570,35 @@ pub enum Constraint {
     Guarded(ConstraintGuarded),
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VariableLocations {
-    pub names: imbl::OrdMap<VariableName, imbl::OrdSet<ProgramPoint>>,
-}
-
-impl VariableLocations {
-    pub fn insert(&mut self, name: VariableName, program_point: ProgramPoint) {
-        self.names.entry(name).or_default().insert(program_point);
-    }
-}
-
-impl Lattice for VariableLocations {
-    fn includes(&self, other: &Self) -> bool {
-        other
-            .names
-            .is_submap_by(&self.names, |other_locations, self_locations| {
-                other_locations.is_subset(self_locations)
-            })
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        let mut names = self.names.clone();
-
-        for (other_name, other_locations) in &other.names {
-            names
-                .entry(other_name.clone())
-                .or_default()
-                .extend(other_locations.clone());
-        }
-
-        Self { names }
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Constraints {
-    pub values: imbl::OrdSet<Arc<Constraint>>,
-}
-
-impl Constraints {
-    pub fn new(values: imbl::OrdSet<Arc<Constraint>>) -> Self {
-        Self { values }
-    }
-
-    pub fn empty() -> Self {
-        Self::default()
-    }
-
-    pub fn insert(&mut self, constraint: Arc<Constraint>) {
-        self.values.insert(constraint);
-    }
-}
-
-impl FromIterator<Arc<Constraint>> for Constraints {
-    fn from_iter<T: IntoIterator<Item = Arc<Constraint>>>(iter: T) -> Self {
-        Self::new(imbl::OrdSet::from_iter(iter))
-    }
-}
-
-impl Lattice for Constraints {
-    fn includes(&self, other: &Self) -> bool {
-        other.values.is_subset(&self.values)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        let mut constraints = self.values.clone();
-        constraints.extend(other.values.clone());
-        Self {
-            values: constraints,
+impl Display for Constraint {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Constraint::Type(constraint_type) => write!(f, "{}", constraint_type),
+            Constraint::Exception(constraint_exception) => write!(f, "{}", constraint_exception),
+            Constraint::Guarded(constraint_guarded) => write!(f, "{}", constraint_guarded),
         }
     }
 }
-
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AbstractEnvironment {
-    pub current_guards: imbl::OrdSet<Guard>,
-    pub variables: VariableLocations,
-    pub constraints: Constraints,
+    pub current_guards: LatticeSet<LatticeSet<Guard>>,
+    pub variable_locations: LatticeMap<VariableName, LatticeSet<ProgramPoint>>,
+    pub constraints: LatticeSet<Arc<Constraint>>,
 }
 
-impl ContextualLattice<ProgramPoint> for AbstractEnvironment {
-    type Error = Infallible;
-
-    fn includes(&self, _context: &ProgramPoint, other: &Self) -> Result<bool, Self::Error> {
-        Ok(other.current_guards.is_subset(&self.current_guards)
-            && self.variables.includes(&other.variables)
-            && self.constraints.includes(&other.constraints))
+impl Lattice for AbstractEnvironment {
+    fn includes(&self, other: &Self) -> bool {
+        self.current_guards.includes(&other.current_guards)
+            && self.variable_locations.includes(&other.variable_locations)
+            && self.constraints.includes(&other.constraints)
     }
 
-    fn join(&self, context: &ProgramPoint, other: &Self) -> Result<Self, Self::Error> {
-        let mut current_guards = self.current_guards.clone();
-        current_guards.extend(other.current_guards.clone());
-
-        let variables = self.variables.join(&other.variables);
-
-        let constraints = self.constraints.join(&other.constraints);
-
-        Ok(Self {
-            current_guards,
-            variables,
-            constraints,
-        })
+    fn join(&self, other: &Self) -> Self {
+        Self {
+            current_guards: self.current_guards.join(&other.current_guards),
+            variable_locations: self.variable_locations.join(&other.variable_locations),
+            constraints: self.constraints.join(&other.constraints),
+        }
     }
 }
 
@@ -404,6 +639,18 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(self.import_tx.send(module)?)
     }
 
+    pub fn assign_variable(
+        &self,
+        abstract_environment: &mut AbstractEnvironment,
+        program_point: ProgramPoint,
+        variable: VariableName,
+    ) {
+        abstract_environment
+            .variable_locations
+            .values
+            .insert(variable, LatticeSet::from_iter([program_point]));
+    }
+
     pub fn gen_module_name(
         &self,
         program_point: ProgramPoint,
@@ -436,10 +683,10 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         program_point: ProgramPoint,
         parameter: &nodes::Parameter,
-    ) -> Result<(VariableName, Constraints), ConstraintsBuilderError> {
+    ) -> Result<(VariableName, LatticeSet<Arc<Constraint>>), ConstraintsBuilderError> {
         let parameter_name = self.gen_variable_name(program_point, &parameter.name)?;
 
-        let constraints = Constraints::empty();
+        let constraints: LatticeSet<Arc<Constraint>> = LatticeSet::default();
 
         if let Some(annotation) = &parameter.annotation {
             // TODO: add support for annotations
@@ -452,18 +699,20 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         program_point: ProgramPoint,
         parameter_with_default: &nodes::ParameterWithDefault,
-    ) -> Result<(VariableName, Constraints), ConstraintsBuilderError> {
+    ) -> Result<(VariableName, LatticeSet<Arc<Constraint>>), ConstraintsBuilderError> {
         let (parameter_name, mut constraints) =
             self.gen_parameter(program_point, &parameter_with_default.parameter)?;
 
         if let Some(default) = &parameter_with_default.default {
-            constraints.insert(Arc::new(Constraint::Type(ConstraintDefinition::equal(
-                TypeExpression::Variable(ExpressionVariable::new(
-                    parameter_name.clone(),
-                    program_point,
-                )),
-                self.gen_expr(&Namespace::default(), program_point, &default)?,
-            ))));
+            constraints
+                .values
+                .insert(Arc::new(Constraint::Type(ConstraintDefinition::equal(
+                    TypeExpression::Variable(ExpressionVariable::new(
+                        parameter_name.clone(),
+                        program_point,
+                    )),
+                    self.gen_expr(&Namespace::default(), program_point, &default)?,
+                ))));
         }
 
         Ok((parameter_name, constraints))
@@ -479,9 +728,7 @@ impl<'a> ConstraintsBuilder<'a> {
         for parameter in &parameters.posonlyargs {
             let (parameter_name, constraints) =
                 self.gen_parameter_with_default(program_point, &parameter)?;
-            abstract_environment
-                .variables
-                .insert(parameter_name, program_point);
+            self.assign_variable(&mut abstract_environment, program_point, parameter_name);
             abstract_environment
                 .constraints
                 .values
@@ -491,9 +738,7 @@ impl<'a> ConstraintsBuilder<'a> {
         for parameter in &parameters.args {
             let (parameter_name, constraints) =
                 self.gen_parameter(program_point, &parameter.parameter)?;
-            abstract_environment
-                .variables
-                .insert(parameter_name, program_point);
+            self.assign_variable(&mut abstract_environment, program_point, parameter_name);
             abstract_environment
                 .constraints
                 .values
@@ -502,9 +747,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         if let Some(parameter) = &parameters.vararg {
             let (parameter_name, constraints) = self.gen_parameter(program_point, &parameter)?;
-            abstract_environment
-                .variables
-                .insert(parameter_name, program_point);
+            self.assign_variable(&mut abstract_environment, program_point, parameter_name);
             abstract_environment
                 .constraints
                 .values
@@ -514,9 +757,7 @@ impl<'a> ConstraintsBuilder<'a> {
         for parameter in &parameters.kwonlyargs {
             let (parameter_name, constraints) =
                 self.gen_parameter_with_default(program_point, &parameter)?;
-            abstract_environment
-                .variables
-                .insert(parameter_name, program_point);
+            self.assign_variable(&mut abstract_environment, program_point, parameter_name);
             abstract_environment
                 .constraints
                 .values
@@ -525,9 +766,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         if let Some(parameter) = &parameters.kwarg {
             let (parameter_name, constraints) = self.gen_parameter(program_point, &parameter)?;
-            abstract_environment
-                .variables
-                .insert(parameter_name, program_point);
+            self.assign_variable(&mut abstract_environment, program_point, parameter_name);
             abstract_environment
                 .constraints
                 .values
@@ -813,22 +1052,36 @@ impl<'a> ConstraintsBuilder<'a> {
             return Err(ConstraintsBuilderError::InvalidProgramPoint { program_point });
         };
 
-        let Some(last_location) = abstract_environment
-            .variables
-            .names
-            .get(&name)
-            .and_then(|locations| locations.get_max())
-            .copied()
-        else {
-            return Ok(TypeExpression::UninitialisedVariable(
-                ExpressionUninitialisedVariable::new(name),
-            ));
-        };
-
-        Ok(TypeExpression::Variable(ExpressionVariable::new(
-            name,
-            last_location,
-        )))
+        match abstract_environment.variable_locations.values.get(&name) {
+            Some(locations) => {
+                if locations.values.len() == 1 {
+                    Ok(TypeExpression::Variable(ExpressionVariable::new(
+                        name.clone(),
+                        locations
+                            .values
+                            .get_min()
+                            .expect("should exist cause of the check above")
+                            .clone(),
+                    )))
+                } else {
+                    Ok(TypeExpression::Join(ExpressionJoin {
+                        values: locations
+                            .values
+                            .iter()
+                            .map(|program_point| {
+                                Arc::new(TypeExpression::Variable(ExpressionVariable::new(
+                                    name.clone(),
+                                    program_point.clone(),
+                                )))
+                            })
+                            .collect(),
+                    }))
+                }
+            }
+            None => Ok(TypeExpression::Join(ExpressionJoin {
+                values: imbl::OrdSet::new(),
+            })),
+        }
     }
 
     pub fn gen_expr(
@@ -906,9 +1159,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let parameters = self.gen_parameters(ProgramPoint::Entry, &stmt_function_def.parameters)?;
 
-        target_abstract_environment
-            .variables
-            .insert(identifier.clone(), program_point);
+        self.assign_variable(&mut target_abstract_environment, program_point, identifier);
 
         Ok(target_abstract_environment)
     }
@@ -982,9 +1233,7 @@ impl<'a> ConstraintsBuilder<'a> {
         }
 
         for (variable, constraints) in variables {
-            target_abstract_environment
-                .variables
-                .insert(variable, program_point);
+            self.assign_variable(&mut target_abstract_environment, program_point, variable);
             target_abstract_environment
                 .constraints
                 .values
@@ -1003,9 +1252,10 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let type_expression = self.gen_expr(namespace, program_point, &stmt_assign.value)?;
+        let type_expression =
+            Arc::new(self.gen_expr(namespace, program_point, &stmt_assign.value)?);
 
-        let mut variables: imbl::OrdMap<Arc<Identifier>, imbl::OrdSet<Constraint>> =
+        let mut variables: imbl::OrdMap<Arc<Identifier>, imbl::OrdSet<Arc<Constraint>>> =
             imbl::OrdMap::new();
 
         for target in &stmt_assign.targets {
@@ -1016,26 +1266,41 @@ impl<'a> ConstraintsBuilder<'a> {
             match target {
                 AssignmentTarget::Name(target_name) => {
                     let identifier = Arc::new(target_name);
-                    let constraint = Constraint::Type(ConstraintDefinition::equal(
-                        TypeExpression::Variable(ExpressionVariable::new(
+                    let constraint = Arc::new(Constraint::Type(ConstraintDefinition::new(
+                        Arc::new(TypeExpression::Variable(ExpressionVariable::new(
                             identifier.clone(),
                             program_point,
-                        )),
+                        ))),
+                        ConstraintKind::Equal,
                         type_expression.clone(),
-                    ));
+                    )));
 
                     variables.insert(
                         identifier,
-                        imbl::OrdSet::from_iter([
-                            if target_abstract_environment.current_guards.is_empty() {
-                                constraint
-                            } else {
-                                Constraint::Guarded(ConstraintGuarded {
-                                    guards: target_abstract_environment.current_guards.clone(),
-                                    constraint: Arc::new(constraint),
+                        if target_abstract_environment.current_guards.values.is_empty() {
+                            imbl::OrdSet::unit(Arc::new(Constraint::Guarded(ConstraintGuarded {
+                                guards: LatticeSet::new(imbl::OrdSet::unit(Guard::Succeed(
+                                    type_expression.clone(),
+                                ))),
+                                constraint: constraint.clone(),
+                            })))
+                        } else {
+                            target_abstract_environment
+                                .current_guards
+                                .values
+                                .iter()
+                                .map(|guards| {
+                                    Constraint::Guarded(ConstraintGuarded {
+                                        guards: LatticeSet::new(
+                                            guards
+                                                .values
+                                                .update(Guard::Succeed(type_expression.clone())),
+                                        ),
+                                        constraint: constraint.clone(),
+                                    })
                                 })
-                            },
-                        ]),
+                                .collect()
+                        },
                     );
                 }
                 AssignmentTarget::Attribute { .. } => todo!(),
@@ -1046,12 +1311,10 @@ impl<'a> ConstraintsBuilder<'a> {
             }
         }
 
-        target_abstract_environment.current_guards.clear();
+        target_abstract_environment.current_guards.values.clear();
 
         for (variable, constraints) in variables {
-            target_abstract_environment
-                .variables
-                .insert(variable, program_point);
+            self.assign_variable(&mut target_abstract_environment, program_point, variable);
             target_abstract_environment
                 .constraints
                 .values
@@ -1080,6 +1343,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 if let Some(value) = &stmt_ann_assign.value {
                     target_abstract_environment
                         .constraints
+                        .values
                         .insert(Arc::new(Constraint::Type(ConstraintDefinition::equal(
                             TypeExpression::Variable(ExpressionVariable::new(
                                 identifier.clone(),
@@ -1087,18 +1351,11 @@ impl<'a> ConstraintsBuilder<'a> {
                             )),
                             self.gen_expr(namespace, program_point, value.as_ref())?,
                         ))));
-                    match target_abstract_environment
-                        .variables
-                        .names
-                        .entry(identifier)
-                    {
-                        imbl::ordmap::Entry::Vacant(entry) => {
-                            entry.insert(imbl::ordset![program_point]);
-                        }
-                        imbl::ordmap::Entry::Occupied(mut entry) => {
-                            entry.get_mut().insert(program_point);
-                        }
-                    }
+                    self.assign_variable(
+                        &mut target_abstract_environment,
+                        program_point,
+                        identifier,
+                    );
                 }
             }
             AssignmentTarget::Attribute { .. } => todo!(),
@@ -1123,14 +1380,31 @@ impl<'a> ConstraintsBuilder<'a> {
         let condition_expression =
             Arc::new(self.gen_expr(namespace, program_point, &stmt_if.test)?);
 
-        target_abstract_environment.current_guards.extend([
+        let mut values: imbl::OrdSet<LatticeSet<Guard>> = imbl::OrdSet::new();
+
+        for if_guard in [
             Guard::IsTrue(condition_expression.clone()),
             Guard::IsFalse(condition_expression.clone()),
             Guard::Raise {
-                expression: condition_expression,
+                expression: condition_expression.clone(),
                 exception: None,
             },
-        ]);
+        ] {
+            let guards = target_abstract_environment
+                .current_guards
+                .values
+                .iter()
+                .map(|guards| LatticeSet::new(guards.values.update(if_guard.clone())))
+                .collect::<imbl::OrdSet<LatticeSet<Guard>>>();
+
+            if guards.is_empty() {
+                values.insert(LatticeSet::new(imbl::OrdSet::unit(if_guard)));
+            } else {
+                values.extend(guards);
+            }
+        }
+
+        target_abstract_environment.current_guards.values = values;
 
         Ok(target_abstract_environment)
     }
@@ -1265,30 +1539,52 @@ impl CfgAnalyser<AbstractEnvironment, Namespace<AbstractEnvironment>> for Constr
 
         let mut target_abstract_environment = abstract_environment.clone();
 
-        target_abstract_environment.current_guards = target_abstract_environment
+        target_abstract_environment.current_guards.values = target_abstract_environment
             .current_guards
+            .values
             .into_iter()
-            .filter(|guard| match guard {
-                Guard::IsTrue(_) => edge_datas.contains(&EdgeData::Conditional(true)),
-                Guard::IsFalse(_) => edge_datas.contains(&EdgeData::Conditional(false)),
-                Guard::Succeed(_) => edge_datas.iter().any(|edge_data| match edge_data {
-                    EdgeData::Unconditional
-                    | EdgeData::Conditional(_)
-                    | EdgeData::Match(_)
-                    | EdgeData::Break
-                    | EdgeData::Continue
-                    | EdgeData::Return => true,
-                    EdgeData::Exception(_, _) | EdgeData::UnhandledException => false,
-                }),
-                Guard::Raise { .. } => edge_datas.iter().any(|edge_data| match edge_data {
-                    EdgeData::Unconditional
-                    | EdgeData::Conditional(_)
-                    | EdgeData::Match(_)
-                    | EdgeData::Break
-                    | EdgeData::Continue
-                    | EdgeData::Return => false,
-                    EdgeData::Exception(_, _) | EdgeData::UnhandledException => true,
-                }),
+            .filter_map(|guards| {
+                let filtered_guards = LatticeSet::new(
+                    guards
+                        .values
+                        .into_iter()
+                        .filter(|guard| match guard {
+                            Guard::IsTrue(_) => edge_datas.contains(&EdgeData::Conditional(true)),
+                            Guard::IsFalse(_) => edge_datas.contains(&EdgeData::Conditional(false)),
+                            Guard::Succeed(_) => {
+                                edge_datas.iter().any(|edge_data| match edge_data {
+                                    EdgeData::Unconditional
+                                    | EdgeData::Conditional(_)
+                                    | EdgeData::Match(_)
+                                    | EdgeData::Break
+                                    | EdgeData::Continue
+                                    | EdgeData::Return => true,
+                                    EdgeData::Exception(_, _) | EdgeData::UnhandledException => {
+                                        false
+                                    }
+                                })
+                            }
+                            Guard::Raise { .. } => {
+                                edge_datas.iter().any(|edge_data| match edge_data {
+                                    EdgeData::Unconditional
+                                    | EdgeData::Conditional(_)
+                                    | EdgeData::Match(_)
+                                    | EdgeData::Break
+                                    | EdgeData::Continue
+                                    | EdgeData::Return => false,
+                                    EdgeData::Exception(_, _) | EdgeData::UnhandledException => {
+                                        true
+                                    }
+                                })
+                            }
+                        })
+                        .collect::<imbl::OrdSet<Guard>>(),
+                );
+                if filtered_guards.values.is_empty() {
+                    None
+                } else {
+                    Some(filtered_guards)
+                }
             })
             .collect();
 
@@ -1318,21 +1614,21 @@ impl CfgAnalyser<AbstractEnvironment, Namespace<AbstractEnvironment>> for Constr
     fn includes(
         &self,
         _namespace: &Namespace<AbstractEnvironment>,
-        program_point: ProgramPoint,
+        _program_point: ProgramPoint,
         including: &AbstractEnvironment,
         included: &AbstractEnvironment,
     ) -> Result<bool, ConstraintsBuilderError> {
-        Ok(including.includes(&program_point, included).unwrap())
+        Ok(including.includes(included))
     }
 
     fn join(
         &self,
         _namespace: &Namespace<AbstractEnvironment>,
-        program_point: ProgramPoint,
+        _program_point: ProgramPoint,
         left: &AbstractEnvironment,
         right: &AbstractEnvironment,
     ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
-        Ok(left.join(&program_point, right).unwrap())
+        Ok(left.join(right))
     }
 }
 
@@ -1443,7 +1739,7 @@ mod tests {
 
         let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
 
-        assert_eq!(abstract_environment.variables.names.len(), 1);
+        assert_eq!(abstract_environment.variable_locations.values.len(), 1);
 
         /*assert_eq!(
             abstract_environment.constraints.values,
@@ -1477,7 +1773,7 @@ mod tests {
 
         let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
 
-        assert_eq!(abstract_environment.variables.names.len(), 1);
+        assert_eq!(abstract_environment.variable_locations.values.len(), 1);
 
         /*assert_eq!(
             abstract_environment.constraints.values,
@@ -1511,7 +1807,7 @@ mod tests {
 
         let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
 
-        assert_eq!(abstract_environment.variables.names.len(), 2);
+        assert_eq!(abstract_environment.variable_locations.values.len(), 2);
 
         /*assert_eq!(
             abstract_environment.constraints.values,
@@ -1548,7 +1844,7 @@ mod tests {
 
         let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
 
-        assert_eq!(abstract_environment.variables.names.len(), 1);
+        assert_eq!(abstract_environment.variable_locations.values.len(), 1);
 
         /*assert_eq!(
             abstract_environment.constraints.values,
@@ -1582,7 +1878,7 @@ mod tests {
 
         let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
 
-        assert_eq!(abstract_environment.variables.names.len(), 1);
+        assert_eq!(abstract_environment.variable_locations.values.len(), 1);
 
         /*assert_eq!(
             abstract_environment.constraints.values,
@@ -1616,7 +1912,7 @@ mod tests {
 
         let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
 
-        assert_eq!(abstract_environment.variables.names.len(), 1);
+        assert_eq!(abstract_environment.variable_locations.values.len(), 1);
 
         /*assert_eq!(
             abstract_environment.constraints.values,
@@ -1704,7 +2000,7 @@ mod tests {
 
         let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
 
-        assert_eq!(abstract_environment.variables.names.len(), 27);
+        assert_eq!(abstract_environment.variable_locations.values.len(), 27);
         /*
         let left = variable_expr("left", 0);
         let right = variable_expr("right", 1);
@@ -1827,6 +2123,8 @@ mod tests {
             a = 42
         else:
             a = 67
+
+        b = a
         "#,
         );
 
@@ -1842,13 +2140,14 @@ mod tests {
                 ProgramPoint::Point(1),
                 ProgramPoint::Point(2),
                 ProgramPoint::Point(3),
+                ProgramPoint::Point(4),
                 ProgramPoint::Exit
             ]
         );
 
         let abstract_environment = &namespace.abstract_environments[&ProgramPoint::Exit];
 
-        assert_eq!(abstract_environment.variables.names.len(), 2);
+        assert_eq!(abstract_environment.variable_locations.values.len(), 3);
 
         /*assert_eq!(
             abstract_environment.constraints.values,
