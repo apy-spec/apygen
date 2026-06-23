@@ -1399,6 +1399,47 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(target_abstract_environment)
     }
 
+    pub fn gen_stmt_while(
+        &self,
+        namespace: &Namespace<AbstractEnvironment>,
+        program_point: ProgramPoint,
+        stmt_while: &nodes::StmtWhile,
+    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
+        let mut target_abstract_environment =
+            namespace.clone_abstract_environment_or_default(program_point);
+
+        let condition_expression =
+            Arc::new(self.gen_expr(namespace, program_point, &stmt_while.test)?);
+
+        let mut values: imbl::OrdSet<LatticeSet<Guard>> = imbl::OrdSet::new();
+
+        for while_guard in [
+            Guard::IsTrue(condition_expression.clone()),
+            Guard::IsFalse(condition_expression.clone()),
+            Guard::Raise {
+                expression: condition_expression.clone(),
+                exception: None,
+            },
+        ] {
+            let guards = target_abstract_environment
+                .current_guards
+                .values
+                .iter()
+                .map(|guards| LatticeSet::new(guards.values.update(while_guard.clone())))
+                .collect::<imbl::OrdSet<LatticeSet<Guard>>>();
+
+            if guards.is_empty() {
+                values.insert(LatticeSet::new(imbl::OrdSet::unit(while_guard)));
+            } else {
+                values.extend(guards);
+            }
+        }
+
+        target_abstract_environment.current_guards.values = values;
+
+        Ok(target_abstract_environment)
+    }
+
     pub fn gen_stmt_if(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
@@ -1474,8 +1515,8 @@ impl<'a> ConstraintsBuilder<'a> {
             nodes::Stmt::For(_) => {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
             }
-            nodes::Stmt::While(_) => {
-                Ok(namespace.clone_abstract_environment_or_default(program_point))
+            nodes::Stmt::While(stmt_while) => {
+                self.gen_stmt_while(namespace, program_point, stmt_while)
             }
             nodes::Stmt::If(stmt_if) => self.gen_stmt_if(namespace, program_point, stmt_if),
             nodes::Stmt::With(_) => {
@@ -1854,7 +1895,7 @@ mod tests {
         "{{#succeed((42) not in (67))} => (not_in@Point(0) = (42) not in (67)), {#fail((42) not in (67))} => (#exceptions((42) not in (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
-    #[case::not_in_operation(
+    #[case::simple_if_statement(
         &source_code(
         r#"
         x = True
@@ -1868,6 +1909,20 @@ mod tests {
         "#,
         ),
         "{{#is_true(x~Point(1)), #succeed(42)} => (a@Point(2) = 42), {#is_true(x~Point(1)), #fail(42)} => (#exceptions(42) ⊑ #raised_exceptions()), {#is_false(x~Point(1)), #succeed(67)} => (a@Point(3) = 67), {#is_false(x~Point(1)), #fail(67)} => (#exceptions(67) ⊑ #raised_exceptions()), {#succeed(a~Point(4))} => (b@Point(4) = a~Point(4)), {#succeed(True)} => (x@Point(0) = True), {#fail(a~Point(4))} => (#exceptions(a~Point(4)) ⊑ #raised_exceptions()), {#fail(True)} => (#exceptions(True) ⊑ #raised_exceptions())}",
+        vec![],
+    )]
+    #[case::simple_while_statement(
+        &source_code(
+        r#"
+        a = 0
+
+        while a < 5:
+            a = a + 1
+
+        b = a
+        "#,
+        ),
+        "{{#is_true((a~Point(1)) < (5)), #succeed((a~Point(2)) + (1))} => (a@Point(2) = (a~Point(2)) + (1)), {#is_true((a~Point(1)) < (5)), #fail((a~Point(2)) + (1))} => (#exceptions((a~Point(2)) + (1)) ⊑ #raised_exceptions()), {#is_false((a~Point(1)) < (5)), #succeed(a~Point(3))} => (b@Point(3) = a~Point(3)), {#is_false((a~Point(1)) < (5)), #fail(a~Point(3))} => (#exceptions(a~Point(3)) ⊑ #raised_exceptions()), {#succeed(0)} => (a@Point(0) = 0), {#fail(0)} => (#exceptions(0) ⊑ #raised_exceptions())}",
         vec![],
     )]
     fn test_constraints_generation(
