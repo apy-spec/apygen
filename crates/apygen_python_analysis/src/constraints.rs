@@ -54,7 +54,7 @@ impl<T: Ord> Default for LatticeSet<T> {
 }
 
 impl<T: Clone + Ord> FromIterator<T> for LatticeSet<T> {
-    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         Self::new(imbl::OrdSet::from_iter(iter))
     }
 }
@@ -116,7 +116,7 @@ impl<K: Ord, V> Default for LatticeMap<K, V> {
 }
 
 impl<K: Clone + Ord, V: Clone> FromIterator<(K, V)> for LatticeMap<K, V> {
-    fn from_iter<I: IntoIterator<Item=(K, V)>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
         Self::new(imbl::OrdMap::from_iter(iter))
     }
 }
@@ -135,23 +135,31 @@ impl<K: Ord + Display, V: Display> Display for LatticeMap<K, V> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum VariableDefinition {
+    New(ProgramPoint),
+    Defined(ProgramPoint),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionVariable {
     pub name: VariableName,
-    pub program_point: ProgramPoint,
+    pub definition: VariableDefinition,
 }
 
 impl ExpressionVariable {
-    pub fn new(name: VariableName, program_point: ProgramPoint) -> Self {
-        Self {
-            name,
-            program_point,
-        }
+    pub fn new(name: VariableName, definition: VariableDefinition) -> Self {
+        Self { name, definition }
     }
 }
 
 impl Display for ExpressionVariable {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}@{}", self.name, self.program_point)
+        match &self.definition {
+            VariableDefinition::New(program_point) => write!(f, "{}@{}", self.name, program_point),
+            VariableDefinition::Defined(program_point) => {
+                write!(f, "{}~{}", self.name, program_point)
+            }
+        }
     }
 }
 
@@ -497,7 +505,9 @@ impl Display for ExceptionExpression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ExceptionExpression::Raised(raised_exception) => write!(f, "{}", raised_exception),
-            ExceptionExpression::Type(type_expression) => write!(f, "#exceptions({})", type_expression),
+            ExceptionExpression::Type(type_expression) => {
+                write!(f, "#exceptions({})", type_expression)
+            }
         }
     }
 }
@@ -731,7 +741,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 .insert(Arc::new(Constraint::Type(ConstraintDefinition::equal(
                     TypeExpression::Variable(ExpressionVariable::new(
                         parameter_name.clone(),
-                        program_point,
+                        VariableDefinition::New(program_point),
                     )),
                     self.gen_expr(&Namespace::default(), program_point, &default)?,
                 ))));
@@ -1064,46 +1074,13 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn gen_name(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
         expr_name: &nodes::ExprName,
     ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let name = self.gen_variable_name(program_point, &expr_name.id)?;
-
-        let Some(abstract_environment) = namespace.abstract_environments.get(&program_point) else {
-            return Err(ConstraintsBuilderError::InvalidProgramPoint { program_point });
-        };
-
-        match abstract_environment.variable_locations.values.get(&name) {
-            Some(locations) => {
-                if locations.values.len() == 1 {
-                    Ok(TypeExpression::Variable(ExpressionVariable::new(
-                        name.clone(),
-                        locations
-                            .values
-                            .get_min()
-                            .expect("should exist cause of the check above")
-                            .clone(),
-                    )))
-                } else {
-                    Ok(TypeExpression::Join(ExpressionJoin {
-                        values: locations
-                            .values
-                            .iter()
-                            .map(|program_point| {
-                                Arc::new(TypeExpression::Variable(ExpressionVariable::new(
-                                    name.clone(),
-                                    program_point.clone(),
-                                )))
-                            })
-                            .collect(),
-                    }))
-                }
-            }
-            None => Ok(TypeExpression::Join(ExpressionJoin {
-                values: imbl::OrdSet::new(),
-            })),
-        }
+        Ok(TypeExpression::Variable(ExpressionVariable::new(
+            self.gen_variable_name(program_point, &expr_name.id)?,
+            VariableDefinition::Defined(program_point),
+        )))
     }
 
     pub fn gen_expr(
@@ -1160,7 +1137,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 self.gen_expr_subscript(namespace, program_point, expr_subscript)
             }
             nodes::Expr::Starred(_) => todo!(),
-            nodes::Expr::Name(expr_name) => self.gen_name(namespace, program_point, expr_name),
+            nodes::Expr::Name(expr_name) => self.gen_name(program_point, expr_name),
             nodes::Expr::List(_) => todo!(),
             nodes::Expr::Tuple(_) => todo!(),
             nodes::Expr::Slice(_) => todo!(),
@@ -1207,7 +1184,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 constraints.insert(Constraint::Type(ConstraintDefinition::equal(
                     TypeExpression::Variable(ExpressionVariable::new(
                         identifier.clone(),
-                        program_point,
+                        VariableDefinition::New(program_point),
                     )),
                     TypeExpression::Import(ExpressionImport::new(module_name.clone())),
                 )));
@@ -1217,9 +1194,11 @@ impl<'a> ConstraintsBuilder<'a> {
             } else {
                 let identifier = Arc::new(module_name.identifiers.first().clone());
 
-                let mut expression_option = Some(Arc::new(TypeExpression::Variable(
-                    ExpressionVariable::new(identifier.clone(), program_point),
-                )));
+                let mut expression_option =
+                    Some(Arc::new(TypeExpression::Variable(ExpressionVariable::new(
+                        identifier.clone(),
+                        VariableDefinition::New(program_point),
+                    ))));
 
                 let mut i = 1;
                 while let Some(expression) = expression_option {
@@ -1291,67 +1270,67 @@ impl<'a> ConstraintsBuilder<'a> {
                     let type_constraint = Arc::new(Constraint::Type(ConstraintDefinition::new(
                         Arc::new(TypeExpression::Variable(ExpressionVariable::new(
                             identifier.clone(),
-                            program_point,
+                            VariableDefinition::New(program_point),
                         ))),
                         ConstraintKind::Equal,
                         type_expression.clone(),
                     )));
-                    let exception_constraint = Arc::new(Constraint::Exception(
-                        ConstraintDefinition::include(
+                    let exception_constraint =
+                        Arc::new(Constraint::Exception(ConstraintDefinition::include(
                             ExceptionExpression::Type(type_expression.clone()),
                             ExceptionExpression::Raised(RaisedException {
                                 program_points: imbl::Vector::new(),
                             }),
-                        ),
-                    ));
+                        )));
 
-                    let (type_constraints, exception_constraints) =
-                        if target_abstract_environment.current_guards.values.is_empty() {
-                            (
-                                imbl::OrdSet::unit(Arc::new(Constraint::Guarded(ConstraintGuarded {
-                                    guards: LatticeSet::new(imbl::OrdSet::unit(Guard::Succeed(
-                                        type_expression.clone(),
-                                    ))),
-                                    constraint: type_constraint.clone(),
-                                }))),
-                                imbl::OrdSet::unit(Arc::new(Constraint::Guarded(ConstraintGuarded {
-                                    guards: LatticeSet::new(imbl::OrdSet::unit(Guard::Raise {
-                                        expression: type_expression.clone(),
-                                        exception: None,
-                                    })),
-                                    constraint: exception_constraint.clone(),
-                                }))),
-                            )
-                        } else {
-                            target_abstract_environment
-                                .current_guards
-                                .values
-                                .iter()
-                                .map(|guards| {
-                                    (
-                                        Constraint::Guarded(ConstraintGuarded {
-                                            guards: LatticeSet::new(
-                                                guards
-                                                    .values
-                                                    .update(Guard::Succeed(type_expression.clone())),
-                                            ),
-                                            constraint: type_constraint.clone(),
-                                        }),
-                                        Constraint::Guarded(ConstraintGuarded {
-                                            guards: LatticeSet::new(
-                                                guards
-                                                    .values
-                                                    .update(Guard::Raise {
-                                                        expression: type_expression.clone(),
-                                                        exception: None,
-                                                    }),
-                                            ),
-                                            constraint: exception_constraint.clone(),
-                                        })
-                                    )
-                                })
-                                .collect()
-                        };
+                    let (type_constraints, exception_constraints) = if target_abstract_environment
+                        .current_guards
+                        .values
+                        .is_empty()
+                    {
+                        (
+                            imbl::OrdSet::unit(Arc::new(Constraint::Guarded(ConstraintGuarded {
+                                guards: LatticeSet::new(imbl::OrdSet::unit(Guard::Succeed(
+                                    type_expression.clone(),
+                                ))),
+                                constraint: type_constraint.clone(),
+                            }))),
+                            imbl::OrdSet::unit(Arc::new(Constraint::Guarded(ConstraintGuarded {
+                                guards: LatticeSet::new(imbl::OrdSet::unit(Guard::Raise {
+                                    expression: type_expression.clone(),
+                                    exception: None,
+                                })),
+                                constraint: exception_constraint.clone(),
+                            }))),
+                        )
+                    } else {
+                        target_abstract_environment
+                            .current_guards
+                            .values
+                            .iter()
+                            .map(|guards| {
+                                (
+                                    Constraint::Guarded(ConstraintGuarded {
+                                        guards: LatticeSet::new(
+                                            guards
+                                                .values
+                                                .update(Guard::Succeed(type_expression.clone())),
+                                        ),
+                                        constraint: type_constraint.clone(),
+                                    }),
+                                    Constraint::Guarded(ConstraintGuarded {
+                                        guards: LatticeSet::new(guards.values.update(
+                                            Guard::Raise {
+                                                expression: type_expression.clone(),
+                                                exception: None,
+                                            },
+                                        )),
+                                        constraint: exception_constraint.clone(),
+                                    }),
+                                )
+                            })
+                            .collect()
+                    };
 
                     variables.insert(identifier, type_constraints.union(exception_constraints));
                 }
@@ -1399,7 +1378,7 @@ impl<'a> ConstraintsBuilder<'a> {
                         .insert(Arc::new(Constraint::Type(ConstraintDefinition::equal(
                             TypeExpression::Variable(ExpressionVariable::new(
                                 identifier.clone(),
-                                program_point,
+                                VariableDefinition::New(program_point),
                             )),
                             self.gen_expr(namespace, program_point, value.as_ref())?,
                         ))));
@@ -1551,7 +1530,7 @@ impl CfgAnalyser<AbstractEnvironment, Namespace<AbstractEnvironment>> for Constr
     fn successors(
         &self,
         program_point: &ProgramPoint,
-    ) -> Result<impl Iterator<Item=ProgramPoint>, ConstraintsBuilderError> {
+    ) -> Result<impl Iterator<Item = ProgramPoint>, ConstraintsBuilderError> {
         match self.cfg.successors(program_point) {
             Some(successors) => Ok(successors.cloned()),
             None => Err(ConstraintsBuilderError::InvalidProgramPoint {
@@ -1888,7 +1867,7 @@ mod tests {
         b = a
         "#,
         ),
-        "{{#is_true(x@Point(0)), #succeed(42)} => (a@Point(2) = 42), {#is_true(x@Point(0)), #fail(42)} => (#exceptions(42) ⊑ #raised_exceptions()), {#is_false(x@Point(0)), #succeed(67)} => (a@Point(3) = 67), {#is_false(x@Point(0)), #fail(67)} => (#exceptions(67) ⊑ #raised_exceptions()), {#succeed(True)} => (x@Point(0) = True), {#succeed((a@Point(2)) ⊔ (a@Point(3)))} => (b@Point(4) = (a@Point(2)) ⊔ (a@Point(3))), {#fail(True)} => (#exceptions(True) ⊑ #raised_exceptions()), {#fail((a@Point(2)) ⊔ (a@Point(3)))} => (#exceptions((a@Point(2)) ⊔ (a@Point(3))) ⊑ #raised_exceptions())}",
+        "{{#is_true(x~Point(1)), #succeed(42)} => (a@Point(2) = 42), {#is_true(x~Point(1)), #fail(42)} => (#exceptions(42) ⊑ #raised_exceptions()), {#is_false(x~Point(1)), #succeed(67)} => (a@Point(3) = 67), {#is_false(x~Point(1)), #fail(67)} => (#exceptions(67) ⊑ #raised_exceptions()), {#succeed(a~Point(4))} => (b@Point(4) = a~Point(4)), {#succeed(True)} => (x@Point(0) = True), {#fail(a~Point(4))} => (#exceptions(a~Point(4)) ⊑ #raised_exceptions()), {#fail(True)} => (#exceptions(True) ⊑ #raised_exceptions())}",
         vec![],
     )]
     fn test_constraints_generation(
