@@ -176,7 +176,7 @@ impl ExpressionImport {
 
 impl Display for ExpressionImport {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "import({})", self.module)
+        write!(f, "#import({})", self.module)
     }
 }
 
@@ -1742,22 +1742,22 @@ mod tests {
     #[rstest]
     #[case::import(
         "import some_module",
-        "{some_module@Point(0) = import(some_module)}",
+        "{some_module@Point(0) = #import(some_module)}",
         vec!["some_module"],
     )]
     #[case::import_as(
         "import some_module as mod",
-        "{mod@Point(0) = import(some_module)}",
+        "{mod@Point(0) = #import(some_module)}",
         vec!["some_module"],
     )]
     #[case::multiple_import(
         "import some_module, another_module",
-        "{another_module@Point(0) = import(another_module), some_module@Point(0) = import(some_module)}",
+        "{another_module@Point(0) = #import(another_module), some_module@Point(0) = #import(some_module)}",
         vec!["some_module", "another_module"],
     )]
     #[case::multiple_import_override(
         "import some_module as mod, another_module as mod",
-        "{mod@Point(0) = import(another_module)}",
+        "{mod@Point(0) = #import(another_module)}",
         vec!["some_module", "another_module"],
     )]
     #[case::int_constant_assignment(
