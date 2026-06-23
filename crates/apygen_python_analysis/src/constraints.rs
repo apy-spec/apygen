@@ -494,15 +494,15 @@ pub enum Guard {
 impl Display for Guard {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Guard::IsTrue(expression) => write!(f, "({}) is True", expression),
-            Guard::IsFalse(expression) => write!(f, "({}) is False", expression),
-            Guard::Succeed(expression) => write!(f, "succeed({})", expression),
+            Guard::IsTrue(expression) => write!(f, "#is_true({})", expression),
+            Guard::IsFalse(expression) => write!(f, "#is_false({})", expression),
+            Guard::Succeed(expression) => write!(f, "#succeed({})", expression),
             Guard::Raise {
                 expression,
                 exception,
             } => match exception {
-                Some(exception) => write!(f, "fail({}, {})", expression, exception),
-                None => write!(f, "fail({})", expression),
+                Some(exception) => write!(f, "#fail({}, {})", expression, exception),
+                None => write!(f, "#fail({})", expression),
             },
         }
     }
@@ -1690,137 +1690,137 @@ mod tests {
     )]
     #[case::int_constant_assignment(
         "a = 42",
-        "{({succeed(42)}) => (a@Point(0) = 42)}",
+        "{({#succeed(42)}) => (a@Point(0) = 42)}",
         vec![],
     )]
     #[case::int_constant_assignment(
         "a = 4200000000000000000000000000",
-        "{({succeed(4200000000000000000000000000)}) => (a@Point(0) = 4200000000000000000000000000)}",
+        "{({#succeed(4200000000000000000000000000)}) => (a@Point(0) = 4200000000000000000000000000)}",
         vec![],
     )]
     #[case::add_operation(
         "add = 42 + 67",
-        "{({succeed((42) + (67))}) => (add@Point(0) = (42) + (67))}",
+        "{({#succeed((42) + (67))}) => (add@Point(0) = (42) + (67))}",
         vec![],
     )]
     #[case::sub_operation(
         "sub = 42 - 67",
-        "{({succeed((42) - (67))}) => (sub@Point(0) = (42) - (67))}",
+        "{({#succeed((42) - (67))}) => (sub@Point(0) = (42) - (67))}",
         vec![],
     )]
     #[case::mult_operation(
         "mult = 42 * 67",
-        "{({succeed((42) * (67))}) => (mult@Point(0) = (42) * (67))}",
+        "{({#succeed((42) * (67))}) => (mult@Point(0) = (42) * (67))}",
         vec![],
     )]
     #[case::mat_mult_operation(
         "mat_mult = 42 @ 67",
-        "{({succeed((42) @ (67))}) => (mat_mult@Point(0) = (42) @ (67))}",
+        "{({#succeed((42) @ (67))}) => (mat_mult@Point(0) = (42) @ (67))}",
         vec![],
     )]
     #[case::div_operation(
         "div = 42 / 67",
-        "{({succeed((42) / (67))}) => (div@Point(0) = (42) / (67))}",
+        "{({#succeed((42) / (67))}) => (div@Point(0) = (42) / (67))}",
         vec![],
     )]
     #[case::floor_div_operation(
         "floor_div = 42 // 67",
-        "{({succeed((42) // (67))}) => (floor_div@Point(0) = (42) // (67))}",
+        "{({#succeed((42) // (67))}) => (floor_div@Point(0) = (42) // (67))}",
         vec![],
     )]
     #[case::mod_operation(
         "mod = 42 % 67",
-        "{({succeed((42) % (67))}) => (mod@Point(0) = (42) % (67))}",
+        "{({#succeed((42) % (67))}) => (mod@Point(0) = (42) % (67))}",
         vec![],
     )]
     #[case::pow_operation(
         "pow = 42 ** 67",
-        "{({succeed((42) ** (67))}) => (pow@Point(0) = (42) ** (67))}",
+        "{({#succeed((42) ** (67))}) => (pow@Point(0) = (42) ** (67))}",
         vec![],
     )]
     #[case::shl_operation(
         "shl = 42 << 67",
-        "{({succeed((42) << (67))}) => (shl@Point(0) = (42) << (67))}",
+        "{({#succeed((42) << (67))}) => (shl@Point(0) = (42) << (67))}",
         vec![],
     )]
     #[case::shr_operation(
         "shr = 42 >> 67",
-        "{({succeed((42) >> (67))}) => (shr@Point(0) = (42) >> (67))}",
+        "{({#succeed((42) >> (67))}) => (shr@Point(0) = (42) >> (67))}",
         vec![],
     )]
     #[case::bit_or_operation(
         "bit_or = 42 | 67",
-        "{({succeed((42) | (67))}) => (bit_or@Point(0) = (42) | (67))}",
+        "{({#succeed((42) | (67))}) => (bit_or@Point(0) = (42) | (67))}",
         vec![],
     )]
     #[case::bit_xor_operation(
         "bit_xor = 42 ^ 67",
-        "{({succeed((42) ^ (67))}) => (bit_xor@Point(0) = (42) ^ (67))}",
+        "{({#succeed((42) ^ (67))}) => (bit_xor@Point(0) = (42) ^ (67))}",
         vec![],
     )]
     #[case::bit_and_operation(
         "bit_and = 42 & 67",
-        "{({succeed((42) & (67))}) => (bit_and@Point(0) = (42) & (67))}",
+        "{({#succeed((42) & (67))}) => (bit_and@Point(0) = (42) & (67))}",
         vec![],
     )]
     #[case::and_operation(
         "and_ = 42 and 67",
-        "{({succeed((42) and (67))}) => (and_@Point(0) = (42) and (67))}",
+        "{({#succeed((42) and (67))}) => (and_@Point(0) = (42) and (67))}",
         vec![],
     )]
     #[case::or_operation(
         "or_ = 42 or 67",
-        "{({succeed((42) or (67))}) => (or_@Point(0) = (42) or (67))}",
+        "{({#succeed((42) or (67))}) => (or_@Point(0) = (42) or (67))}",
         vec![],
     )]
     #[case::eq_operation(
         "eq = 42 == 67",
-        "{({succeed((42) == (67))}) => (eq@Point(0) = (42) == (67))}",
+        "{({#succeed((42) == (67))}) => (eq@Point(0) = (42) == (67))}",
         vec![],
     )]
     #[case::not_eq_operation(
         "not_eq = 42 != 67",
-        "{({succeed((42) != (67))}) => (not_eq@Point(0) = (42) != (67))}",
+        "{({#succeed((42) != (67))}) => (not_eq@Point(0) = (42) != (67))}",
         vec![],
     )]
     #[case::lt_operation(
         "lt = 42 < 67",
-        "{({succeed((42) < (67))}) => (lt@Point(0) = (42) < (67))}",
+        "{({#succeed((42) < (67))}) => (lt@Point(0) = (42) < (67))}",
         vec![],
     )]
     #[case::gt_operation(
         "gt = 42 > 67",
-        "{({succeed((42) > (67))}) => (gt@Point(0) = (42) > (67))}",
+        "{({#succeed((42) > (67))}) => (gt@Point(0) = (42) > (67))}",
         vec![],
     )]
     #[case::lte_operation(
         "lte = 42 <= 67",
-        "{({succeed((42) <= (67))}) => (lte@Point(0) = (42) <= (67))}",
+        "{({#succeed((42) <= (67))}) => (lte@Point(0) = (42) <= (67))}",
         vec![],
     )]
     #[case::gte_operation(
         "gte = 42 >= 67",
-        "{({succeed((42) >= (67))}) => (gte@Point(0) = (42) >= (67))}",
+        "{({#succeed((42) >= (67))}) => (gte@Point(0) = (42) >= (67))}",
         vec![],
     )]
     #[case::is_operation(
         "is_ = 42 is 67",
-        "{({succeed((42) is (67))}) => (is_@Point(0) = (42) is (67))}",
+        "{({#succeed((42) is (67))}) => (is_@Point(0) = (42) is (67))}",
         vec![],
     )]
     #[case::is_not_operation(
         "is_not = 42 is not 67",
-        "{({succeed((42) is not (67))}) => (is_not@Point(0) = (42) is not (67))}",
+        "{({#succeed((42) is not (67))}) => (is_not@Point(0) = (42) is not (67))}",
         vec![],
     )]
     #[case::in_operation(
         "in_ = 42 in 67",
-        "{({succeed((42) in (67))}) => (in_@Point(0) = (42) in (67))}",
+        "{({#succeed((42) in (67))}) => (in_@Point(0) = (42) in (67))}",
         vec![],
     )]
     #[case::not_in_operation(
         "not_in = 42 not in 67",
-        "{({succeed((42) not in (67))}) => (not_in@Point(0) = (42) not in (67))}",
+        "{({#succeed((42) not in (67))}) => (not_in@Point(0) = (42) not in (67))}",
         vec![],
     )]
     #[case::not_in_operation(
@@ -1836,7 +1836,7 @@ mod tests {
         b = a
         "#,
         ),
-        "{({(x@Point(0)) is True, succeed(42)}) => (a@Point(2) = 42), ({(x@Point(0)) is False, succeed(67)}) => (a@Point(3) = 67), ({succeed(True)}) => (x@Point(0) = True), ({succeed((a@Point(2)) ⊔ (a@Point(3)))}) => (b@Point(4) = (a@Point(2)) ⊔ (a@Point(3)))}",
+        "{({#is_true(x@Point(0)), #succeed(42)}) => (a@Point(2) = 42), ({#is_false(x@Point(0)), #succeed(67)}) => (a@Point(3) = 67), ({#succeed(True)}) => (x@Point(0) = True), ({#succeed((a@Point(2)) ⊔ (a@Point(3)))}) => (b@Point(4) = (a@Point(2)) ⊔ (a@Point(3)))}",
         vec![],
     )]
     fn test_constraints_generation(
