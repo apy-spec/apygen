@@ -54,7 +54,7 @@ impl<T: Ord> Default for LatticeSet<T> {
 }
 
 impl<T: Clone + Ord> FromIterator<T> for LatticeSet<T> {
-    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> Self {
         Self::new(imbl::OrdSet::from_iter(iter))
     }
 }
@@ -116,7 +116,7 @@ impl<K: Ord, V> Default for LatticeMap<K, V> {
 }
 
 impl<K: Clone + Ord, V: Clone> FromIterator<(K, V)> for LatticeMap<K, V> {
-    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item=(K, V)>>(iter: I) -> Self {
         Self::new(imbl::OrdMap::from_iter(iter))
     }
 }
@@ -376,9 +376,9 @@ impl Display for BinaryOperator {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionBinary {
-    left: Arc<TypeExpression>,
-    operator: BinaryOperator,
-    right: Arc<TypeExpression>,
+    pub left: Arc<TypeExpression>,
+    pub operator: BinaryOperator,
+    pub right: Arc<TypeExpression>,
 }
 
 impl Display for ExpressionBinary {
@@ -409,8 +409,8 @@ impl Display for UnaryOperator {
 }
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionUnary {
-    operator: UnaryOperator,
-    operand: Arc<TypeExpression>,
+    pub operator: UnaryOperator,
+    pub operand: Arc<TypeExpression>,
 }
 
 impl Display for ExpressionUnary {
@@ -470,13 +470,35 @@ impl Display for TypeExpression {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RaisedException {
+    pub program_points: imbl::Vector<ProgramPoint>,
+}
+
+impl Display for RaisedException {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#raised_exceptions(")?;
+        for (i, program_point) in self.program_points.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", program_point)?;
+        }
+        write!(f, ")")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ExceptionExpression {
+    Raised(RaisedException),
     Type(Arc<TypeExpression>),
 }
 
 impl Display for ExceptionExpression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "exception({})", self)
+        match self {
+            ExceptionExpression::Raised(raised_exception) => write!(f, "{}", raised_exception),
+            ExceptionExpression::Type(type_expression) => write!(f, "#exceptions({})", type_expression),
+        }
     }
 }
 
@@ -516,7 +538,7 @@ pub struct ConstraintGuarded {
 
 impl Display for ConstraintGuarded {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({}) => ({})", self.guards, self.constraint)
+        write!(f, "{} => ({})", self.guards, self.constraint)
     }
 }
 
@@ -1266,7 +1288,7 @@ impl<'a> ConstraintsBuilder<'a> {
             match target {
                 AssignmentTarget::Name(target_name) => {
                     let identifier = Arc::new(target_name);
-                    let constraint = Arc::new(Constraint::Type(ConstraintDefinition::new(
+                    let type_constraint = Arc::new(Constraint::Type(ConstraintDefinition::new(
                         Arc::new(TypeExpression::Variable(ExpressionVariable::new(
                             identifier.clone(),
                             program_point,
@@ -1274,34 +1296,64 @@ impl<'a> ConstraintsBuilder<'a> {
                         ConstraintKind::Equal,
                         type_expression.clone(),
                     )));
+                    let exception_constraint = Arc::new(Constraint::Exception(
+                        ConstraintDefinition::include(
+                            ExceptionExpression::Type(type_expression.clone()),
+                            ExceptionExpression::Raised(RaisedException {
+                                program_points: imbl::Vector::new(),
+                            }),
+                        ),
+                    ));
 
-                    variables.insert(
-                        identifier,
+                    let (type_constraints, exception_constraints) =
                         if target_abstract_environment.current_guards.values.is_empty() {
-                            imbl::OrdSet::unit(Arc::new(Constraint::Guarded(ConstraintGuarded {
-                                guards: LatticeSet::new(imbl::OrdSet::unit(Guard::Succeed(
-                                    type_expression.clone(),
-                                ))),
-                                constraint: constraint.clone(),
-                            })))
+                            (
+                                imbl::OrdSet::unit(Arc::new(Constraint::Guarded(ConstraintGuarded {
+                                    guards: LatticeSet::new(imbl::OrdSet::unit(Guard::Succeed(
+                                        type_expression.clone(),
+                                    ))),
+                                    constraint: type_constraint.clone(),
+                                }))),
+                                imbl::OrdSet::unit(Arc::new(Constraint::Guarded(ConstraintGuarded {
+                                    guards: LatticeSet::new(imbl::OrdSet::unit(Guard::Raise {
+                                        expression: type_expression.clone(),
+                                        exception: None,
+                                    })),
+                                    constraint: exception_constraint.clone(),
+                                }))),
+                            )
                         } else {
                             target_abstract_environment
                                 .current_guards
                                 .values
                                 .iter()
                                 .map(|guards| {
-                                    Constraint::Guarded(ConstraintGuarded {
-                                        guards: LatticeSet::new(
-                                            guards
-                                                .values
-                                                .update(Guard::Succeed(type_expression.clone())),
-                                        ),
-                                        constraint: constraint.clone(),
-                                    })
+                                    (
+                                        Constraint::Guarded(ConstraintGuarded {
+                                            guards: LatticeSet::new(
+                                                guards
+                                                    .values
+                                                    .update(Guard::Succeed(type_expression.clone())),
+                                            ),
+                                            constraint: type_constraint.clone(),
+                                        }),
+                                        Constraint::Guarded(ConstraintGuarded {
+                                            guards: LatticeSet::new(
+                                                guards
+                                                    .values
+                                                    .update(Guard::Raise {
+                                                        expression: type_expression.clone(),
+                                                        exception: None,
+                                                    }),
+                                            ),
+                                            constraint: exception_constraint.clone(),
+                                        })
+                                    )
                                 })
                                 .collect()
-                        },
-                    );
+                        };
+
+                    variables.insert(identifier, type_constraints.union(exception_constraints));
                 }
                 AssignmentTarget::Attribute { .. } => todo!(),
                 AssignmentTarget::Subscript { .. } => todo!(),
@@ -1499,7 +1551,7 @@ impl CfgAnalyser<AbstractEnvironment, Namespace<AbstractEnvironment>> for Constr
     fn successors(
         &self,
         program_point: &ProgramPoint,
-    ) -> Result<impl Iterator<Item = ProgramPoint>, ConstraintsBuilderError> {
+    ) -> Result<impl Iterator<Item=ProgramPoint>, ConstraintsBuilderError> {
         match self.cfg.successors(program_point) {
             Some(successors) => Ok(successors.cloned()),
             None => Err(ConstraintsBuilderError::InvalidProgramPoint {
@@ -1690,137 +1742,137 @@ mod tests {
     )]
     #[case::int_constant_assignment(
         "a = 42",
-        "{({#succeed(42)}) => (a@Point(0) = 42)}",
+        "{{#succeed(42)} => (a@Point(0) = 42), {#fail(42)} => (#exceptions(42) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::int_constant_assignment(
         "a = 4200000000000000000000000000",
-        "{({#succeed(4200000000000000000000000000)}) => (a@Point(0) = 4200000000000000000000000000)}",
+        "{{#succeed(4200000000000000000000000000)} => (a@Point(0) = 4200000000000000000000000000), {#fail(4200000000000000000000000000)} => (#exceptions(4200000000000000000000000000) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::add_operation(
         "add = 42 + 67",
-        "{({#succeed((42) + (67))}) => (add@Point(0) = (42) + (67))}",
+        "{{#succeed((42) + (67))} => (add@Point(0) = (42) + (67)), {#fail((42) + (67))} => (#exceptions((42) + (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::sub_operation(
         "sub = 42 - 67",
-        "{({#succeed((42) - (67))}) => (sub@Point(0) = (42) - (67))}",
+        "{{#succeed((42) - (67))} => (sub@Point(0) = (42) - (67)), {#fail((42) - (67))} => (#exceptions((42) - (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::mult_operation(
         "mult = 42 * 67",
-        "{({#succeed((42) * (67))}) => (mult@Point(0) = (42) * (67))}",
+        "{{#succeed((42) * (67))} => (mult@Point(0) = (42) * (67)), {#fail((42) * (67))} => (#exceptions((42) * (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::mat_mult_operation(
         "mat_mult = 42 @ 67",
-        "{({#succeed((42) @ (67))}) => (mat_mult@Point(0) = (42) @ (67))}",
+        "{{#succeed((42) @ (67))} => (mat_mult@Point(0) = (42) @ (67)), {#fail((42) @ (67))} => (#exceptions((42) @ (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::div_operation(
         "div = 42 / 67",
-        "{({#succeed((42) / (67))}) => (div@Point(0) = (42) / (67))}",
+        "{{#succeed((42) / (67))} => (div@Point(0) = (42) / (67)), {#fail((42) / (67))} => (#exceptions((42) / (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::floor_div_operation(
         "floor_div = 42 // 67",
-        "{({#succeed((42) // (67))}) => (floor_div@Point(0) = (42) // (67))}",
+        "{{#succeed((42) // (67))} => (floor_div@Point(0) = (42) // (67)), {#fail((42) // (67))} => (#exceptions((42) // (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::mod_operation(
         "mod = 42 % 67",
-        "{({#succeed((42) % (67))}) => (mod@Point(0) = (42) % (67))}",
+        "{{#succeed((42) % (67))} => (mod@Point(0) = (42) % (67)), {#fail((42) % (67))} => (#exceptions((42) % (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::pow_operation(
         "pow = 42 ** 67",
-        "{({#succeed((42) ** (67))}) => (pow@Point(0) = (42) ** (67))}",
+        "{{#succeed((42) ** (67))} => (pow@Point(0) = (42) ** (67)), {#fail((42) ** (67))} => (#exceptions((42) ** (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::shl_operation(
         "shl = 42 << 67",
-        "{({#succeed((42) << (67))}) => (shl@Point(0) = (42) << (67))}",
+        "{{#succeed((42) << (67))} => (shl@Point(0) = (42) << (67)), {#fail((42) << (67))} => (#exceptions((42) << (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::shr_operation(
         "shr = 42 >> 67",
-        "{({#succeed((42) >> (67))}) => (shr@Point(0) = (42) >> (67))}",
+        "{{#succeed((42) >> (67))} => (shr@Point(0) = (42) >> (67)), {#fail((42) >> (67))} => (#exceptions((42) >> (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::bit_or_operation(
         "bit_or = 42 | 67",
-        "{({#succeed((42) | (67))}) => (bit_or@Point(0) = (42) | (67))}",
+        "{{#succeed((42) | (67))} => (bit_or@Point(0) = (42) | (67)), {#fail((42) | (67))} => (#exceptions((42) | (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::bit_xor_operation(
         "bit_xor = 42 ^ 67",
-        "{({#succeed((42) ^ (67))}) => (bit_xor@Point(0) = (42) ^ (67))}",
+        "{{#succeed((42) ^ (67))} => (bit_xor@Point(0) = (42) ^ (67)), {#fail((42) ^ (67))} => (#exceptions((42) ^ (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::bit_and_operation(
         "bit_and = 42 & 67",
-        "{({#succeed((42) & (67))}) => (bit_and@Point(0) = (42) & (67))}",
+        "{{#succeed((42) & (67))} => (bit_and@Point(0) = (42) & (67)), {#fail((42) & (67))} => (#exceptions((42) & (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::and_operation(
         "and_ = 42 and 67",
-        "{({#succeed((42) and (67))}) => (and_@Point(0) = (42) and (67))}",
+        "{{#succeed((42) and (67))} => (and_@Point(0) = (42) and (67)), {#fail((42) and (67))} => (#exceptions((42) and (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::or_operation(
         "or_ = 42 or 67",
-        "{({#succeed((42) or (67))}) => (or_@Point(0) = (42) or (67))}",
+        "{{#succeed((42) or (67))} => (or_@Point(0) = (42) or (67)), {#fail((42) or (67))} => (#exceptions((42) or (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::eq_operation(
         "eq = 42 == 67",
-        "{({#succeed((42) == (67))}) => (eq@Point(0) = (42) == (67))}",
+        "{{#succeed((42) == (67))} => (eq@Point(0) = (42) == (67)), {#fail((42) == (67))} => (#exceptions((42) == (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::not_eq_operation(
         "not_eq = 42 != 67",
-        "{({#succeed((42) != (67))}) => (not_eq@Point(0) = (42) != (67))}",
+        "{{#succeed((42) != (67))} => (not_eq@Point(0) = (42) != (67)), {#fail((42) != (67))} => (#exceptions((42) != (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::lt_operation(
         "lt = 42 < 67",
-        "{({#succeed((42) < (67))}) => (lt@Point(0) = (42) < (67))}",
+        "{{#succeed((42) < (67))} => (lt@Point(0) = (42) < (67)), {#fail((42) < (67))} => (#exceptions((42) < (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::gt_operation(
         "gt = 42 > 67",
-        "{({#succeed((42) > (67))}) => (gt@Point(0) = (42) > (67))}",
+        "{{#succeed((42) > (67))} => (gt@Point(0) = (42) > (67)), {#fail((42) > (67))} => (#exceptions((42) > (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::lte_operation(
         "lte = 42 <= 67",
-        "{({#succeed((42) <= (67))}) => (lte@Point(0) = (42) <= (67))}",
+        "{{#succeed((42) <= (67))} => (lte@Point(0) = (42) <= (67)), {#fail((42) <= (67))} => (#exceptions((42) <= (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::gte_operation(
         "gte = 42 >= 67",
-        "{({#succeed((42) >= (67))}) => (gte@Point(0) = (42) >= (67))}",
+        "{{#succeed((42) >= (67))} => (gte@Point(0) = (42) >= (67)), {#fail((42) >= (67))} => (#exceptions((42) >= (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::is_operation(
         "is_ = 42 is 67",
-        "{({#succeed((42) is (67))}) => (is_@Point(0) = (42) is (67))}",
+        "{{#succeed((42) is (67))} => (is_@Point(0) = (42) is (67)), {#fail((42) is (67))} => (#exceptions((42) is (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::is_not_operation(
         "is_not = 42 is not 67",
-        "{({#succeed((42) is not (67))}) => (is_not@Point(0) = (42) is not (67))}",
+        "{{#succeed((42) is not (67))} => (is_not@Point(0) = (42) is not (67)), {#fail((42) is not (67))} => (#exceptions((42) is not (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::in_operation(
         "in_ = 42 in 67",
-        "{({#succeed((42) in (67))}) => (in_@Point(0) = (42) in (67))}",
+        "{{#succeed((42) in (67))} => (in_@Point(0) = (42) in (67)), {#fail((42) in (67))} => (#exceptions((42) in (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::not_in_operation(
         "not_in = 42 not in 67",
-        "{({#succeed((42) not in (67))}) => (not_in@Point(0) = (42) not in (67))}",
+        "{{#succeed((42) not in (67))} => (not_in@Point(0) = (42) not in (67)), {#fail((42) not in (67))} => (#exceptions((42) not in (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::not_in_operation(
@@ -1836,7 +1888,7 @@ mod tests {
         b = a
         "#,
         ),
-        "{({#is_true(x@Point(0)), #succeed(42)}) => (a@Point(2) = 42), ({#is_false(x@Point(0)), #succeed(67)}) => (a@Point(3) = 67), ({#succeed(True)}) => (x@Point(0) = True), ({#succeed((a@Point(2)) ⊔ (a@Point(3)))}) => (b@Point(4) = (a@Point(2)) ⊔ (a@Point(3)))}",
+        "{{#is_true(x@Point(0)), #succeed(42)} => (a@Point(2) = 42), {#is_true(x@Point(0)), #fail(42)} => (#exceptions(42) ⊑ #raised_exceptions()), {#is_false(x@Point(0)), #succeed(67)} => (a@Point(3) = 67), {#is_false(x@Point(0)), #fail(67)} => (#exceptions(67) ⊑ #raised_exceptions()), {#succeed(True)} => (x@Point(0) = True), {#succeed((a@Point(2)) ⊔ (a@Point(3)))} => (b@Point(4) = (a@Point(2)) ⊔ (a@Point(3))), {#fail(True)} => (#exceptions(True) ⊑ #raised_exceptions()), {#fail((a@Point(2)) ⊔ (a@Point(3)))} => (#exceptions((a@Point(2)) ⊔ (a@Point(3))) ⊑ #raised_exceptions())}",
         vec![],
     )]
     fn test_constraints_generation(
