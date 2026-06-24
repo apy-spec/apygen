@@ -136,8 +136,8 @@ impl<K: Ord + Display, V: Display> Display for LatticeMap<K, V> {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VariableDefinition {
-    New(ProgramPoint),
-    Defined(ProgramPoint),
+    At(ProgramPoint),
+    Before(ProgramPoint),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -155,8 +155,8 @@ impl ExpressionVariable {
 impl Display for ExpressionVariable {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.definition {
-            VariableDefinition::New(program_point) => write!(f, "{}@{}", self.name, program_point),
-            VariableDefinition::Defined(program_point) => {
+            VariableDefinition::At(program_point) => write!(f, "{}@{}", self.name, program_point),
+            VariableDefinition::Before(program_point) => {
                 write!(f, "{}~{}", self.name, program_point)
             }
         }
@@ -730,6 +730,7 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn gen_parameter_with_default(
         &self,
         program_point: ProgramPoint,
+        target_abstract_environment: &mut AbstractEnvironment,
         parameter_with_default: &nodes::ParameterWithDefault,
     ) -> Result<(VariableName, LatticeSet<Arc<Constraint>>), ConstraintsBuilderError> {
         let (parameter_name, mut constraints) =
@@ -741,9 +742,14 @@ impl<'a> ConstraintsBuilder<'a> {
                 .insert(Arc::new(Constraint::Type(ConstraintDefinition::equal(
                     TypeExpression::Variable(ExpressionVariable::new(
                         parameter_name.clone(),
-                        VariableDefinition::New(program_point),
+                        VariableDefinition::At(program_point),
                     )),
-                    self.gen_expr(&Namespace::default(), program_point, &default)?,
+                    self.gen_expr(
+                        &Namespace::default(),
+                        program_point,
+                        target_abstract_environment,
+                        &default,
+                    )?,
                 ))));
         }
 
@@ -753,13 +759,17 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn gen_parameters(
         &self,
         program_point: ProgramPoint,
+        target_abstract_environment: &mut AbstractEnvironment,
         parameters: &nodes::Parameters,
     ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
         let mut abstract_environment = AbstractEnvironment::default();
 
         for parameter in &parameters.posonlyargs {
-            let (parameter_name, constraints) =
-                self.gen_parameter_with_default(program_point, &parameter)?;
+            let (parameter_name, constraints) = self.gen_parameter_with_default(
+                program_point,
+                target_abstract_environment,
+                &parameter,
+            )?;
             self.assign_variable(&mut abstract_environment, program_point, parameter_name);
             abstract_environment
                 .constraints
@@ -787,8 +797,11 @@ impl<'a> ConstraintsBuilder<'a> {
         }
 
         for parameter in &parameters.kwonlyargs {
-            let (parameter_name, constraints) =
-                self.gen_parameter_with_default(program_point, &parameter)?;
+            let (parameter_name, constraints) = self.gen_parameter_with_default(
+                program_point,
+                target_abstract_environment,
+                &parameter,
+            )?;
             self.assign_variable(&mut abstract_environment, program_point, parameter_name);
             abstract_environment
                 .constraints
@@ -812,12 +825,15 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
+        target_abstract_environment: &mut AbstractEnvironment,
         expr_bool_op: &nodes::ExprBoolOp,
     ) -> Result<TypeExpression, ConstraintsBuilderError> {
         let mut values_iter = expr_bool_op.values.iter();
 
         let mut type_expression = match values_iter.next() {
-            Some(value) => self.gen_expr(namespace, program_point, value)?,
+            Some(value) => {
+                self.gen_expr(namespace, program_point, target_abstract_environment, value)?
+            }
             None => {
                 return Err(ConstraintsBuilderError::InvalidExprBoolOp {
                     expr: expr_bool_op.clone(),
@@ -834,7 +850,12 @@ impl<'a> ConstraintsBuilder<'a> {
             type_expression = TypeExpression::Binary(ExpressionBinary {
                 left: Arc::new(type_expression),
                 operator: operator.clone(),
-                right: Arc::new(self.gen_expr(namespace, program_point, &value)?),
+                right: Arc::new(self.gen_expr(
+                    namespace,
+                    program_point,
+                    target_abstract_environment,
+                    &value,
+                )?),
             });
         }
 
@@ -845,10 +866,21 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
+        target_abstract_environment: &mut AbstractEnvironment,
         expr_bin_op: &nodes::ExprBinOp,
     ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let left = self.gen_expr(namespace, program_point, &expr_bin_op.left)?;
-        let right = self.gen_expr(namespace, program_point, &expr_bin_op.right)?;
+        let left = self.gen_expr(
+            namespace,
+            program_point,
+            target_abstract_environment,
+            &expr_bin_op.left,
+        )?;
+        let right = self.gen_expr(
+            namespace,
+            program_point,
+            target_abstract_environment,
+            &expr_bin_op.right,
+        )?;
 
         let operator = match expr_bin_op.op {
             nodes::Operator::Add => BinaryOperator::Add,
@@ -877,9 +909,15 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
+        target_abstract_environment: &mut AbstractEnvironment,
         expr_unary_op: &nodes::ExprUnaryOp,
     ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let operand = self.gen_expr(namespace, program_point, &expr_unary_op.operand)?;
+        let operand = self.gen_expr(
+            namespace,
+            program_point,
+            target_abstract_environment,
+            &expr_unary_op.operand,
+        )?;
 
         let operator = match expr_unary_op.op {
             nodes::UnaryOp::Invert => UnaryOperator::Invert,
@@ -898,9 +936,15 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
+        target_abstract_environment: &mut AbstractEnvironment,
         expr_compare: &nodes::ExprCompare,
     ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let mut type_expression = self.gen_expr(namespace, program_point, &expr_compare.left)?;
+        let mut type_expression = self.gen_expr(
+            namespace,
+            program_point,
+            target_abstract_environment,
+            &expr_compare.left,
+        )?;
 
         if expr_compare.ops.is_empty()
             || expr_compare.comparators.is_empty()
@@ -925,7 +969,12 @@ impl<'a> ConstraintsBuilder<'a> {
                 nodes::CmpOp::NotIn => BinaryOperator::NotIn,
             };
 
-            let comparator = self.gen_expr(namespace, program_point, comparator)?;
+            let comparator = self.gen_expr(
+                namespace,
+                program_point,
+                target_abstract_environment,
+                comparator,
+            )?;
 
             type_expression = TypeExpression::Binary(ExpressionBinary {
                 left: Arc::new(type_expression),
@@ -941,15 +990,22 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
+        target_abstract_environment: &mut AbstractEnvironment,
         expr_call: &nodes::ExprCall,
     ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let func = self.gen_expr(namespace, program_point, &expr_call.func)?;
+        let func = self.gen_expr(
+            namespace,
+            program_point,
+            target_abstract_environment,
+            &expr_call.func,
+        )?;
 
         let mut positional_arguments: imbl::Vector<Arc<TypeExpression>> = imbl::Vector::new();
         for positional_argument in &expr_call.arguments.args {
             positional_arguments.push_back(Arc::new(self.gen_expr(
                 namespace,
                 program_point,
+                target_abstract_environment,
                 &positional_argument,
             )?));
         }
@@ -960,7 +1016,12 @@ impl<'a> ConstraintsBuilder<'a> {
                 Some(identifier) => Some(self.gen_variable_name(program_point, &identifier)?),
                 None => None,
             };
-            let keyword_type = self.gen_expr(namespace, program_point, &keyword_argument.value)?;
+            let keyword_type = self.gen_expr(
+                namespace,
+                program_point,
+                target_abstract_environment,
+                &keyword_argument.value,
+            )?;
             keyword_arguments.push_back(KeywordArgument {
                 name: keyword_name,
                 value: Arc::new(keyword_type),
@@ -977,31 +1038,31 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn gen_expr_string_literal(
         &self,
         expr_string_literal: &nodes::ExprStringLiteral,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        Ok(TypeExpression::LiteralString(LiteralString {
+    ) -> TypeExpression {
+        TypeExpression::LiteralString(LiteralString {
             value: Arc::new(expr_string_literal.value.to_str().to_owned()),
-        }))
+        })
     }
 
     pub fn gen_expr_bytes_literal(
         &self,
         expr_bytes_literal: &nodes::ExprBytesLiteral,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        Ok(TypeExpression::LiteralBytes(LiteralBytes {
+    ) -> TypeExpression {
+        TypeExpression::LiteralBytes(LiteralBytes {
             value: expr_bytes_literal
                 .value
                 .iter()
                 .flat_map(|part| part.as_slice())
                 .copied()
                 .collect(),
-        }))
+        })
     }
 
     pub fn gen_expr_number_literal(
         &self,
         expr_number_literal: &nodes::ExprNumberLiteral,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        Ok(match &expr_number_literal.value {
+    ) -> TypeExpression {
+        match &expr_number_literal.value {
             Number::Int(int) => match int.as_i64() {
                 Some(value) => TypeExpression::LiteralInteger(LiteralInteger::Int(value)),
                 None => TypeExpression::LiteralInteger(LiteralInteger::BigInt({
@@ -1022,33 +1083,39 @@ impl<'a> ConstraintsBuilder<'a> {
             Number::Complex { real, imag } => TypeExpression::LiteralComplex(LiteralComplex {
                 value: Complex64::new(*real, *imag),
             }),
-        })
+        }
     }
 
     pub fn gen_expr_boolean_literal(
         &self,
         expr_boolean_literal: &nodes::ExprBooleanLiteral,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        Ok(TypeExpression::LiteralBoolean(LiteralBoolean {
+    ) -> TypeExpression {
+        TypeExpression::LiteralBoolean(LiteralBoolean {
             value: expr_boolean_literal.value,
-        }))
+        })
     }
 
-    pub fn gen_expr_none_literal(&self) -> Result<TypeExpression, ConstraintsBuilderError> {
-        Ok(TypeExpression::LiteralNone)
+    pub fn gen_expr_none_literal(&self) -> TypeExpression {
+        TypeExpression::LiteralNone
     }
 
-    pub fn gen_expr_ellipsis_literal(&self) -> Result<TypeExpression, ConstraintsBuilderError> {
-        Ok(TypeExpression::LiteralEllipsis)
+    pub fn gen_expr_ellipsis_literal(&self) -> TypeExpression {
+        TypeExpression::LiteralEllipsis
     }
 
     pub fn gen_expr_attribute(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
+        target_abstract_environment: &mut AbstractEnvironment,
         expr_attribute: &nodes::ExprAttribute,
     ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let value = self.gen_expr(namespace, program_point, &expr_attribute.value)?;
+        let value = self.gen_expr(
+            namespace,
+            program_point,
+            target_abstract_environment,
+            &expr_attribute.value,
+        )?;
         let attribute = self.gen_variable_name(program_point, &expr_attribute.attr)?;
 
         Ok(TypeExpression::Attribute(ExpressionAttribute {
@@ -1061,10 +1128,21 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
+        target_abstract_environment: &mut AbstractEnvironment,
         expr_subscript: &nodes::ExprSubscript,
     ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let value = self.gen_expr(namespace, program_point, &expr_subscript.value)?;
-        let slice = self.gen_expr(namespace, program_point, &expr_subscript.slice)?;
+        let value = self.gen_expr(
+            namespace,
+            program_point,
+            target_abstract_environment,
+            &expr_subscript.value,
+        )?;
+        let slice = self.gen_expr(
+            namespace,
+            program_point,
+            target_abstract_environment,
+            &expr_subscript.slice,
+        )?;
 
         Ok(TypeExpression::Subscript(ExpressionSubscript {
             value: Arc::new(value),
@@ -1075,31 +1153,66 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn gen_name(
         &self,
         program_point: ProgramPoint,
+        target_abstract_environment: &mut AbstractEnvironment,
         expr_name: &nodes::ExprName,
     ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        Ok(TypeExpression::Variable(ExpressionVariable::new(
-            self.gen_variable_name(program_point, &expr_name.id)?,
-            VariableDefinition::Defined(program_point),
-        )))
+        let variable_name = self.gen_variable_name(program_point, &expr_name.id)?;
+        let variable_expression = TypeExpression::Variable(ExpressionVariable::new(
+            variable_name.clone(),
+            VariableDefinition::Before(program_point),
+        ));
+
+        if let Some(locations) = target_abstract_environment
+            .variable_locations
+            .values
+            .get(&variable_name)
+        {
+            for location in &locations.values {
+                if location != &program_point {
+                    target_abstract_environment
+                        .constraints
+                        .values
+                        .insert(Arc::new(Constraint::Type(ConstraintDefinition::include(
+                            TypeExpression::Variable(ExpressionVariable::new(
+                                variable_name.clone(),
+                                VariableDefinition::At(location.clone()),
+                            )),
+                            variable_expression.clone(),
+                        ))));
+                }
+            }
+        }
+
+        Ok(variable_expression)
     }
 
     pub fn gen_expr(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
+        target_abstract_environment: &mut AbstractEnvironment,
         expr: &nodes::Expr,
     ) -> Result<TypeExpression, ConstraintsBuilderError> {
         match expr {
-            nodes::Expr::BoolOp(expr_bool_op) => {
-                self.gen_expr_bool_op(namespace, program_point, expr_bool_op)
-            }
+            nodes::Expr::BoolOp(expr_bool_op) => self.gen_expr_bool_op(
+                namespace,
+                program_point,
+                target_abstract_environment,
+                expr_bool_op,
+            ),
             nodes::Expr::Named(_) => todo!(),
-            nodes::Expr::BinOp(expr_bin_op) => {
-                self.gen_expr_bin_op(namespace, program_point, expr_bin_op)
-            }
-            nodes::Expr::UnaryOp(expr_unary_op) => {
-                self.gen_expr_unary_op(namespace, program_point, expr_unary_op)
-            }
+            nodes::Expr::BinOp(expr_bin_op) => self.gen_expr_bin_op(
+                namespace,
+                program_point,
+                target_abstract_environment,
+                expr_bin_op,
+            ),
+            nodes::Expr::UnaryOp(expr_unary_op) => self.gen_expr_unary_op(
+                namespace,
+                program_point,
+                target_abstract_environment,
+                expr_unary_op,
+            ),
             nodes::Expr::Lambda(_) => todo!(),
             nodes::Expr::If(_) => todo!(),
             nodes::Expr::Dict(_) => todo!(),
@@ -1111,33 +1224,49 @@ impl<'a> ConstraintsBuilder<'a> {
             nodes::Expr::Await(_) => todo!(),
             nodes::Expr::Yield(_) => todo!(),
             nodes::Expr::YieldFrom(_) => todo!(),
-            nodes::Expr::Compare(expr_compare) => {
-                self.gen_expr_compare(namespace, program_point, expr_compare)
-            }
-            nodes::Expr::Call(expr_call) => self.gen_expr_call(namespace, program_point, expr_call),
+            nodes::Expr::Compare(expr_compare) => self.gen_expr_compare(
+                namespace,
+                program_point,
+                target_abstract_environment,
+                expr_compare,
+            ),
+            nodes::Expr::Call(expr_call) => self.gen_expr_call(
+                namespace,
+                program_point,
+                target_abstract_environment,
+                expr_call,
+            ),
             nodes::Expr::FString(_) => todo!(),
             nodes::Expr::StringLiteral(expr_string_literal) => {
-                self.gen_expr_string_literal(expr_string_literal)
+                Ok(self.gen_expr_string_literal(expr_string_literal))
             }
             nodes::Expr::BytesLiteral(expr_bytes_literal) => {
-                self.gen_expr_bytes_literal(expr_bytes_literal)
+                Ok(self.gen_expr_bytes_literal(expr_bytes_literal))
             }
             nodes::Expr::NumberLiteral(expr_number_literal) => {
-                self.gen_expr_number_literal(expr_number_literal)
+                Ok(self.gen_expr_number_literal(expr_number_literal))
             }
             nodes::Expr::BooleanLiteral(expr_boolean_literal) => {
-                self.gen_expr_boolean_literal(expr_boolean_literal)
+                Ok(self.gen_expr_boolean_literal(expr_boolean_literal))
             }
-            nodes::Expr::NoneLiteral(_) => self.gen_expr_none_literal(),
-            nodes::Expr::EllipsisLiteral(_) => self.gen_expr_ellipsis_literal(),
-            nodes::Expr::Attribute(expr_attribute) => {
-                self.gen_expr_attribute(namespace, program_point, expr_attribute)
-            }
-            nodes::Expr::Subscript(expr_subscript) => {
-                self.gen_expr_subscript(namespace, program_point, expr_subscript)
-            }
+            nodes::Expr::NoneLiteral(_) => Ok(self.gen_expr_none_literal()),
+            nodes::Expr::EllipsisLiteral(_) => Ok(self.gen_expr_ellipsis_literal()),
+            nodes::Expr::Attribute(expr_attribute) => self.gen_expr_attribute(
+                namespace,
+                program_point,
+                target_abstract_environment,
+                expr_attribute,
+            ),
+            nodes::Expr::Subscript(expr_subscript) => self.gen_expr_subscript(
+                namespace,
+                program_point,
+                target_abstract_environment,
+                expr_subscript,
+            ),
             nodes::Expr::Starred(_) => todo!(),
-            nodes::Expr::Name(expr_name) => self.gen_name(program_point, expr_name),
+            nodes::Expr::Name(expr_name) => {
+                self.gen_name(program_point, target_abstract_environment, expr_name)
+            }
             nodes::Expr::List(_) => todo!(),
             nodes::Expr::Tuple(_) => todo!(),
             nodes::Expr::Slice(_) => todo!(),
@@ -1156,7 +1285,11 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let identifier = self.gen_variable_name(program_point, &stmt_function_def.name)?;
 
-        let parameters = self.gen_parameters(ProgramPoint::Entry, &stmt_function_def.parameters)?;
+        let parameters = self.gen_parameters(
+            ProgramPoint::Entry,
+            &mut target_abstract_environment,
+            &stmt_function_def.parameters,
+        )?;
 
         self.assign_variable(&mut target_abstract_environment, program_point, identifier);
 
@@ -1181,10 +1314,10 @@ impl<'a> ConstraintsBuilder<'a> {
             let identifier = if let Some(as_name) = &alias.asname {
                 let identifier = self.gen_variable_name(program_point, &as_name)?;
 
-                constraints.insert(Constraint::Type(ConstraintDefinition::equal(
+                constraints.insert(Constraint::Type(ConstraintDefinition::include(
                     TypeExpression::Variable(ExpressionVariable::new(
                         identifier.clone(),
-                        VariableDefinition::New(program_point),
+                        VariableDefinition::At(program_point),
                     )),
                     TypeExpression::Import(ExpressionImport::new(module_name.clone())),
                 )));
@@ -1197,7 +1330,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 let mut expression_option =
                     Some(Arc::new(TypeExpression::Variable(ExpressionVariable::new(
                         identifier.clone(),
-                        VariableDefinition::New(program_point),
+                        VariableDefinition::At(program_point),
                     ))));
 
                 let mut i = 1;
@@ -1207,7 +1340,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     let attribute_option = attribute_identifiers.first().cloned();
                     constraints.insert(Constraint::Type(ConstraintDefinition::new(
                         expression.clone(),
-                        ConstraintKind::Equal,
+                        ConstraintKind::Include,
                         Arc::new(TypeExpression::Import(ExpressionImport::new(Arc::new(
                             QualifiedName::new(OneOrMany::many(Vec::from(module_identifiers))),
                         )))),
@@ -1253,8 +1386,12 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let type_expression =
-            Arc::new(self.gen_expr(namespace, program_point, &stmt_assign.value)?);
+        let type_expression = Arc::new(self.gen_expr(
+            namespace,
+            program_point,
+            &mut target_abstract_environment,
+            &stmt_assign.value,
+        )?);
 
         let mut variables: imbl::OrdMap<Arc<Identifier>, imbl::OrdSet<Arc<Constraint>>> =
             imbl::OrdMap::new();
@@ -1270,9 +1407,9 @@ impl<'a> ConstraintsBuilder<'a> {
                     let type_constraint = Arc::new(Constraint::Type(ConstraintDefinition::new(
                         Arc::new(TypeExpression::Variable(ExpressionVariable::new(
                             identifier.clone(),
-                            VariableDefinition::New(program_point),
+                            VariableDefinition::At(program_point),
                         ))),
-                        ConstraintKind::Equal,
+                        ConstraintKind::Include,
                         type_expression.clone(),
                     )));
                     let exception_constraint =
@@ -1372,15 +1509,21 @@ impl<'a> ConstraintsBuilder<'a> {
             AssignmentTarget::Name(target_name) => {
                 let identifier: VariableName = Arc::new(target_name);
                 if let Some(value) = &stmt_ann_assign.value {
+                    let type_expression = self.gen_expr(
+                        namespace,
+                        program_point,
+                        &mut target_abstract_environment,
+                        value.as_ref(),
+                    )?;
                     target_abstract_environment
                         .constraints
                         .values
                         .insert(Arc::new(Constraint::Type(ConstraintDefinition::equal(
                             TypeExpression::Variable(ExpressionVariable::new(
                                 identifier.clone(),
-                                VariableDefinition::New(program_point),
+                                VariableDefinition::At(program_point),
                             )),
-                            self.gen_expr(namespace, program_point, value.as_ref())?,
+                            type_expression,
                         ))));
                     self.assign_variable(
                         &mut target_abstract_environment,
@@ -1408,8 +1551,12 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let condition_expression =
-            Arc::new(self.gen_expr(namespace, program_point, &stmt_while.test)?);
+        let condition_expression = Arc::new(self.gen_expr(
+            namespace,
+            program_point,
+            &mut target_abstract_environment,
+            &stmt_while.test,
+        )?);
 
         let mut values: imbl::OrdSet<LatticeSet<Guard>> = imbl::OrdSet::new();
 
@@ -1449,8 +1596,12 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let condition_expression =
-            Arc::new(self.gen_expr(namespace, program_point, &stmt_if.test)?);
+        let condition_expression = Arc::new(self.gen_expr(
+            namespace,
+            program_point,
+            &mut target_abstract_environment,
+            &stmt_if.test,
+        )?);
 
         let mut values: imbl::OrdSet<LatticeSet<Guard>> = imbl::OrdSet::new();
 
@@ -1742,157 +1893,157 @@ mod tests {
     #[rstest]
     #[case::import(
         "import some_module",
-        "{some_module@Point(0) = #import(some_module)}",
+        "{some_module@Point(0) ⊑ #import(some_module)}",
         vec!["some_module"],
     )]
     #[case::import_as(
         "import some_module as mod",
-        "{mod@Point(0) = #import(some_module)}",
+        "{mod@Point(0) ⊑ #import(some_module)}",
         vec!["some_module"],
     )]
     #[case::multiple_import(
         "import some_module, another_module",
-        "{another_module@Point(0) = #import(another_module), some_module@Point(0) = #import(some_module)}",
+        "{another_module@Point(0) ⊑ #import(another_module), some_module@Point(0) ⊑ #import(some_module)}",
         vec!["some_module", "another_module"],
     )]
     #[case::multiple_import_override(
         "import some_module as mod, another_module as mod",
-        "{mod@Point(0) = #import(another_module)}",
+        "{mod@Point(0) ⊑ #import(another_module)}",
         vec!["some_module", "another_module"],
     )]
     #[case::int_constant_assignment(
         "a = 42",
-        "{{#succeed(42)} => (a@Point(0) = 42), {#fail(42)} => (#exceptions(42) ⊑ #raised_exceptions())}",
+        "{{#succeed(42)} => (a@Point(0) ⊑ 42), {#fail(42)} => (#exceptions(42) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::int_constant_assignment(
         "a = 4200000000000000000000000000",
-        "{{#succeed(4200000000000000000000000000)} => (a@Point(0) = 4200000000000000000000000000), {#fail(4200000000000000000000000000)} => (#exceptions(4200000000000000000000000000) ⊑ #raised_exceptions())}",
+        "{{#succeed(4200000000000000000000000000)} => (a@Point(0) ⊑ 4200000000000000000000000000), {#fail(4200000000000000000000000000)} => (#exceptions(4200000000000000000000000000) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::add_operation(
         "add = 42 + 67",
-        "{{#succeed((42) + (67))} => (add@Point(0) = (42) + (67)), {#fail((42) + (67))} => (#exceptions((42) + (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) + (67))} => (add@Point(0) ⊑ (42) + (67)), {#fail((42) + (67))} => (#exceptions((42) + (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::sub_operation(
         "sub = 42 - 67",
-        "{{#succeed((42) - (67))} => (sub@Point(0) = (42) - (67)), {#fail((42) - (67))} => (#exceptions((42) - (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) - (67))} => (sub@Point(0) ⊑ (42) - (67)), {#fail((42) - (67))} => (#exceptions((42) - (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::mult_operation(
         "mult = 42 * 67",
-        "{{#succeed((42) * (67))} => (mult@Point(0) = (42) * (67)), {#fail((42) * (67))} => (#exceptions((42) * (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) * (67))} => (mult@Point(0) ⊑ (42) * (67)), {#fail((42) * (67))} => (#exceptions((42) * (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::mat_mult_operation(
         "mat_mult = 42 @ 67",
-        "{{#succeed((42) @ (67))} => (mat_mult@Point(0) = (42) @ (67)), {#fail((42) @ (67))} => (#exceptions((42) @ (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) @ (67))} => (mat_mult@Point(0) ⊑ (42) @ (67)), {#fail((42) @ (67))} => (#exceptions((42) @ (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::div_operation(
         "div = 42 / 67",
-        "{{#succeed((42) / (67))} => (div@Point(0) = (42) / (67)), {#fail((42) / (67))} => (#exceptions((42) / (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) / (67))} => (div@Point(0) ⊑ (42) / (67)), {#fail((42) / (67))} => (#exceptions((42) / (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::floor_div_operation(
         "floor_div = 42 // 67",
-        "{{#succeed((42) // (67))} => (floor_div@Point(0) = (42) // (67)), {#fail((42) // (67))} => (#exceptions((42) // (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) // (67))} => (floor_div@Point(0) ⊑ (42) // (67)), {#fail((42) // (67))} => (#exceptions((42) // (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::mod_operation(
         "mod = 42 % 67",
-        "{{#succeed((42) % (67))} => (mod@Point(0) = (42) % (67)), {#fail((42) % (67))} => (#exceptions((42) % (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) % (67))} => (mod@Point(0) ⊑ (42) % (67)), {#fail((42) % (67))} => (#exceptions((42) % (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::pow_operation(
         "pow = 42 ** 67",
-        "{{#succeed((42) ** (67))} => (pow@Point(0) = (42) ** (67)), {#fail((42) ** (67))} => (#exceptions((42) ** (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) ** (67))} => (pow@Point(0) ⊑ (42) ** (67)), {#fail((42) ** (67))} => (#exceptions((42) ** (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::shl_operation(
         "shl = 42 << 67",
-        "{{#succeed((42) << (67))} => (shl@Point(0) = (42) << (67)), {#fail((42) << (67))} => (#exceptions((42) << (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) << (67))} => (shl@Point(0) ⊑ (42) << (67)), {#fail((42) << (67))} => (#exceptions((42) << (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::shr_operation(
         "shr = 42 >> 67",
-        "{{#succeed((42) >> (67))} => (shr@Point(0) = (42) >> (67)), {#fail((42) >> (67))} => (#exceptions((42) >> (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) >> (67))} => (shr@Point(0) ⊑ (42) >> (67)), {#fail((42) >> (67))} => (#exceptions((42) >> (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::bit_or_operation(
         "bit_or = 42 | 67",
-        "{{#succeed((42) | (67))} => (bit_or@Point(0) = (42) | (67)), {#fail((42) | (67))} => (#exceptions((42) | (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) | (67))} => (bit_or@Point(0) ⊑ (42) | (67)), {#fail((42) | (67))} => (#exceptions((42) | (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::bit_xor_operation(
         "bit_xor = 42 ^ 67",
-        "{{#succeed((42) ^ (67))} => (bit_xor@Point(0) = (42) ^ (67)), {#fail((42) ^ (67))} => (#exceptions((42) ^ (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) ^ (67))} => (bit_xor@Point(0) ⊑ (42) ^ (67)), {#fail((42) ^ (67))} => (#exceptions((42) ^ (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::bit_and_operation(
         "bit_and = 42 & 67",
-        "{{#succeed((42) & (67))} => (bit_and@Point(0) = (42) & (67)), {#fail((42) & (67))} => (#exceptions((42) & (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) & (67))} => (bit_and@Point(0) ⊑ (42) & (67)), {#fail((42) & (67))} => (#exceptions((42) & (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::and_operation(
         "and_ = 42 and 67",
-        "{{#succeed((42) and (67))} => (and_@Point(0) = (42) and (67)), {#fail((42) and (67))} => (#exceptions((42) and (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) and (67))} => (and_@Point(0) ⊑ (42) and (67)), {#fail((42) and (67))} => (#exceptions((42) and (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::or_operation(
         "or_ = 42 or 67",
-        "{{#succeed((42) or (67))} => (or_@Point(0) = (42) or (67)), {#fail((42) or (67))} => (#exceptions((42) or (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) or (67))} => (or_@Point(0) ⊑ (42) or (67)), {#fail((42) or (67))} => (#exceptions((42) or (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::eq_operation(
         "eq = 42 == 67",
-        "{{#succeed((42) == (67))} => (eq@Point(0) = (42) == (67)), {#fail((42) == (67))} => (#exceptions((42) == (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) == (67))} => (eq@Point(0) ⊑ (42) == (67)), {#fail((42) == (67))} => (#exceptions((42) == (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::not_eq_operation(
         "not_eq = 42 != 67",
-        "{{#succeed((42) != (67))} => (not_eq@Point(0) = (42) != (67)), {#fail((42) != (67))} => (#exceptions((42) != (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) != (67))} => (not_eq@Point(0) ⊑ (42) != (67)), {#fail((42) != (67))} => (#exceptions((42) != (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::lt_operation(
         "lt = 42 < 67",
-        "{{#succeed((42) < (67))} => (lt@Point(0) = (42) < (67)), {#fail((42) < (67))} => (#exceptions((42) < (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) < (67))} => (lt@Point(0) ⊑ (42) < (67)), {#fail((42) < (67))} => (#exceptions((42) < (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::gt_operation(
         "gt = 42 > 67",
-        "{{#succeed((42) > (67))} => (gt@Point(0) = (42) > (67)), {#fail((42) > (67))} => (#exceptions((42) > (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) > (67))} => (gt@Point(0) ⊑ (42) > (67)), {#fail((42) > (67))} => (#exceptions((42) > (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::lte_operation(
         "lte = 42 <= 67",
-        "{{#succeed((42) <= (67))} => (lte@Point(0) = (42) <= (67)), {#fail((42) <= (67))} => (#exceptions((42) <= (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) <= (67))} => (lte@Point(0) ⊑ (42) <= (67)), {#fail((42) <= (67))} => (#exceptions((42) <= (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::gte_operation(
         "gte = 42 >= 67",
-        "{{#succeed((42) >= (67))} => (gte@Point(0) = (42) >= (67)), {#fail((42) >= (67))} => (#exceptions((42) >= (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) >= (67))} => (gte@Point(0) ⊑ (42) >= (67)), {#fail((42) >= (67))} => (#exceptions((42) >= (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::is_operation(
         "is_ = 42 is 67",
-        "{{#succeed((42) is (67))} => (is_@Point(0) = (42) is (67)), {#fail((42) is (67))} => (#exceptions((42) is (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) is (67))} => (is_@Point(0) ⊑ (42) is (67)), {#fail((42) is (67))} => (#exceptions((42) is (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::is_not_operation(
         "is_not = 42 is not 67",
-        "{{#succeed((42) is not (67))} => (is_not@Point(0) = (42) is not (67)), {#fail((42) is not (67))} => (#exceptions((42) is not (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) is not (67))} => (is_not@Point(0) ⊑ (42) is not (67)), {#fail((42) is not (67))} => (#exceptions((42) is not (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::in_operation(
         "in_ = 42 in 67",
-        "{{#succeed((42) in (67))} => (in_@Point(0) = (42) in (67)), {#fail((42) in (67))} => (#exceptions((42) in (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) in (67))} => (in_@Point(0) ⊑ (42) in (67)), {#fail((42) in (67))} => (#exceptions((42) in (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::not_in_operation(
         "not_in = 42 not in 67",
-        "{{#succeed((42) not in (67))} => (not_in@Point(0) = (42) not in (67)), {#fail((42) not in (67))} => (#exceptions((42) not in (67)) ⊑ #raised_exceptions())}",
+        "{{#succeed((42) not in (67))} => (not_in@Point(0) ⊑ (42) not in (67)), {#fail((42) not in (67))} => (#exceptions((42) not in (67)) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::simple_if_statement(
@@ -1908,7 +2059,7 @@ mod tests {
         b = a
         "#,
         ),
-        "{{#is_true(x~Point(1)), #succeed(42)} => (a@Point(2) = 42), {#is_true(x~Point(1)), #fail(42)} => (#exceptions(42) ⊑ #raised_exceptions()), {#is_false(x~Point(1)), #succeed(67)} => (a@Point(3) = 67), {#is_false(x~Point(1)), #fail(67)} => (#exceptions(67) ⊑ #raised_exceptions()), {#succeed(a~Point(4))} => (b@Point(4) = a~Point(4)), {#succeed(True)} => (x@Point(0) = True), {#fail(a~Point(4))} => (#exceptions(a~Point(4)) ⊑ #raised_exceptions()), {#fail(True)} => (#exceptions(True) ⊑ #raised_exceptions())}",
+        "{a@Point(2) ⊑ a~Point(4), a@Point(3) ⊑ a~Point(4), x@Point(0) ⊑ x~Point(1), {#is_true(x~Point(1)), #succeed(42)} => (a@Point(2) ⊑ 42), {#is_true(x~Point(1)), #fail(42)} => (#exceptions(42) ⊑ #raised_exceptions()), {#is_false(x~Point(1)), #succeed(67)} => (a@Point(3) ⊑ 67), {#is_false(x~Point(1)), #fail(67)} => (#exceptions(67) ⊑ #raised_exceptions()), {#succeed(a~Point(4))} => (b@Point(4) ⊑ a~Point(4)), {#succeed(True)} => (x@Point(0) ⊑ True), {#fail(a~Point(4))} => (#exceptions(a~Point(4)) ⊑ #raised_exceptions()), {#fail(True)} => (#exceptions(True) ⊑ #raised_exceptions())}",
         vec![],
     )]
     #[case::simple_while_statement(
@@ -1922,7 +2073,7 @@ mod tests {
         b = a
         "#,
         ),
-        "{{#is_true((a~Point(1)) < (5)), #succeed((a~Point(2)) + (1))} => (a@Point(2) = (a~Point(2)) + (1)), {#is_true((a~Point(1)) < (5)), #fail((a~Point(2)) + (1))} => (#exceptions((a~Point(2)) + (1)) ⊑ #raised_exceptions()), {#is_false((a~Point(1)) < (5)), #succeed(a~Point(3))} => (b@Point(3) = a~Point(3)), {#is_false((a~Point(1)) < (5)), #fail(a~Point(3))} => (#exceptions(a~Point(3)) ⊑ #raised_exceptions()), {#succeed(0)} => (a@Point(0) = 0), {#fail(0)} => (#exceptions(0) ⊑ #raised_exceptions())}",
+        "{a@Point(0) ⊑ a~Point(1), a@Point(0) ⊑ a~Point(2), a@Point(0) ⊑ a~Point(3), a@Point(2) ⊑ a~Point(1), a@Point(2) ⊑ a~Point(3), {#is_true((a~Point(1)) < (5)), #succeed((a~Point(2)) + (1))} => (a@Point(2) ⊑ (a~Point(2)) + (1)), {#is_true((a~Point(1)) < (5)), #fail((a~Point(2)) + (1))} => (#exceptions((a~Point(2)) + (1)) ⊑ #raised_exceptions()), {#is_false((a~Point(1)) < (5)), #succeed(a~Point(3))} => (b@Point(3) ⊑ a~Point(3)), {#is_false((a~Point(1)) < (5)), #fail(a~Point(3))} => (#exceptions(a~Point(3)) ⊑ #raised_exceptions()), {#succeed(0)} => (a@Point(0) ⊑ 0), {#fail(0)} => (#exceptions(0) ⊑ #raised_exceptions())}",
         vec![],
     )]
     fn test_constraints_generation(
