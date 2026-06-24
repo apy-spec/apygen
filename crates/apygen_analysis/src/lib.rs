@@ -4,100 +4,103 @@ use std::collections::BTreeSet;
 pub mod lattice;
 pub mod namespace;
 
-pub trait CfgAnalyser<A, N> {
+pub trait GraphAnalyser {
+    type Node;
+    type AbstractEnvironment;
+    type AbstractEnvironments;
     type Error;
 
+    fn entry_point(&self) -> Result<Self::Node, Self::Error>;
     fn successors(
         &self,
-        program_point: &cfg::ProgramPoint,
-    ) -> Result<impl Iterator<Item = cfg::ProgramPoint>, Self::Error>;
+        node: &Self::Node,
+    ) -> Result<impl Iterator<Item = Self::Node>, Self::Error>;
 
-    fn initialise_abstract_environments(&self) -> Result<N, Self::Error>;
-    fn analyse_program_point(
+    fn initialise_abstract_environments(&self) -> Result<Self::AbstractEnvironments, Self::Error>;
+    fn analyse_point(
         &self,
-        abstract_environments: &N,
-        program_point: cfg::ProgramPoint,
-    ) -> Result<A, Self::Error>;
+        abstract_environments: &Self::AbstractEnvironments,
+        node: Self::Node,
+    ) -> Result<Self::AbstractEnvironment, Self::Error>;
     fn update_abstract_environment(
         &self,
-        abstract_environments: &N,
-        abstract_environment: &A,
-        from: cfg::ProgramPoint,
-        to: cfg::ProgramPoint,
-    ) -> Result<Option<A>, Self::Error>;
+        abstract_environments: &Self::AbstractEnvironments,
+        abstract_environment: &Self::AbstractEnvironment,
+        from: Self::Node,
+        to: Self::Node,
+    ) -> Result<Option<Self::AbstractEnvironment>, Self::Error>;
     fn get_abstract_environment(
         &self,
-        abstract_environments: &N,
-        program_point: cfg::ProgramPoint,
-    ) -> Result<Option<A>, Self::Error>;
+        abstract_environments: &Self::AbstractEnvironments,
+        node: Self::Node,
+    ) -> Result<Option<Self::AbstractEnvironment>, Self::Error>;
     fn set_abstract_environment(
         &self,
-        abstract_environments: &mut N,
-        program_point: cfg::ProgramPoint,
-        abstract_environment: &A,
+        abstract_environments: &mut Self::AbstractEnvironments,
+        node: Self::Node,
+        abstract_environment: &Self::AbstractEnvironment,
     ) -> Result<(), Self::Error>;
 
-    fn includes(
-        &self,
-        abstract_environments: &N,
-        program_point: cfg::ProgramPoint,
-        including: &A,
-        included: &A,
-    ) -> Result<bool, Self::Error>;
     fn join(
         &self,
-        abstract_environments: &N,
-        program_point: cfg::ProgramPoint,
-        left: &A,
-        right: &A,
-    ) -> Result<A, Self::Error>;
+        abstract_environments: &Self::AbstractEnvironments,
+        node: Self::Node,
+        left: &Self::AbstractEnvironment,
+        right: &Self::AbstractEnvironment,
+    ) -> Result<Self::AbstractEnvironment, Self::Error>;
 }
 
-pub fn worklist<A: Default, N, E, T: CfgAnalyser<A, N, Error = E>>(analyser: &T) -> Result<N, E> {
+pub fn worklist<
+    N: Clone + Ord,
+    S: Eq,
+    A,
+    E,
+    T: GraphAnalyser<Node = N, AbstractEnvironment = S, AbstractEnvironments = A, Error = E>,
+>(
+    analyser: &T,
+) -> Result<A, E> {
     let mut abstract_environments = analyser.initialise_abstract_environments()?;
 
-    let mut worklist = BTreeSet::from_iter([cfg::ProgramPoint::Entry]);
+    let mut worklist = BTreeSet::from_iter([analyser.entry_point()?]);
 
-    while let Some(program_point) = worklist.pop_first() {
+    while let Some(node) = worklist.pop_first() {
         let res_abstract_environment =
-            analyser.analyse_program_point(&mut abstract_environments, program_point)?;
+            analyser.analyse_point(&mut abstract_environments, node.clone())?;
 
-        for successor in analyser.successors(&program_point)? {
+        for successor in analyser.successors(&node)? {
             let Some(res_cond_abstract_environment) = analyser.update_abstract_environment(
                 &abstract_environments,
                 &res_abstract_environment,
-                program_point,
-                successor,
+                node.clone(),
+                successor.clone(),
             )?
             else {
                 continue;
             };
 
-            let (successor_is_included, successor_abstract_environment) =
-                match analyser.get_abstract_environment(&abstract_environments, successor)? {
-                    Some(successor_abstract_environment) => (
-                        analyser.includes(
-                            &abstract_environments,
-                            successor,
-                            &successor_abstract_environment,
-                            &res_cond_abstract_environment,
-                        )?,
-                        successor_abstract_environment,
-                    ),
-                    None => (false, A::default()),
-                };
+            let (new_successor_is_equal, new_successor_abstract_environment) = match analyser
+                .get_abstract_environment(&abstract_environments, successor.clone())?
+            {
+                Some(successor_abstract_environment) => {
+                    let new_successor_abstract_environment = analyser.join(
+                        &abstract_environments,
+                        successor.clone(),
+                        &successor_abstract_environment,
+                        &res_cond_abstract_environment,
+                    )?;
+                    (
+                        new_successor_abstract_environment == successor_abstract_environment,
+                        new_successor_abstract_environment,
+                    )
+                }
+                None => (false, res_cond_abstract_environment),
+            };
 
-            if !successor_is_included {
-                let joined_abstract_environment = analyser.join(
-                    &abstract_environments,
-                    successor,
-                    &successor_abstract_environment,
-                    &res_cond_abstract_environment,
-                )?;
+            if !new_successor_is_equal {
                 analyser.set_abstract_environment(
                     &mut abstract_environments,
-                    successor,
-                    &joined_abstract_environment,
+                    successor.clone(),
+                    &new_successor_abstract_environment,
                 )?;
                 worklist.insert(successor);
             }

@@ -4,7 +4,7 @@ use crate::abstract_environment::{
 use crate::genkill::assignment::AssignmentTarget;
 use apy::OneOrMany;
 use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
-use apygen_analysis::CfgAnalyser;
+use apygen_analysis::GraphAnalyser;
 use apygen_analysis::cfg::nodes::Number;
 use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint, nodes};
 use apygen_analysis::lattice::Lattice;
@@ -1716,9 +1716,15 @@ impl<'a> ConstraintsBuilder<'a> {
     }
 }
 
-impl CfgAnalyser<AbstractEnvironment, Namespace<AbstractEnvironment>> for ConstraintsBuilder<'_> {
+impl GraphAnalyser for ConstraintsBuilder<'_> {
+    type Node = ProgramPoint;
+    type AbstractEnvironment = AbstractEnvironment;
+    type AbstractEnvironments = Namespace<AbstractEnvironment>;
     type Error = ConstraintsBuilderError;
 
+    fn entry_point(&self) -> Result<Self::Node, Self::Error> {
+        Ok(ProgramPoint::Entry)
+    }
     fn successors(
         &self,
         program_point: &ProgramPoint,
@@ -1737,7 +1743,7 @@ impl CfgAnalyser<AbstractEnvironment, Namespace<AbstractEnvironment>> for Constr
         Ok(Namespace::new())
     }
 
-    fn analyse_program_point(
+    fn analyse_point(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
@@ -1832,16 +1838,6 @@ impl CfgAnalyser<AbstractEnvironment, Namespace<AbstractEnvironment>> for Constr
             .abstract_environments
             .insert(program_point, abstract_environment.clone());
         Ok(())
-    }
-
-    fn includes(
-        &self,
-        _namespace: &Namespace<AbstractEnvironment>,
-        _program_point: ProgramPoint,
-        including: &AbstractEnvironment,
-        included: &AbstractEnvironment,
-    ) -> Result<bool, ConstraintsBuilderError> {
-        Ok(including.includes(included))
     }
 
     fn join(
