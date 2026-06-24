@@ -1722,7 +1722,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
     type AbstractEnvironments = Namespace<AbstractEnvironment>;
     type Error = ConstraintsBuilderError;
 
-    fn entry_point(&self) -> Result<Self::Node, Self::Error> {
+    fn entry_node(&self) -> Result<Self::Node, Self::Error> {
         Ok(ProgramPoint::Entry)
     }
     fn successors(

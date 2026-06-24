@@ -10,7 +10,7 @@ pub trait GraphAnalyser {
     type AbstractEnvironments;
     type Error;
 
-    fn entry_point(&self) -> Result<Self::Node, Self::Error>;
+    fn entry_node(&self) -> Result<Self::Node, Self::Error>;
     fn successors(
         &self,
         node: &Self::Node,
@@ -61,7 +61,7 @@ pub fn worklist<
 ) -> Result<A, E> {
     let mut abstract_environments = analyser.initialise_abstract_environments()?;
 
-    let mut worklist = BTreeSet::from_iter([analyser.entry_point()?]);
+    let mut worklist = BTreeSet::from_iter([analyser.entry_node()?]);
 
     while let Some(node) = worklist.pop_first() {
         let res_abstract_environment =
