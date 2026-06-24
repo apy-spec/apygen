@@ -17,7 +17,7 @@ pub trait GraphAnalyser {
     ) -> Result<impl Iterator<Item = Self::Node>, Self::Error>;
 
     fn initialise_abstract_environments(&self) -> Result<Self::AbstractEnvironments, Self::Error>;
-    fn analyse_point(
+    fn analyse_node(
         &self,
         abstract_environments: &Self::AbstractEnvironments,
         node: Self::Node,
@@ -65,7 +65,7 @@ pub fn worklist<
 
     while let Some(node) = worklist.pop_first() {
         let res_abstract_environment =
-            analyser.analyse_point(&mut abstract_environments, node.clone())?;
+            analyser.analyse_node(&mut abstract_environments, node.clone())?;
 
         for successor in analyser.successors(&node)? {
             let Some(res_cond_abstract_environment) = analyser.update_abstract_environment(

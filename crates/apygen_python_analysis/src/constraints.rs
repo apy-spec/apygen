@@ -1743,7 +1743,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         Ok(Namespace::new())
     }
 
-    fn analyse_point(
+    fn analyse_node(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
