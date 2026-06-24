@@ -6,7 +6,8 @@ use ruff_python_ast::{
 };
 use ruff_python_parser::{Mode, TokenKind, parse};
 pub use ruff_source_file::OneIndexed;
-use ruff_source_file::{LineIndex, Locator, SourceCode};
+use ruff_source_file::{Locator, SourceCode};
+pub use ruff_source_file::LineIndex;
 use ruff_text_size::{Ranged, TextRange};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -291,16 +292,26 @@ fn map_with<T, V: Clone>(
     iter.into_iter().map(move |key| (key, value.clone()))
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Cfg {
+    line_index: LineIndex,
     nodes: HashMap<ProgramPoint, CfgNode>,
     edges: HashMap<(ProgramPoint, ProgramPoint), HashSet<EdgeData>>,
     cfgs: HashMap<ProgramPoint, Cfg>,
 }
 
 impl Cfg {
+    pub fn new(line_index: LineIndex) -> Self {
+        Self {
+            line_index,
+            nodes: HashMap::default(),
+            edges: HashMap::default(),
+            cfgs: HashMap::default(),
+        }
+    }
+
     pub fn empty() -> Self {
-        let mut cfg = Cfg::default();
+        let mut cfg = Cfg::new(LineIndex::from_source_text(""));
         cfg.nodes.insert(ProgramPoint::Entry, CfgNode::default());
         cfg.nodes.insert(ProgramPoint::Exit, CfgNode::default());
         cfg.edges
@@ -327,7 +338,7 @@ impl Cfg {
         let source_code = SourceCode::new(source, &line_index);
 
         let mut context = CfgContext::new(&locator, &source_code, &comment_ranges);
-        let mut cfg = Cfg::default();
+        let mut cfg = Cfg::new(line_index.clone());
 
         cfg.process_cfg(&mut context, module_syntax.body);
 
@@ -664,7 +675,8 @@ impl Cfg {
         current_point: ProgramPoint,
         mut stmt_function_def: StmtFunctionDef,
     ) -> ResultPoints {
-        let mut function_cfg = Cfg::default();
+        let mut function_cfg =
+            Cfg::new(context.locator.line_index().expect("should exist").clone());
 
         function_cfg.process_cfg(context, stmt_function_def.body.drain(..));
 
@@ -685,7 +697,7 @@ impl Cfg {
         current_point: ProgramPoint,
         mut stmt_class_def: StmtClassDef,
     ) -> ResultPoints {
-        let mut class_cfg = Cfg::default();
+        let mut class_cfg = Cfg::new(context.locator.line_index().expect("should exist").clone());
 
         class_cfg.process_cfg(context, stmt_class_def.body.drain(..));
 
