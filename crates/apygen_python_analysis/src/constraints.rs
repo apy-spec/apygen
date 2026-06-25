@@ -372,35 +372,6 @@ pub struct ExpressionImportFrom {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ExpressionJoin {
-    values: imbl::OrdSet<Arc<TypeExpression>>,
-}
-
-impl Display for ExpressionJoin {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if self.values.is_empty() {
-            write!(f, "⊥")
-        } else if self.values.len() == 1 {
-            write!(
-                f,
-                "{}",
-                self.values
-                    .get_min()
-                    .expect("should exist cause of the check above")
-            )
-        } else {
-            for (i, value) in self.values.iter().enumerate() {
-                if i > 0 {
-                    write!(f, " ⊔ ")?;
-                }
-                write!(f, "({})", value)?;
-            }
-            Ok(())
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BinaryOperator {
     Add,
     Sub,
@@ -530,7 +501,6 @@ pub enum TypeExpression {
     LiteralBoolean(LiteralBoolean),
     LiteralNone,
     LiteralEllipsis,
-    Join(ExpressionJoin),
 }
 
 impl Display for TypeExpression {
@@ -555,7 +525,6 @@ impl Display for TypeExpression {
             TypeExpression::LiteralBoolean(literal_boolean) => write!(f, "{}", literal_boolean),
             TypeExpression::LiteralNone => write!(f, "None"),
             TypeExpression::LiteralEllipsis => write!(f, "..."),
-            TypeExpression::Join(expression_join) => write!(f, "{}", expression_join),
         }
     }
 }
