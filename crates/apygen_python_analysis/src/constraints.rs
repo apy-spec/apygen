@@ -1993,32 +1993,15 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                     | EdgeData::Return => true,
                     EdgeData::Exception(_, _) | EdgeData::UnhandledException => false,
                 }),
-                Guard::Raise { expression, .. } => {
-                    edge_datas.iter().any(|edge_data| match edge_data {
-                        EdgeData::Unconditional
-                        | EdgeData::Conditional(_)
-                        | EdgeData::Match(_)
-                        | EdgeData::Break
-                        | EdgeData::Continue
-                        | EdgeData::Return => false,
-                        EdgeData::Exception(_, _) => true,
-                        EdgeData::UnhandledException => {
-                            target_abstract_environment.constraint_graph.add_edge(
-                                current_node.clone(),
-                                ConstraintNode::Constraint(Arc::new(Constraint::Exception(
-                                    ConstraintDefinition::include(
-                                        ExceptionExpression::Type(expression.clone()),
-                                        ExceptionExpression::Raised(RaisedException {
-                                            program_points: imbl::Vector::new(),
-                                        }),
-                                    ),
-                                ))),
-                                guard.clone(),
-                            );
-                            true
-                        }
-                    })
-                }
+                Guard::Raise { .. } => edge_datas.iter().any(|edge_data| match edge_data {
+                    EdgeData::Unconditional
+                    | EdgeData::Conditional(_)
+                    | EdgeData::Match(_)
+                    | EdgeData::Break
+                    | EdgeData::Continue
+                    | EdgeData::Return => false,
+                    EdgeData::Exception(_, _) | EdgeData::UnhandledException => true,
+                }),
                 Guard::Multiple(guards) => {
                     if guards.is_empty() {
                         true
@@ -2029,6 +2012,43 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
             })
             .cloned()
             .collect();
+
+        if to == ProgramPoint::Exit {
+            for (from, guard) in target_abstract_environment.current_nodes.as_ref() {
+                match guard {
+                    Guard::Raise { expression, .. }
+                        if edge_datas.contains(&EdgeData::UnhandledException) =>
+                    {
+                        let unhandled_exception_constraint = ConstraintNode::Constraint(Arc::new(
+                            Constraint::Exception(ConstraintDefinition::include(
+                                ExceptionExpression::Type(expression.clone()),
+                                ExceptionExpression::Raised(RaisedException {
+                                    program_points: imbl::Vector::new(),
+                                }),
+                            )),
+                        ));
+
+                        target_abstract_environment.constraint_graph.add_edge(
+                            from.clone(),
+                            unhandled_exception_constraint.clone(),
+                            guard.clone(),
+                        );
+                        target_abstract_environment.constraint_graph.add_edge(
+                            unhandled_exception_constraint,
+                            ConstraintNode::Exit,
+                            Guard::default(),
+                        );
+                    }
+                    _ => {
+                        target_abstract_environment.constraint_graph.add_edge(
+                            from.clone(),
+                            ConstraintNode::Exit,
+                            guard.clone(),
+                        );
+                    }
+                }
+            }
+        }
 
         Ok(Some(target_abstract_environment))
     }
@@ -2099,8 +2119,11 @@ mod tests {
             "#entry";
             "#import(some_module) ⊑ some_module@(1:7)";
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "#import(some_module) ⊑ some_module@(1:7)" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
+            "#import(some_module) ⊑ some_module@(1:7)" -> "#exit" [label="{}"];
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec!["some_module"],
@@ -2112,8 +2135,11 @@ mod tests {
             "#entry";
             "#import(some_module) ⊑ mod@(1:22)";
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "#import(some_module) ⊑ mod@(1:22)" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
+            "#import(some_module) ⊑ mod@(1:22)" -> "#exit" [label="{}"];
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec!["some_module"],
@@ -2127,10 +2153,14 @@ mod tests {
             "#import(some_module.submodule) ⊑ (some_module@(1:7)).submodule";
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
             "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "#import(some_module) ⊑ some_module@(1:7)" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
             "#import(some_module) ⊑ some_module@(1:7)" -> "#import(some_module.submodule) ⊑ (some_module@(1:7)).submodule" [label="#succeed(#import(some_module.submodule))"];
             "#import(some_module) ⊑ some_module@(1:7)" -> "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module.submodule))"];
+            "#import(some_module.submodule) ⊑ (some_module@(1:7)).submodule" -> "#exit" [label="{}"];
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec!["some_module.submodule"],
@@ -2145,12 +2175,16 @@ mod tests {
             "#import(some_module.submodule) ⊑ (some_module@(1:20)).submodule";
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
             "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "#import(some_module) ⊑ some_module@(1:7)" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
             "#import(some_module) ⊑ some_module@(1:7)" -> "#import(some_module) ⊑ some_module@(1:20)" [label="#succeed(#import(some_module))"];
             "#import(some_module) ⊑ some_module@(1:7)" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
             "#import(some_module) ⊑ some_module@(1:20)" -> "#import(some_module.submodule) ⊑ (some_module@(1:20)).submodule" [label="#succeed(#import(some_module.submodule))"];
             "#import(some_module) ⊑ some_module@(1:20)" -> "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module.submodule))"];
+            "#import(some_module.submodule) ⊑ (some_module@(1:20)).submodule" -> "#exit" [label="{}"];
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec!["some_module", "some_module.submodule"],
@@ -2164,10 +2198,14 @@ mod tests {
             "#import(some_module) ⊑ some_module@(1:7)";
             "#exceptions(#import(another_module)) ⊑ #raised_exceptions()";
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "#import(some_module) ⊑ some_module@(1:7)" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
+            "#import(another_module) ⊑ another_module@(1:20)" -> "#exit" [label="{}"];
             "#import(some_module) ⊑ some_module@(1:7)" -> "#import(another_module) ⊑ another_module@(1:20)" [label="#succeed(#import(another_module))"];
             "#import(some_module) ⊑ some_module@(1:7)" -> "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" [label="#raise(#import(another_module))"];
+            "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec!["some_module", "another_module"],
@@ -2181,10 +2219,14 @@ mod tests {
             "#import(some_module) ⊑ mod@(1:22)";
             "#exceptions(#import(another_module)) ⊑ #raised_exceptions()";
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "#import(some_module) ⊑ mod@(1:22)" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
+            "#import(another_module) ⊑ mod@(1:45)" -> "#exit" [label="{}"];
             "#import(some_module) ⊑ mod@(1:22)" -> "#import(another_module) ⊑ mod@(1:45)" [label="#succeed(#import(another_module))"];
             "#import(some_module) ⊑ mod@(1:22)" -> "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" [label="#raise(#import(another_module))"];
+            "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec!["some_module", "another_module"],
@@ -2196,8 +2238,11 @@ mod tests {
             "#entry";
             "42 ⊑ a@(1:0)";
             "#exceptions(42) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "42 ⊑ a@(1:0)" [label="#succeed(42)"];
             "#entry" -> "#exceptions(42) ⊑ #raised_exceptions()" [label="#raise(42)"];
+            "42 ⊑ a@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions(42) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2209,8 +2254,11 @@ mod tests {
             "#entry";
             "4200000000000000000000000000 ⊑ a@(1:0)";
             "#exceptions(4200000000000000000000000000) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "4200000000000000000000000000 ⊑ a@(1:0)" [label="#succeed(4200000000000000000000000000)"];
             "#entry" -> "#exceptions(4200000000000000000000000000) ⊑ #raised_exceptions()" [label="#raise(4200000000000000000000000000)"];
+            "4200000000000000000000000000 ⊑ a@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions(4200000000000000000000000000) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2222,8 +2270,11 @@ mod tests {
             "#entry";
             "(42) + (67) ⊑ add@(1:0)";
             "#exceptions((42) + (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) + (67) ⊑ add@(1:0)" [label="#succeed((42) + (67))"];
             "#entry" -> "#exceptions((42) + (67)) ⊑ #raised_exceptions()" [label="#raise((42) + (67))"];
+            "(42) + (67) ⊑ add@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) + (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2235,8 +2286,11 @@ mod tests {
             "#entry";
             "(42) - (67) ⊑ sub@(1:0)";
             "#exceptions((42) - (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) - (67) ⊑ sub@(1:0)" [label="#succeed((42) - (67))"];
             "#entry" -> "#exceptions((42) - (67)) ⊑ #raised_exceptions()" [label="#raise((42) - (67))"];
+            "(42) - (67) ⊑ sub@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) - (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2248,8 +2302,11 @@ mod tests {
             "#entry";
             "(42) * (67) ⊑ mult@(1:0)";
             "#exceptions((42) * (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) * (67) ⊑ mult@(1:0)" [label="#succeed((42) * (67))"];
             "#entry" -> "#exceptions((42) * (67)) ⊑ #raised_exceptions()" [label="#raise((42) * (67))"];
+            "(42) * (67) ⊑ mult@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) * (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2261,8 +2318,11 @@ mod tests {
             "#entry";
             "(42) @ (67) ⊑ mat_mult@(1:0)";
             "#exceptions((42) @ (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) @ (67) ⊑ mat_mult@(1:0)" [label="#succeed((42) @ (67))"];
             "#entry" -> "#exceptions((42) @ (67)) ⊑ #raised_exceptions()" [label="#raise((42) @ (67))"];
+            "(42) @ (67) ⊑ mat_mult@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) @ (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2274,8 +2334,11 @@ mod tests {
             "#entry";
             "(42) / (67) ⊑ div@(1:0)";
             "#exceptions((42) / (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) / (67) ⊑ div@(1:0)" [label="#succeed((42) / (67))"];
             "#entry" -> "#exceptions((42) / (67)) ⊑ #raised_exceptions()" [label="#raise((42) / (67))"];
+            "(42) / (67) ⊑ div@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) / (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2287,8 +2350,11 @@ mod tests {
             "#entry";
             "(42) // (67) ⊑ floor_div@(1:0)";
             "#exceptions((42) // (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) // (67) ⊑ floor_div@(1:0)" [label="#succeed((42) // (67))"];
             "#entry" -> "#exceptions((42) // (67)) ⊑ #raised_exceptions()" [label="#raise((42) // (67))"];
+            "(42) // (67) ⊑ floor_div@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) // (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2300,8 +2366,11 @@ mod tests {
             "#entry";
             "(42) % (67) ⊑ mod@(1:0)";
             "#exceptions((42) % (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) % (67) ⊑ mod@(1:0)" [label="#succeed((42) % (67))"];
             "#entry" -> "#exceptions((42) % (67)) ⊑ #raised_exceptions()" [label="#raise((42) % (67))"];
+            "(42) % (67) ⊑ mod@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) % (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2313,8 +2382,11 @@ mod tests {
             "#entry";
             "(42) ** (67) ⊑ pow@(1:0)";
             "#exceptions((42) ** (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) ** (67) ⊑ pow@(1:0)" [label="#succeed((42) ** (67))"];
             "#entry" -> "#exceptions((42) ** (67)) ⊑ #raised_exceptions()" [label="#raise((42) ** (67))"];
+            "(42) ** (67) ⊑ pow@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) ** (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2326,8 +2398,11 @@ mod tests {
             "#entry";
             "(42) << (67) ⊑ shl@(1:0)";
             "#exceptions((42) << (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) << (67) ⊑ shl@(1:0)" [label="#succeed((42) << (67))"];
             "#entry" -> "#exceptions((42) << (67)) ⊑ #raised_exceptions()" [label="#raise((42) << (67))"];
+            "(42) << (67) ⊑ shl@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) << (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2339,8 +2414,11 @@ mod tests {
             "#entry";
             "(42) >> (67) ⊑ shr@(1:0)";
             "#exceptions((42) >> (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) >> (67) ⊑ shr@(1:0)" [label="#succeed((42) >> (67))"];
             "#entry" -> "#exceptions((42) >> (67)) ⊑ #raised_exceptions()" [label="#raise((42) >> (67))"];
+            "(42) >> (67) ⊑ shr@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) >> (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2352,8 +2430,11 @@ mod tests {
             "#entry";
             "(42) | (67) ⊑ bit_or@(1:0)";
             "#exceptions((42) | (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) | (67) ⊑ bit_or@(1:0)" [label="#succeed((42) | (67))"];
             "#entry" -> "#exceptions((42) | (67)) ⊑ #raised_exceptions()" [label="#raise((42) | (67))"];
+            "(42) | (67) ⊑ bit_or@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) | (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2365,8 +2446,11 @@ mod tests {
             "#entry";
             "(42) ^ (67) ⊑ bit_xor@(1:0)";
             "#exceptions((42) ^ (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) ^ (67) ⊑ bit_xor@(1:0)" [label="#succeed((42) ^ (67))"];
             "#entry" -> "#exceptions((42) ^ (67)) ⊑ #raised_exceptions()" [label="#raise((42) ^ (67))"];
+            "(42) ^ (67) ⊑ bit_xor@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) ^ (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2378,8 +2462,11 @@ mod tests {
             "#entry";
             "(42) & (67) ⊑ bit_and@(1:0)";
             "#exceptions((42) & (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) & (67) ⊑ bit_and@(1:0)" [label="#succeed((42) & (67))"];
             "#entry" -> "#exceptions((42) & (67)) ⊑ #raised_exceptions()" [label="#raise((42) & (67))"];
+            "(42) & (67) ⊑ bit_and@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) & (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2391,8 +2478,11 @@ mod tests {
             "#entry";
             "(42) and (67) ⊑ and_@(1:0)";
             "#exceptions((42) and (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) and (67) ⊑ and_@(1:0)" [label="#succeed((42) and (67))"];
             "#entry" -> "#exceptions((42) and (67)) ⊑ #raised_exceptions()" [label="#raise((42) and (67))"];
+            "(42) and (67) ⊑ and_@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) and (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2404,8 +2494,11 @@ mod tests {
             "#entry";
             "(42) or (67) ⊑ or_@(1:0)";
             "#exceptions((42) or (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) or (67) ⊑ or_@(1:0)" [label="#succeed((42) or (67))"];
             "#entry" -> "#exceptions((42) or (67)) ⊑ #raised_exceptions()" [label="#raise((42) or (67))"];
+            "(42) or (67) ⊑ or_@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) or (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2417,8 +2510,11 @@ mod tests {
             "#entry";
             "(42) == (67) ⊑ eq@(1:0)";
             "#exceptions((42) == (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) == (67) ⊑ eq@(1:0)" [label="#succeed((42) == (67))"];
             "#entry" -> "#exceptions((42) == (67)) ⊑ #raised_exceptions()" [label="#raise((42) == (67))"];
+            "(42) == (67) ⊑ eq@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) == (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2430,8 +2526,11 @@ mod tests {
             "#entry";
             "(42) != (67) ⊑ not_eq@(1:0)";
             "#exceptions((42) != (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) != (67) ⊑ not_eq@(1:0)" [label="#succeed((42) != (67))"];
             "#entry" -> "#exceptions((42) != (67)) ⊑ #raised_exceptions()" [label="#raise((42) != (67))"];
+            "(42) != (67) ⊑ not_eq@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) != (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2443,8 +2542,11 @@ mod tests {
             "#entry";
             "(42) < (67) ⊑ lt@(1:0)";
             "#exceptions((42) < (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) < (67) ⊑ lt@(1:0)" [label="#succeed((42) < (67))"];
             "#entry" -> "#exceptions((42) < (67)) ⊑ #raised_exceptions()" [label="#raise((42) < (67))"];
+            "(42) < (67) ⊑ lt@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) < (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2456,8 +2558,11 @@ mod tests {
             "#entry";
             "(42) > (67) ⊑ gt@(1:0)";
             "#exceptions((42) > (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) > (67) ⊑ gt@(1:0)" [label="#succeed((42) > (67))"];
             "#entry" -> "#exceptions((42) > (67)) ⊑ #raised_exceptions()" [label="#raise((42) > (67))"];
+            "(42) > (67) ⊑ gt@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) > (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2469,8 +2574,11 @@ mod tests {
             "#entry";
             "(42) <= (67) ⊑ lte@(1:0)";
             "#exceptions((42) <= (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) <= (67) ⊑ lte@(1:0)" [label="#succeed((42) <= (67))"];
             "#entry" -> "#exceptions((42) <= (67)) ⊑ #raised_exceptions()" [label="#raise((42) <= (67))"];
+            "(42) <= (67) ⊑ lte@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) <= (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2482,8 +2590,11 @@ mod tests {
             "#entry";
             "(42) >= (67) ⊑ gte@(1:0)";
             "#exceptions((42) >= (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) >= (67) ⊑ gte@(1:0)" [label="#succeed((42) >= (67))"];
             "#entry" -> "#exceptions((42) >= (67)) ⊑ #raised_exceptions()" [label="#raise((42) >= (67))"];
+            "(42) >= (67) ⊑ gte@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) >= (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2495,8 +2606,11 @@ mod tests {
             "#entry";
             "(42) is (67) ⊑ is_@(1:0)";
             "#exceptions((42) is (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) is (67) ⊑ is_@(1:0)" [label="#succeed((42) is (67))"];
             "#entry" -> "#exceptions((42) is (67)) ⊑ #raised_exceptions()" [label="#raise((42) is (67))"];
+            "(42) is (67) ⊑ is_@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) is (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2508,8 +2622,11 @@ mod tests {
             "#entry";
             "(42) is not (67) ⊑ is_not@(1:0)";
             "#exceptions((42) is not (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) is not (67) ⊑ is_not@(1:0)" [label="#succeed((42) is not (67))"];
             "#entry" -> "#exceptions((42) is not (67)) ⊑ #raised_exceptions()" [label="#raise((42) is not (67))"];
+            "(42) is not (67) ⊑ is_not@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) is not (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2521,8 +2638,11 @@ mod tests {
             "#entry";
             "(42) in (67) ⊑ in_@(1:0)";
             "#exceptions((42) in (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) in (67) ⊑ in_@(1:0)" [label="#succeed((42) in (67))"];
             "#entry" -> "#exceptions((42) in (67)) ⊑ #raised_exceptions()" [label="#raise((42) in (67))"];
+            "(42) in (67) ⊑ in_@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) in (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2534,8 +2654,11 @@ mod tests {
             "#entry";
             "(42) not in (67) ⊑ not_in@(1:0)";
             "#exceptions((42) not in (67)) ⊑ #raised_exceptions()";
+            "#exit";
             "#entry" -> "(42) not in (67) ⊑ not_in@(1:0)" [label="#succeed((42) not in (67))"];
             "#entry" -> "#exceptions((42) not in (67)) ⊑ #raised_exceptions()" [label="#raise((42) not in (67))"];
+            "(42) not in (67) ⊑ not_in@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions((42) not in (67)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2569,16 +2692,28 @@ mod tests {
             "#empty(3:10)";
             "#empty(4:20)";
             "#empty(6:37)";
-            "#entry" -> "a@(4:20) ⊑ a~(8:49)" [label="{}"];
-            "#entry" -> "a@(6:37) ⊑ a~(8:49)" [label="{}"];
-            "#entry" -> "x@(1:0) ⊑ x~(3:13)" [label="{}"];
+            "#exit";
             "#entry" -> "True ⊑ x@(1:0)" [label="#succeed(True)"];
             "#entry" -> "#exceptions(True) ⊑ #raised_exceptions()" [label="#raise(True)"];
-            "42 ⊑ a@(4:20)" -> "a~(8:49) ⊑ b@(8:45)" [label="#succeed(a~(8:49))"];
-            "42 ⊑ a@(4:20)" -> "#exceptions(a~(8:49)) ⊑ #raised_exceptions()" [label="#raise(a~(8:49))"];
-            "67 ⊑ a@(6:37)" -> "a~(8:49) ⊑ b@(8:45)" [label="#succeed(a~(8:49))"];
-            "67 ⊑ a@(6:37)" -> "#exceptions(a~(8:49)) ⊑ #raised_exceptions()" [label="#raise(a~(8:49))"];
-            "True ⊑ x@(1:0)" -> "#empty(3:10)" [label="{}"];
+            "a@(4:20) ⊑ a~(8:49)" -> "a~(8:49) ⊑ b@(8:45)" [label="#succeed(a~(8:49))"];
+            "a@(4:20) ⊑ a~(8:49)" -> "#exceptions(a~(8:49)) ⊑ #raised_exceptions()" [label="#raise(a~(8:49))"];
+            "a@(6:37) ⊑ a~(8:49)" -> "a~(8:49) ⊑ b@(8:45)" [label="#succeed(a~(8:49))"];
+            "a@(6:37) ⊑ a~(8:49)" -> "#exceptions(a~(8:49)) ⊑ #raised_exceptions()" [label="#raise(a~(8:49))"];
+            "a~(8:49) ⊑ b@(8:45)" -> "#exit" [label="{}"];
+            "x@(1:0) ⊑ x~(3:13)" -> "#empty(3:10)" [label="{}"];
+            "42 ⊑ a@(4:20)" -> "a@(4:20) ⊑ a~(8:49)" [label="{}"];
+            "42 ⊑ a@(4:20)" -> "a@(6:37) ⊑ a~(8:49)" [label="{}"];
+            "42 ⊑ a@(4:20)" -> "#exit" [label="{}"];
+            "67 ⊑ a@(6:37)" -> "a@(4:20) ⊑ a~(8:49)" [label="{}"];
+            "67 ⊑ a@(6:37)" -> "a@(6:37) ⊑ a~(8:49)" [label="{}"];
+            "67 ⊑ a@(6:37)" -> "#exit" [label="{}"];
+            "True ⊑ x@(1:0)" -> "x@(1:0) ⊑ x~(3:13)" [label="{}"];
+            "True ⊑ x@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions(a~(8:49)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(x~(3:13)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(42) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(67) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(True) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
             "#empty(3:10)" -> "#exceptions(x~(3:13)) ⊑ #raised_exceptions()" [label="#raise(x~(3:13))"];
             "#empty(3:10)" -> "#empty(4:20)" [label="#is_true(x~(3:13))"];
             "#empty(3:10)" -> "#empty(6:37)" [label="#is_false(x~(3:13))"];
@@ -2616,25 +2751,35 @@ mod tests {
             "#exceptions((a~(4:28)) + (1)) ⊑ #raised_exceptions()";
             "#exceptions(0) ⊑ #raised_exceptions()";
             "#empty(3:7)";
-            "#empty(4:24)";
-            "#empty(6:35)";
-            "#entry" -> "a@(1:0) ⊑ a~(3:13)" [label="{}"];
-            "#entry" -> "a@(1:0) ⊑ a~(4:28)" [label="{}"];
-            "#entry" -> "a@(1:0) ⊑ a~(6:39)" [label="{}"];
-            "#entry" -> "a@(4:24) ⊑ a~(3:13)" [label="{}"];
-            "#entry" -> "a@(4:24) ⊑ a~(4:28)" [label="{}"];
-            "#entry" -> "a@(4:24) ⊑ a~(6:39)" [label="{}"];
+            "#exit";
             "#entry" -> "0 ⊑ a@(1:0)" [label="#succeed(0)"];
             "#entry" -> "#exceptions(0) ⊑ #raised_exceptions()" [label="#raise(0)"];
-            "(a~(4:28)) + (1) ⊑ a@(4:24)" -> "#empty(3:7)" [label="{}"];
-            "0 ⊑ a@(1:0)" -> "#empty(3:7)" [label="{}"];
+            "a@(1:0) ⊑ a~(3:13)" -> "#empty(3:7)" [label="{}"];
+            "a@(1:0) ⊑ a~(4:28)" -> "(a~(4:28)) + (1) ⊑ a@(4:24)" [label="#succeed((a~(4:28)) + (1))"];
+            "a@(1:0) ⊑ a~(4:28)" -> "#exceptions((a~(4:28)) + (1)) ⊑ #raised_exceptions()" [label="#raise((a~(4:28)) + (1))"];
+            "a@(1:0) ⊑ a~(6:39)" -> "a~(6:39) ⊑ b@(6:35)" [label="#succeed(a~(6:39))"];
+            "a@(1:0) ⊑ a~(6:39)" -> "#exceptions(a~(6:39)) ⊑ #raised_exceptions()" [label="#raise(a~(6:39))"];
+            "a@(4:24) ⊑ a~(3:13)" -> "#empty(3:7)" [label="{}"];
+            "a@(4:24) ⊑ a~(4:28)" -> "(a~(4:28)) + (1) ⊑ a@(4:24)" [label="#succeed((a~(4:28)) + (1))"];
+            "a@(4:24) ⊑ a~(4:28)" -> "#exceptions((a~(4:28)) + (1)) ⊑ #raised_exceptions()" [label="#raise((a~(4:28)) + (1))"];
+            "a@(4:24) ⊑ a~(6:39)" -> "a~(6:39) ⊑ b@(6:35)" [label="#succeed(a~(6:39))"];
+            "a@(4:24) ⊑ a~(6:39)" -> "#exceptions(a~(6:39)) ⊑ #raised_exceptions()" [label="#raise(a~(6:39))"];
+            "a~(6:39) ⊑ b@(6:35)" -> "#exit" [label="{}"];
+            "(a~(4:28)) + (1) ⊑ a@(4:24)" -> "a@(1:0) ⊑ a~(3:13)" [label="{}"];
+            "(a~(4:28)) + (1) ⊑ a@(4:24)" -> "a@(4:24) ⊑ a~(3:13)" [label="{}"];
+            "(a~(4:28)) + (1) ⊑ a@(4:24)" -> "#exit" [label="{}"];
+            "0 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a~(3:13)" [label="{}"];
+            "0 ⊑ a@(1:0)" -> "a@(4:24) ⊑ a~(3:13)" [label="{}"];
+            "0 ⊑ a@(1:0)" -> "#exit" [label="{}"];
+            "#exceptions(a~(6:39)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions((a~(3:13)) < (5)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions((a~(4:28)) + (1)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(0) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#empty(3:7)" -> "a@(1:0) ⊑ a~(4:28)" [label="#is_true((a~(3:13)) < (5))"];
+            "#empty(3:7)" -> "a@(1:0) ⊑ a~(6:39)" [label="#is_false((a~(3:13)) < (5))"];
+            "#empty(3:7)" -> "a@(4:24) ⊑ a~(4:28)" [label="#is_true((a~(3:13)) < (5))"];
+            "#empty(3:7)" -> "a@(4:24) ⊑ a~(6:39)" [label="#is_false((a~(3:13)) < (5))"];
             "#empty(3:7)" -> "#exceptions((a~(3:13)) < (5)) ⊑ #raised_exceptions()" [label="#raise((a~(3:13)) < (5))"];
-            "#empty(3:7)" -> "#empty(4:24)" [label="#is_true((a~(3:13)) < (5))"];
-            "#empty(3:7)" -> "#empty(6:35)" [label="#is_false((a~(3:13)) < (5))"];
-            "#empty(4:24)" -> "(a~(4:28)) + (1) ⊑ a@(4:24)" [label="#succeed((a~(4:28)) + (1))"];
-            "#empty(4:24)" -> "#exceptions((a~(4:28)) + (1)) ⊑ #raised_exceptions()" [label="#raise((a~(4:28)) + (1))"];
-            "#empty(6:35)" -> "a~(6:39) ⊑ b@(6:35)" [label="#succeed(a~(6:39))"];
-            "#empty(6:35)" -> "#exceptions(a~(6:39)) ⊑ #raised_exceptions()" [label="#raise(a~(6:39))"];
         }
         "##},
         vec![],
