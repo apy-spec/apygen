@@ -753,7 +753,7 @@ impl Display for ConstraintNode {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConstraintGraph {
-    edges: LatticeMap<ConstraintNode, LatticeMap<ConstraintNode, Guard>>,
+    pub edges: LatticeMap<ConstraintNode, LatticeMap<ConstraintNode, Guard>>,
 }
 
 impl ConstraintGraph {
@@ -1444,23 +1444,30 @@ impl<'a> ConstraintsBuilder<'a> {
             .values
             .get(&variable_name)
         {
-            for location in &locations.values {
-                if location != &variable_location {
+            let mut current_nodes: LatticeSet<(ConstraintNode, Guard)> = LatticeSet::default();
+            for (from, guard) in target_abstract_environment.current_nodes.as_ref() {
+                for location in &locations.values {
+                    if location == &variable_location {
+                        continue;
+                    }
+                    let location_constraint = ConstraintNode::Constraint(Arc::new(
+                        Constraint::Type(ConstraintDefinition::include(
+                            TypeExpression::Variable(ExpressionVariable::new(
+                                variable_name.clone(),
+                                VariableDefinition::At(location.clone()),
+                            )),
+                            variable_expression.clone(),
+                        )),
+                    ));
                     target_abstract_environment.constraint_graph.add_edge(
-                        ConstraintNode::Entry,
-                        ConstraintNode::Constraint(Arc::new(Constraint::Type(
-                            ConstraintDefinition::include(
-                                TypeExpression::Variable(ExpressionVariable::new(
-                                    variable_name.clone(),
-                                    VariableDefinition::At(location.clone()),
-                                )),
-                                variable_expression.clone(),
-                            ),
-                        ))),
-                        Guard::default(),
+                        from.clone(),
+                        location_constraint.clone(),
+                        guard.clone(),
                     );
+                    current_nodes.insert((location_constraint.clone(), Guard::default()));
                 }
             }
+            target_abstract_environment.current_nodes = current_nodes;
         }
 
         Ok(variable_expression)
