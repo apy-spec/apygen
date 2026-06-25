@@ -1907,9 +1907,9 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
     fn next_nodes(
         &self,
         program_point: &ProgramPoint,
-    ) -> Result<impl Iterator<Item = ProgramPoint>, ConstraintsBuilderError> {
+    ) -> Result<impl Iterator<Item = &ProgramPoint>, ConstraintsBuilderError> {
         match self.cfg.successors(program_point) {
-            Some(successors) => Ok(successors.cloned()),
+            Some(successors) => Ok(successors),
             None => Err(ConstraintsBuilderError::InvalidProgramPoint {
                 program_point: program_point.clone(),
             }),
@@ -2022,23 +2022,23 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         Ok(Some(target_abstract_environment))
     }
 
-    fn get_abstract_state(
+    fn get_abstract_state<'a>(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
-        program_point: ProgramPoint,
-    ) -> Result<Option<AbstractEnvironment>, ConstraintsBuilderError> {
-        Ok(namespace.abstract_environments.get(&program_point).cloned())
+        namespace: &'a Namespace<AbstractEnvironment>,
+        program_point: &ProgramPoint,
+    ) -> Result<Option<&'a AbstractEnvironment>, ConstraintsBuilderError> {
+        Ok(namespace.abstract_environments.get(program_point))
     }
 
     fn set_abstract_state(
         &self,
         namespace: &mut Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
-        abstract_environment: &AbstractEnvironment,
+        abstract_environment: AbstractEnvironment,
     ) -> Result<(), ConstraintsBuilderError> {
         namespace
             .abstract_environments
-            .insert(program_point, abstract_environment.clone());
+            .insert(program_point, abstract_environment);
         Ok(())
     }
 

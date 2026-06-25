@@ -14,7 +14,7 @@ pub trait GraphAnalyser {
     fn next_nodes(
         &self,
         node: &Self::Node,
-    ) -> Result<impl Iterator<Item = Self::Node>, Self::Error>;
+    ) -> Result<impl Iterator<Item=&Self::Node>, Self::Error>;
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error>;
     fn analyse_node(
@@ -29,16 +29,16 @@ pub trait GraphAnalyser {
         to: Self::Node,
         abstract_state: &Self::AbstractState,
     ) -> Result<Option<Self::AbstractState>, Self::Error>;
-    fn get_abstract_state(
+    fn get_abstract_state<'a>(
         &self,
-        analysis_state: &Self::AnalysisState,
-        node: Self::Node,
-    ) -> Result<Option<Self::AbstractState>, Self::Error>;
+        analysis_state: &'a Self::AnalysisState,
+        node: &Self::Node,
+    ) -> Result<Option<&'a Self::AbstractState>, Self::Error>;
     fn set_abstract_state(
         &self,
         analysis_state: &mut Self::AnalysisState,
         node: Self::Node,
-        abstract_state: &Self::AbstractState,
+        abstract_state: Self::AbstractState,
     ) -> Result<(), Self::Error>;
 
     fn merge(
@@ -78,7 +78,7 @@ pub fn analysis<
             };
 
             let (should_update, new_abstract_state) =
-                match analyser.get_abstract_state(&analysis_state, next_node.clone())? {
+                match analyser.get_abstract_state(&analysis_state, &next_node)? {
                     Some(next_node_abstract_state) => {
                         let new_abstract_state = analyser.merge(
                             &analysis_state,
@@ -87,7 +87,7 @@ pub fn analysis<
                             &updated_abstract_state,
                         )?;
                         (
-                            new_abstract_state != next_node_abstract_state,
+                            new_abstract_state != *next_node_abstract_state,
                             new_abstract_state,
                         )
                     }
@@ -98,9 +98,9 @@ pub fn analysis<
                 analyser.set_abstract_state(
                     &mut analysis_state,
                     next_node.clone(),
-                    &new_abstract_state,
+                    new_abstract_state,
                 )?;
-                worklist.insert(next_node);
+                worklist.insert(next_node.clone());
             }
         }
     }
