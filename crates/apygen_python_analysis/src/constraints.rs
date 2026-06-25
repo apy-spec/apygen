@@ -2641,7 +2641,7 @@ mod tests {
         let actual_dot = namespace.abstract_environments[&ProgramPoint::Exit]
             .constraint_graph
             .dot();
-        println!("{actual_dot}");
+
         assert_eq!(expected_dot, actual_dot,);
         assert_eq!(expected_imports, actual_imports);
     }
