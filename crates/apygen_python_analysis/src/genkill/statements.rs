@@ -16,7 +16,7 @@ use crate::genkill::visibility::gen_visibility;
 use crate::worklist::WorklistContext;
 use apy::OneOrMany;
 use apy::v1::{Identifier, ParseIdentifierError, ParseQualifiedNameError, QualifiedName};
-use apygen_analysis::lattice::ContextualLattice;
+use apygen_analysis::lattice::Lattice;
 use imbl::Vector;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -88,11 +88,7 @@ pub fn gen_return(
 
     target_abstract_environment.returned_value = target_abstract_environment
         .returned_value
-        .join(
-            &context.namespaces,
-            &Some(Sourced::inferred(Arc::new(ty.value))),
-        )
-        .unwrap();
+        .join(&Some(Sourced::inferred(Arc::new(ty.value))));
 
     target_abstract_environments.insert(EdgeData::Unconditional, target_abstract_environment);
 

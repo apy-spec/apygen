@@ -1335,49 +1335,47 @@ impl Type {
     }
 }
 
-impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C> for Type {
-    type Error = GetAttributeError;
-
-    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
+impl Lattice for Type {
+    fn includes(&self, other: &Self) -> bool {
         if self == other {
-            return Ok(true);
+            return true;
         }
         match self {
-            Type::Any => Ok(true),
-            Type::Never => Ok(false),
-            Type::NoReturn => Ok(false),
-            Type::Instance { .. } => Ok(true),
+            Type::Any => true,
+            Type::Never => false,
+            Type::NoReturn => false,
+            Type::Instance { .. } => true,
             Type::Union(type_union) => {
                 if let Type::Union(other_type_union) = other {
-                    Ok(other_type_union.types().is_subset(type_union.types()))
+                    other_type_union.types().is_subset(type_union.types())
                 } else {
-                    Ok(type_union.contains(&Arc::new(other.clone())))
+                    type_union.contains(&Arc::new(other.clone()))
                 }
             }
             Type::Intersection(type_intersection) => {
                 if let Type::Intersection(other_type_intersection) = other {
-                    Ok(type_intersection.is_subset(other_type_intersection))
+                    type_intersection.is_subset(other_type_intersection)
                 } else {
-                    other.includes(context, self)
+                    other.includes(self)
                 }
             }
-            Type::Literal(_) => Ok(false),
+            Type::Literal(_) => false,
         }
     }
 
-    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
-        Ok(if self == other {
+    fn join(&self, other: &Self) -> Self {
+        if self == other {
             self.clone()
-        } else if self.includes(context, other)? {
+        } else if self.includes(other) {
             self.clone()
-        } else if other.includes(context, self)? {
+        } else if other.includes(self) {
             other.clone()
         } else {
             let mut type_union = TypeUnion::new();
             type_union.add_type(Arc::new(self.clone()));
             type_union.add_type(Arc::new(other.clone()));
             Type::Union(type_union)
-        })
+        }
     }
 }
 
@@ -1553,9 +1551,7 @@ impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C> for
             return Ok(true);
         }
 
-        Ok(self
-            .attribute_type
-            .includes(context, &other.attribute_type)?
+        Ok(self.attribute_type.includes(&other.attribute_type)
             && self.visibility.includes(&other.visibility)
             && self.initialisation.includes(&other.initialisation)
             && self.mutability.includes(&other.mutability)
@@ -1568,7 +1564,7 @@ impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C> for
             return Ok(self.clone());
         }
 
-        let mut attribute_type = self.attribute_type.join(context, &other.attribute_type)?;
+        let mut attribute_type = self.attribute_type.join(&other.attribute_type);
 
         if attribute_type.data.depth() > DEPTH_LIMIT {
             attribute_type.data = Arc::new(Type::Any);
@@ -1903,9 +1899,7 @@ impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C>
             }
         }
 
-        Ok(self
-            .returned_value
-            .includes(context, &other.returned_value)?
+        Ok(self.returned_value.includes(&other.returned_value)
             && self.raised_exceptions.includes(&other.raised_exceptions)
             && self.completeness.includes(&other.completeness)
             && self.pureness.includes(&other.pureness)
@@ -1933,7 +1927,7 @@ impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C>
 
         Ok(AbstractEnvironment {
             attributes,
-            returned_value: self.returned_value.join(context, &other.returned_value)?,
+            returned_value: self.returned_value.join(&other.returned_value),
             raised_exceptions: self.raised_exceptions.join(&other.raised_exceptions),
             completeness: self.completeness.join(&other.completeness),
             pureness: self.pureness.join(&other.pureness),

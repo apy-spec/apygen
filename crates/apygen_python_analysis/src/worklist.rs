@@ -8,6 +8,7 @@ use apy::OneOrMany;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint};
 pub use apygen_analysis::lattice::ContextualLattice;
+use apygen_analysis::lattice::Lattice;
 use apygen_analysis::namespace::{
     Location, NamespaceLocation, NamespaceLocations, NamespaceLocationsProxy, Namespaces,
 };
@@ -67,9 +68,7 @@ pub fn add_call(
                     btree_map::Entry::Occupied(mut type_entry) => {
                         let existing_type = type_entry.get_mut();
 
-                        if let Ok(joined_type) = existing_type.join(namespaces, &ty) {
-                            *existing_type = joined_type;
-                        }
+                        *existing_type = existing_type.join(&ty);
                     }
                 }
             }
@@ -89,9 +88,7 @@ pub fn add_return(
     match returns.entry(namespace_location) {
         Entry::Occupied(mut return_entry) => {
             let existing_return = return_entry.get_mut();
-            if let Ok(joined_return) = existing_return.join(namespaces, &ty) {
-                *existing_return = joined_return;
-            }
+            *existing_return = existing_return.join(&ty);
         }
         Entry::Vacant(return_entry) => {
             return_entry.insert(ty);
@@ -538,14 +535,10 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                                         btree_map::Entry::Occupied(mut entry) => {
                                             let existing_argument_type = entry.get_mut();
 
-                                            if !existing_argument_type
-                                                .includes(namespaces_ref, &argument_type)
-                                                .is_ok_and(|included| included)
-                                            {
+                                            if !existing_argument_type.includes(&argument_type) {
                                                 call_changed = true;
-                                                *existing_argument_type = existing_argument_type
-                                                    .join(namespaces_ref, &argument_type)
-                                                    .unwrap();
+                                                *existing_argument_type =
+                                                    existing_argument_type.join(&argument_type);
                                             }
                                         }
                                         btree_map::Entry::Vacant(entry) => {
@@ -572,10 +565,7 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                             Entry::Occupied(mut entry) => {
                                 let existing_return_type = entry.get_mut();
 
-                                if !existing_return_type
-                                    .includes(namespaces_ref, &return_type)
-                                    .is_ok_and(|included| included)
-                                {
+                                if !existing_return_type.includes(&return_type) {
                                     return_changed = true;
                                     *existing_return_type = return_type
                                 }

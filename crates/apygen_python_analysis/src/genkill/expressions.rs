@@ -12,8 +12,8 @@ pub mod type_instance;
 pub mod type_literal;
 
 use crate::abstract_environment::{
-    AbstractEnvironment, Completeness, Exception, LiteralList, LiteralTuple, Pureness,
-    RaisedExceptions, Type, TypeInstance, TypeLiteral, resolve_local_attribute,
+    Completeness, Exception, LiteralList, LiteralTuple, Pureness, RaisedExceptions, Type,
+    TypeInstance, TypeLiteral, resolve_local_attribute,
 };
 use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::Location;
@@ -29,12 +29,11 @@ use apygen_analysis::cfg::nodes::{
     Expr, ExprAttribute, ExprBinOp, ExprBoolOp, ExprCall, ExprName, ExprSubscript, ExprUnaryOp,
     Operator,
 };
-use apygen_analysis::lattice::{ContextualLattice, Lattice};
-use apygen_analysis::namespace::Namespaces;
+use apygen_analysis::lattice::Lattice;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-#[derive(Debug, Default)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct PyEffects {
     pub exceptions: RaisedExceptions,
     pub pureness: Pureness,
@@ -85,7 +84,7 @@ impl Lattice for PyEffects {
     }
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct PyValueEval<T> {
     pub value: T,
     pub effects: PyEffects,
@@ -113,18 +112,16 @@ impl<T> PyValueEval<T> {
     }
 }
 
-impl<C, L: ContextualLattice<C>> ContextualLattice<C> for PyValueEval<L> {
-    type Error = L::Error;
-
-    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
-        Ok(self.value.includes(context, &other.value)? && self.effects.includes(&other.effects))
+impl<L: Lattice> Lattice for PyValueEval<L> {
+    fn includes(&self, other: &Self) -> bool {
+        self.value.includes(&other.value) && self.effects.includes(&other.effects)
     }
 
-    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
-        Ok(PyValueEval {
-            value: self.value.join(context, &other.value)?,
+    fn join(&self, other: &Self) -> Self {
+        PyValueEval {
+            value: self.value.join(&other.value),
             effects: self.effects.join(&other.effects),
-        })
+        }
     }
 }
 
@@ -375,7 +372,7 @@ pub fn gen_bool_op(
             }
             ty = next_ty;
         } else {
-            ty = ty.join(&context.namespaces, &next_ty).unwrap(); // TODO: remove unwrap
+            ty = ty.join(&next_ty);
         }
     }
 
@@ -442,7 +439,7 @@ pub fn call_operator(
             vec![Arc::new(right.clone())],
             BTreeMap::new(),
         ));
-        ty = ty.join(&context.namespaces, &normal_ty).unwrap(); // TODO: remove unwrap
+        ty = ty.join(&normal_ty);
     }
 
     pytype_return_unreachable!(effects, ty);
@@ -456,7 +453,7 @@ pub fn call_operator(
             vec![Arc::new(left.clone())],
             BTreeMap::new(),
         ));
-        ty = ty.join(&context.namespaces, &reverse_ty).unwrap(); // TODO: remove unwrap
+        ty = ty.join(&reverse_ty);
     }
 
     PyTypeEval::new(ty, effects)

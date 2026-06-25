@@ -9,7 +9,7 @@ use crate::genkill::expressions::literal_class::{
 use crate::genkill::expressions::{PyTypeEval, literal_function};
 use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::lattice::ContextualLattice;
+use apygen_analysis::lattice::Lattice;
 use apygen_analysis::namespace::{Location, Namespaces};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -81,7 +81,7 @@ pub fn call_method(
     for method in methods {
         let call_result =
             literal_function::call(context, environment_location, &method, &arguments);
-        result = result.join(&context.namespaces, &call_result).unwrap(); // TODO: remove unwrap
+        result = result.join(&call_result);
     }
 
     result
