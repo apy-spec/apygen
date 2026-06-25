@@ -6,8 +6,8 @@ pub mod namespace;
 
 pub trait GraphAnalyser {
     type Node;
-    type AbstractEnvironment;
-    type AbstractEnvironments;
+    type AbstractState;
+    type AnalysisState;
     type Error;
 
     fn entry_node(&self) -> Result<Self::Node, Self::Error>;
@@ -16,38 +16,38 @@ pub trait GraphAnalyser {
         node: &Self::Node,
     ) -> Result<impl Iterator<Item = Self::Node>, Self::Error>;
 
-    fn initialise_abstract_environments(&self) -> Result<Self::AbstractEnvironments, Self::Error>;
+    fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error>;
     fn analyse_node(
         &self,
-        abstract_environments: &Self::AbstractEnvironments,
+        analysis_state: &Self::AnalysisState,
         node: Self::Node,
-    ) -> Result<Self::AbstractEnvironment, Self::Error>;
+    ) -> Result<Self::AbstractState, Self::Error>;
     fn update_abstract_environment(
         &self,
-        abstract_environments: &Self::AbstractEnvironments,
-        abstract_environment: &Self::AbstractEnvironment,
+        analysis_state: &Self::AnalysisState,
         from: Self::Node,
         to: Self::Node,
-    ) -> Result<Option<Self::AbstractEnvironment>, Self::Error>;
+        abstract_state: &Self::AbstractState,
+    ) -> Result<Option<Self::AbstractState>, Self::Error>;
     fn get_abstract_environment(
         &self,
-        abstract_environments: &Self::AbstractEnvironments,
+        analysis_state: &Self::AnalysisState,
         node: Self::Node,
-    ) -> Result<Option<Self::AbstractEnvironment>, Self::Error>;
+    ) -> Result<Option<Self::AbstractState>, Self::Error>;
     fn set_abstract_environment(
         &self,
-        abstract_environments: &mut Self::AbstractEnvironments,
+        analysis_state: &mut Self::AnalysisState,
         node: Self::Node,
-        abstract_environment: &Self::AbstractEnvironment,
+        abstract_state: &Self::AbstractState,
     ) -> Result<(), Self::Error>;
 
     fn merge(
         &self,
-        abstract_environments: &Self::AbstractEnvironments,
+        analysis_state: &Self::AnalysisState,
         node: Self::Node,
-        left: &Self::AbstractEnvironment,
-        right: &Self::AbstractEnvironment,
-    ) -> Result<Self::AbstractEnvironment, Self::Error>;
+        left: &Self::AbstractState,
+        right: &Self::AbstractState,
+    ) -> Result<Self::AbstractState, Self::Error>;
 }
 
 pub fn worklist<
@@ -55,11 +55,11 @@ pub fn worklist<
     S: Eq,
     A,
     E,
-    T: GraphAnalyser<Node = N, AbstractEnvironment = S, AbstractEnvironments = A, Error = E>,
+    T: GraphAnalyser<Node = N, AbstractState = S, AnalysisState = A, Error = E>,
 >(
     analyser: &T,
 ) -> Result<A, E> {
-    let mut abstract_environments = analyser.initialise_abstract_environments()?;
+    let mut abstract_environments = analyser.initialise_analysis_state()?;
 
     let mut worklist = BTreeSet::from_iter([analyser.entry_node()?]);
 
@@ -70,9 +70,9 @@ pub fn worklist<
         for next_node in analyser.next_nodes(&node)? {
             let Some(updated_abstract_environment) = analyser.update_abstract_environment(
                 &abstract_environments,
-                &abstract_environment,
                 node.clone(),
                 next_node.clone(),
+                &abstract_environment,
             )?
             else {
                 continue;

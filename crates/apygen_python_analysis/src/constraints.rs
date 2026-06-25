@@ -1897,8 +1897,8 @@ impl<'a> ConstraintsBuilder<'a> {
 
 impl GraphAnalyser for ConstraintsBuilder<'_> {
     type Node = ProgramPoint;
-    type AbstractEnvironment = AbstractEnvironment;
-    type AbstractEnvironments = Namespace<AbstractEnvironment>;
+    type AbstractState = AbstractEnvironment;
+    type AnalysisState = Namespace<AbstractEnvironment>;
     type Error = ConstraintsBuilderError;
 
     fn entry_node(&self) -> Result<ProgramPoint, Self::Error> {
@@ -1916,7 +1916,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         }
     }
 
-    fn initialise_abstract_environments(
+    fn initialise_analysis_state(
         &self,
     ) -> Result<Namespace<AbstractEnvironment>, ConstraintsBuilderError> {
         Ok(Namespace::new())
@@ -1937,9 +1937,9 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
     fn update_abstract_environment(
         &self,
         _namespace: &Namespace<AbstractEnvironment>,
-        abstract_environment: &AbstractEnvironment,
         from: ProgramPoint,
         to: ProgramPoint,
+        abstract_environment: &AbstractEnvironment,
     ) -> Result<Option<AbstractEnvironment>, ConstraintsBuilderError> {
         let Some(edge_datas) = self.cfg.edge_data(from, to) else {
             return Ok(None);
