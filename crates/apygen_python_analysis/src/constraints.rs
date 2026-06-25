@@ -1934,7 +1934,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         }
     }
 
-    fn update_abstract_environment(
+    fn update_abstract_state(
         &self,
         _namespace: &Namespace<AbstractEnvironment>,
         from: ProgramPoint,
@@ -2022,7 +2022,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         Ok(Some(target_abstract_environment))
     }
 
-    fn get_abstract_environment(
+    fn get_abstract_state(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
@@ -2030,7 +2030,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         Ok(namespace.abstract_environments.get(&program_point).cloned())
     }
 
-    fn set_abstract_environment(
+    fn set_abstract_state(
         &self,
         namespace: &mut Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
