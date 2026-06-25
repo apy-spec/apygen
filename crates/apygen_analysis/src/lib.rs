@@ -50,7 +50,7 @@ pub trait GraphAnalyser {
     ) -> Result<Self::AbstractState, Self::Error>;
 }
 
-pub fn worklist<
+pub fn analysis<
     N: Clone + Ord,
     S: Eq,
     A,

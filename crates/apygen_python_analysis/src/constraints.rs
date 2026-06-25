@@ -2056,7 +2056,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apygen_analysis::worklist;
+    use apygen_analysis::analysis;
     use indoc::indoc;
     use rstest::rstest;
     use std::sync::mpsc;
@@ -2068,7 +2068,7 @@ mod tests {
 
         let constraints_builder = ConstraintsBuilder::new(&cfg, &import_tx);
 
-        let namespace = worklist(&constraints_builder).expect("constraint builder should work");
+        let namespace = analysis(&constraints_builder).expect("constraint builder should work");
 
         drop(import_tx);
 
