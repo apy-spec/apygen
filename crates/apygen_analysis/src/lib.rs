@@ -11,7 +11,7 @@ pub trait GraphAnalyser {
     type Error;
 
     fn entry_node(&self) -> Result<Self::Node, Self::Error>;
-    fn successors(
+    fn next_nodes(
         &self,
         node: &Self::Node,
     ) -> Result<impl Iterator<Item = Self::Node>, Self::Error>;
@@ -64,45 +64,45 @@ pub fn worklist<
     let mut worklist = BTreeSet::from_iter([analyser.entry_node()?]);
 
     while let Some(node) = worklist.pop_first() {
-        let res_abstract_environment =
+        let abstract_environment =
             analyser.analyse_node(&mut abstract_environments, node.clone())?;
 
-        for successor in analyser.successors(&node)? {
-            let Some(res_cond_abstract_environment) = analyser.update_abstract_environment(
+        for next_node in analyser.next_nodes(&node)? {
+            let Some(updated_abstract_environment) = analyser.update_abstract_environment(
                 &abstract_environments,
-                &res_abstract_environment,
+                &abstract_environment,
                 node.clone(),
-                successor.clone(),
+                next_node.clone(),
             )?
             else {
                 continue;
             };
 
-            let (new_successor_is_equal, new_successor_abstract_environment) = match analyser
-                .get_abstract_environment(&abstract_environments, successor.clone())?
+            let (should_update, new_abstract_environment) = match analyser
+                .get_abstract_environment(&abstract_environments, next_node.clone())?
             {
-                Some(successor_abstract_environment) => {
-                    let new_successor_abstract_environment = analyser.merge(
+                Some(next_node_abstract_environment) => {
+                    let new_abstract_environment = analyser.merge(
                         &abstract_environments,
-                        successor.clone(),
-                        &successor_abstract_environment,
-                        &res_cond_abstract_environment,
+                        next_node.clone(),
+                        &next_node_abstract_environment,
+                        &updated_abstract_environment,
                     )?;
                     (
-                        new_successor_abstract_environment == successor_abstract_environment,
-                        new_successor_abstract_environment,
+                        new_abstract_environment != next_node_abstract_environment,
+                        new_abstract_environment,
                     )
                 }
-                None => (false, res_cond_abstract_environment),
+                None => (true, updated_abstract_environment),
             };
 
-            if !new_successor_is_equal {
+            if should_update {
                 analyser.set_abstract_environment(
                     &mut abstract_environments,
-                    successor.clone(),
-                    &new_successor_abstract_environment,
+                    next_node.clone(),
+                    &new_abstract_environment,
                 )?;
-                worklist.insert(successor);
+                worklist.insert(next_node);
             }
         }
     }

@@ -1904,7 +1904,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
     fn entry_node(&self) -> Result<ProgramPoint, Self::Error> {
         Ok(ProgramPoint::Entry)
     }
-    fn successors(
+    fn next_nodes(
         &self,
         program_point: &ProgramPoint,
     ) -> Result<impl Iterator<Item = ProgramPoint>, ConstraintsBuilderError> {
