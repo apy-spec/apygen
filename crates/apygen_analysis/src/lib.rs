@@ -41,7 +41,7 @@ pub trait GraphAnalyser {
         abstract_environment: &Self::AbstractEnvironment,
     ) -> Result<(), Self::Error>;
 
-    fn join(
+    fn merge(
         &self,
         abstract_environments: &Self::AbstractEnvironments,
         node: Self::Node,
@@ -82,7 +82,7 @@ pub fn worklist<
                 .get_abstract_environment(&abstract_environments, successor.clone())?
             {
                 Some(successor_abstract_environment) => {
-                    let new_successor_abstract_environment = analyser.join(
+                    let new_successor_abstract_environment = analyser.merge(
                         &abstract_environments,
                         successor.clone(),
                         &successor_abstract_environment,

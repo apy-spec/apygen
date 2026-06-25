@@ -2073,7 +2073,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         Ok(())
     }
 
-    fn join(
+    fn merge(
         &self,
         _namespace: &Namespace<AbstractEnvironment>,
         _program_point: ProgramPoint,
