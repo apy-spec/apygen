@@ -5,10 +5,10 @@ use ruff_python_ast::{
     StmtFunctionDef, StmtIf, StmtMatch, StmtRaise, StmtReturn, StmtTry, StmtWhile, StmtWith,
 };
 use ruff_python_parser::{Mode, TokenKind, parse};
+pub use ruff_source_file::LineIndex;
 pub use ruff_source_file::OneIndexed;
 use ruff_source_file::{Locator, SourceCode};
-pub use ruff_source_file::LineIndex;
-use ruff_text_size::{Ranged, TextRange};
+pub use ruff_text_size::{Ranged, TextRange};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
@@ -294,7 +294,7 @@ fn map_with<T, V: Clone>(
 
 #[derive(Debug, Clone)]
 pub struct Cfg {
-    line_index: LineIndex,
+    pub line_index: LineIndex,
     nodes: HashMap<ProgramPoint, CfgNode>,
     edges: HashMap<(ProgramPoint, ProgramPoint), HashSet<EdgeData>>,
     cfgs: HashMap<ProgramPoint, Cfg>,

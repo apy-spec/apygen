@@ -22,3 +22,4 @@ num-complex = { workspace = true }
 env_logger = { workspace = true }
 apy = { workspace = true, features = ["yaml"] }
 rstest = { workspace = true }
+indoc = { workspace = true }
