@@ -1,7 +1,7 @@
 use crate::abstract_environment::{LiteralBoolean, LiteralInteger, Type};
+use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions;
 use crate::genkill::expressions::PyTypeEval;
-use apygen_analysis::cfg::nodes;
 
 pub fn as_integer(literal_boolean: &LiteralBoolean) -> i64 {
     if literal_boolean.value { 1 } else { 0 }
@@ -39,18 +39,18 @@ pub fn call_dunder_invert(literal_boolean: &LiteralBoolean) -> Type {
     Type::new_integer_literal(LiteralInteger::Int(!as_integer(literal_boolean)))
 }
 
-pub fn call_unary_op(literal_boolean: &LiteralBoolean, operator: nodes::UnaryOp) -> Type {
+pub fn call_unary_op(literal_boolean: &LiteralBoolean, operator: UnaryOperator) -> Type {
     match operator {
-        nodes::UnaryOp::Invert => call_dunder_invert(literal_boolean),
-        nodes::UnaryOp::Not => call_not(literal_boolean),
-        nodes::UnaryOp::UAdd => call_dunder_pos(literal_boolean),
-        nodes::UnaryOp::USub => call_dunder_neg(literal_boolean),
+        UnaryOperator::Invert => call_dunder_invert(literal_boolean),
+        UnaryOperator::Not => call_not(literal_boolean),
+        UnaryOperator::UAdd => call_dunder_pos(literal_boolean),
+        UnaryOperator::USub => call_dunder_neg(literal_boolean),
     }
 }
 
 pub fn call_binary_op(
     left: &LiteralBoolean,
-    operator: nodes::Operator,
+    operator: BinaryOperator,
     right: &LiteralBoolean,
 ) -> PyTypeEval {
     expressions::literal_integer::call_binary_op(

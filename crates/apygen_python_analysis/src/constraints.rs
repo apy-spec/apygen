@@ -360,7 +360,7 @@ pub struct ExpressionImportFrom {
     pub attribute: VariableName,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BinaryOperator {
     Add,
     Sub,
@@ -438,7 +438,7 @@ impl Display for ExpressionBinary {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum UnaryOperator {
     Invert,
     Not,

@@ -1,6 +1,6 @@
 use crate::abstract_environment::{Exception, ExceptionOrigin, LiteralBoolean, Type};
+use crate::constraints::UnaryOperator;
 use crate::genkill::expressions::PyTypeEval;
-use apygen_analysis::cfg::nodes;
 
 pub fn as_boolean() -> bool {
     true
@@ -18,11 +18,11 @@ pub fn call_not() -> Type {
     })
 }
 
-pub fn call_unary_op(operator: nodes::UnaryOp) -> PyTypeEval {
+pub fn call_unary_op(operator: UnaryOperator) -> PyTypeEval {
     match operator {
-        nodes::UnaryOp::Invert | nodes::UnaryOp::UAdd | nodes::UnaryOp::USub => {
+        UnaryOperator::Invert | UnaryOperator::UAdd | UnaryOperator::USub => {
             PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown))
         }
-        nodes::UnaryOp::Not => PyTypeEval::with_default_effects(call_not()),
+        UnaryOperator::Not => PyTypeEval::with_default_effects(call_not()),
     }
 }

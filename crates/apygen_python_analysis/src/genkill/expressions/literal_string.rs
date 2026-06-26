@@ -1,8 +1,8 @@
 use crate::abstract_environment::{Exception, ExceptionOrigin, LiteralBoolean, LiteralInteger, LiteralString, Type};
 use crate::genkill::expressions::PyTypeEval;
-use apygen_analysis::cfg::nodes;
 use num_traits::ToPrimitive;
 use std::sync::Arc;
+use crate::constraints::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(literal_string: &LiteralString) -> bool {
     !literal_string.value.is_empty()
@@ -20,22 +20,22 @@ pub fn call_not(literal_string: &LiteralString) -> Type {
     })
 }
 
-pub fn call_unary_op(literal_string: &LiteralString, operator: nodes::UnaryOp) -> PyTypeEval {
+pub fn call_unary_op(literal_string: &LiteralString, operator: UnaryOperator) -> PyTypeEval {
     match operator {
-        nodes::UnaryOp::Invert | nodes::UnaryOp::UAdd | nodes::UnaryOp::USub => {
+        UnaryOperator::Invert | UnaryOperator::UAdd | UnaryOperator::USub => {
             PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown))
         }
-        nodes::UnaryOp::Not => PyTypeEval::with_default_effects(call_not(literal_string)),
+        UnaryOperator::Not => PyTypeEval::with_default_effects(call_not(literal_string)),
     }
 }
 
 pub fn call_binary_op(
     left: &LiteralString,
-    operator: nodes::Operator,
+    operator: BinaryOperator,
     right: &LiteralString,
 ) -> PyTypeEval {
     PyTypeEval::with_default_effects(match operator {
-        nodes::Operator::Add => Type::new_string_literal({
+        BinaryOperator::Add => Type::new_string_literal({
             let mut value = String::new();
             value.push_str(left.value.as_str());
             value.push_str(right.value.as_str());

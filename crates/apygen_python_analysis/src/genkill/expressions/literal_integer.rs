@@ -1,10 +1,10 @@
 use crate::abstract_environment::{Exception, ExceptionOrigin, LiteralBoolean, LiteralFloat, LiteralInteger, Type};
 use crate::genkill::expressions;
 use crate::genkill::expressions::PyTypeEval;
-use apygen_analysis::cfg::nodes;
 use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
 use num_traits::{Pow, ToPrimitive};
+use crate::constraints::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(literal_integer: &LiteralInteger) -> bool {
     match literal_integer {
@@ -49,25 +49,25 @@ pub fn call_dunder_invert(literal_integer: &LiteralInteger) -> Type {
     Type::new_integer_literal(!literal_integer)
 }
 
-pub fn call_unary_op(literal_integer: &LiteralInteger, operator: nodes::UnaryOp) -> Type {
+pub fn call_unary_op(literal_integer: &LiteralInteger, operator: UnaryOperator) -> Type {
     match operator {
-        nodes::UnaryOp::Invert => call_dunder_invert(literal_integer),
-        nodes::UnaryOp::Not => call_not(literal_integer),
-        nodes::UnaryOp::UAdd => call_dunder_pos(literal_integer),
-        nodes::UnaryOp::USub => call_dunder_neg(literal_integer),
+        UnaryOperator::Invert => call_dunder_invert(literal_integer),
+        UnaryOperator::Not => call_not(literal_integer),
+        UnaryOperator::UAdd => call_dunder_pos(literal_integer),
+        UnaryOperator::USub => call_dunder_neg(literal_integer),
     }
 }
 
 pub fn call_binary_op(
     left: &LiteralInteger,
-    operator: nodes::Operator,
+    operator: BinaryOperator,
     right: &LiteralInteger,
 ) -> PyTypeEval {
     PyTypeEval::with_default_effects(match operator {
-        nodes::Operator::Add => Type::new_integer_literal(left + right),
-        nodes::Operator::Sub => Type::new_integer_literal(left - right),
-        nodes::Operator::Mult => Type::new_integer_literal(left * right),
-        nodes::Operator::Pow => {
+        BinaryOperator::Add => Type::new_integer_literal(left + right),
+        BinaryOperator::Sub => Type::new_integer_literal(left - right),
+        BinaryOperator::Mult => Type::new_integer_literal(left * right),
+        BinaryOperator::Pow => {
             let big_right = match right {
                 LiteralInteger::Int(small_right) => {
                     if let Ok(small_right) = usize::try_from(*small_right) {
@@ -86,14 +86,14 @@ pub fn call_binary_op(
                 // Handle negative powers
                 return expressions::literal_float::call_binary_op(
                     &LiteralFloat { value: left_float },
-                    nodes::Operator::Pow,
+                    BinaryOperator::Pow,
                     &LiteralFloat { value: right_float },
                 );
             } else {
                 return PyTypeEval::unknown();
             }
         }
-        nodes::Operator::Div => {
+        BinaryOperator::Div => {
             if right.is_zero() {
                 return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
             }
@@ -122,21 +122,21 @@ pub fn call_binary_op(
 
             Type::new_float_literal(LiteralFloat { value })
         }
-        nodes::Operator::FloorDiv => {
+        BinaryOperator::FloorDiv => {
             if right.is_zero() {
                 return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
             }
 
             Type::new_integer_literal(left / right)
         }
-        nodes::Operator::Mod => {
+        BinaryOperator::Mod => {
             if right.is_zero() {
                 return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
             }
 
             Type::new_integer_literal(left % right)
         }
-        nodes::Operator::LShift => match right {
+        BinaryOperator::LShift => match right {
             LiteralInteger::Int(small_right) => {
                 if let Ok(small_right) = usize::try_from(*small_right) {
                     Type::new_integer_literal(left << small_right)
@@ -150,7 +150,7 @@ pub fn call_binary_op(
                 return PyTypeEval::unknown();
             }
         },
-        nodes::Operator::RShift => match right {
+        BinaryOperator::RShift => match right {
             LiteralInteger::Int(small_right) => {
                 if let Ok(small_right) = usize::try_from(*small_right) {
                     Type::new_integer_literal(left >> small_right)
@@ -164,9 +164,10 @@ pub fn call_binary_op(
                 return PyTypeEval::unknown();
             }
         },
-        nodes::Operator::BitOr => Type::new_integer_literal(left | right),
-        nodes::Operator::BitXor => Type::new_integer_literal(left ^ right),
-        nodes::Operator::BitAnd => Type::new_integer_literal(left & right),
-        nodes::Operator::MatMult => return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown)),
+        BinaryOperator::BitOr => Type::new_integer_literal(left | right),
+        BinaryOperator::BitXor => Type::new_integer_literal(left ^ right),
+        BinaryOperator::BitAnd => Type::new_integer_literal(left & right),
+        BinaryOperator::MatMult => return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown)),
+        _ => todo!(),
     })
 }

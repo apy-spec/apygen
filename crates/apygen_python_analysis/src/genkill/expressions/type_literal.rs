@@ -2,10 +2,9 @@ use crate::abstract_environment::{
     TYPES_MODULE, TYPING_MODULE, TypeAliasKind, TypeInstance, TypeLiteral,
 };
 use crate::genkill::expressions::{self, PyTypeEval};
-use crate::worklist::WorklistContext;
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::cfg::nodes;
 use apygen_analysis::namespace::Location;
+use crate::constraints::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
     match type_literal {
@@ -88,9 +87,8 @@ pub fn as_type_instance(type_literal: &TypeLiteral) -> TypeInstance {
 }
 
 pub fn call_binary_op(
-    context: &mut WorklistContext,
     left: &TypeLiteral,
-    operator: nodes::Operator,
+    operator: BinaryOperator,
     right: &TypeLiteral,
 ) -> PyTypeEval {
     match (left, right) {
@@ -156,7 +154,7 @@ pub fn call_binary_op(
     }
 }
 
-pub fn call_unary_op(type_literal: &TypeLiteral, operator: nodes::UnaryOp) -> PyTypeEval {
+pub fn call_unary_op(type_literal: &TypeLiteral, operator: UnaryOperator) -> PyTypeEval {
     PyTypeEval::with_default_effects(match type_literal {
         TypeLiteral::Integer(literal_integer) => {
             expressions::literal_integer::call_unary_op(literal_integer, operator)

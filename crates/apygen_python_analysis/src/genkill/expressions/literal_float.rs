@@ -1,7 +1,7 @@
 use crate::abstract_environment::{Exception, ExceptionOrigin, LiteralBoolean, LiteralFloat, Type};
 use crate::genkill::expressions::PyTypeEval;
-use apygen_analysis::cfg::nodes;
 use num_traits::Pow;
+use crate::constraints::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(literal_float: &LiteralFloat) -> bool {
     literal_float.value != 0.0
@@ -31,36 +31,36 @@ pub fn call_dunder_neg(literal_float: &LiteralFloat) -> Type {
     })
 }
 
-pub fn call_unary_op(literal_float: &LiteralFloat, operator: nodes::UnaryOp) -> PyTypeEval {
+pub fn call_unary_op(literal_float: &LiteralFloat, operator: UnaryOperator) -> PyTypeEval {
     PyTypeEval::with_default_effects(match operator {
-        nodes::UnaryOp::Invert => {
+        UnaryOperator::Invert => {
             return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown));
         }
-        nodes::UnaryOp::Not => call_not(literal_float),
-        nodes::UnaryOp::UAdd => call_dunder_pos(literal_float),
-        nodes::UnaryOp::USub => call_dunder_neg(literal_float),
+        UnaryOperator::Not => call_not(literal_float),
+        UnaryOperator::UAdd => call_dunder_pos(literal_float),
+        UnaryOperator::USub => call_dunder_neg(literal_float),
     })
 }
 
 pub fn call_binary_op(
     left: &LiteralFloat,
-    operator: nodes::Operator,
+    operator: BinaryOperator,
     right: &LiteralFloat,
 ) -> PyTypeEval {
     PyTypeEval::with_default_effects(match operator {
-        nodes::Operator::Add => Type::new_float_literal(LiteralFloat {
+        BinaryOperator::Add => Type::new_float_literal(LiteralFloat {
             value: left.value + right.value,
         }),
-        nodes::Operator::Sub => Type::new_float_literal(LiteralFloat {
+        BinaryOperator::Sub => Type::new_float_literal(LiteralFloat {
             value: left.value - right.value,
         }),
-        nodes::Operator::Mult => Type::new_float_literal(LiteralFloat {
+        BinaryOperator::Mult => Type::new_float_literal(LiteralFloat {
             value: left.value * right.value,
         }),
-        nodes::Operator::Pow => Type::new_float_literal(LiteralFloat {
+        BinaryOperator::Pow => Type::new_float_literal(LiteralFloat {
             value: left.value.pow(right.value),
         }),
-        nodes::Operator::Div => {
+        BinaryOperator::Div => {
             if right.value == 0.0 {
                 return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
             }
@@ -69,7 +69,7 @@ pub fn call_binary_op(
                 value: left.value / right.value,
             })
         }
-        nodes::Operator::FloorDiv => {
+        BinaryOperator::FloorDiv => {
             if right.value == 0.0 {
                 return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
             }
@@ -78,7 +78,7 @@ pub fn call_binary_op(
                 value: (left.value / right.value).floor(),
             })
         }
-        nodes::Operator::Mod => {
+        BinaryOperator::Mod => {
             if right.value == 0.0 {
                 return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
             }
@@ -87,11 +87,12 @@ pub fn call_binary_op(
                 value: left.value % right.value,
             })
         }
-        nodes::Operator::MatMult
-        | nodes::Operator::LShift
-        | nodes::Operator::RShift
-        | nodes::Operator::BitOr
-        | nodes::Operator::BitXor
-        | nodes::Operator::BitAnd => return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown)),
+        BinaryOperator::MatMult
+        | BinaryOperator::LShift
+        | BinaryOperator::RShift
+        | BinaryOperator::BitOr
+        | BinaryOperator::BitXor
+        | BinaryOperator::BitAnd => return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown)),
+        _ => todo!(),
     })
 }

@@ -1,9 +1,11 @@
 use crate::abstract_environment::{RaisedExceptions, Type, TypeLiteral};
 use crate::constraints::{
     Constraint, ConstraintDefinition, ConstraintGraph, ConstraintNode, ExceptionExpression,
-    LatticeMap, TypeExpression,
+    ExpressionBinary, LatticeMap, TypeExpression,
 };
-use crate::genkill::expressions::PyTypeEval;
+use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
+use crate::is_type_unreachable;
+use crate::{pytype_consume_or_return, pytype_return_unreachable};
 use apygen_analysis::GraphAnalyser;
 use apygen_analysis::lattice::Lattice;
 use std::collections::HashMap;
@@ -53,7 +55,42 @@ pub struct ConstraintSolver<'a> {
 }
 
 impl ConstraintSolver<'_> {
+    pub fn evaluate_expression_binary(
+        &self,
+        abstract_state: &EvaluationState,
+        type_expression: &ExpressionBinary,
+    ) -> PyTypeEval {
+        let mut effects = PyEffects::new();
+
+        let left_ty = pytype_consume_or_return!(
+            effects,
+            self.evaluate_type_expression(abstract_state, &type_expression.left)
+        );
+        let right_ty = pytype_consume_or_return!(
+            effects,
+            self.evaluate_type_expression(abstract_state, &type_expression.right)
+        );
+
+        let ty = pytype_consume_or_return!(
+            effects,
+            match (left_ty, right_ty) {
+                (Type::Literal(left), Type::Literal(right)) => {
+                    type_literal::call_binary_op(
+                        left.as_ref(),
+                        type_expression.operator,
+                        right.as_ref(),
+                    )
+                }
+                (Type::Any, _) | (_, Type::Any) => PyTypeEval::unknown(),
+                _ => PyTypeEval::unknown(),
+            }
+        );
+
+        PyTypeEval::new(ty, effects)
+    }
+
     pub fn evaluate_type_expression(
+        &self,
         abstract_state: &EvaluationState,
         type_expression: &TypeExpression,
     ) -> PyTypeEval {
@@ -68,7 +105,9 @@ impl ConstraintSolver<'_> {
             TypeExpression::Subscript(_) => PyTypeEval::with_default_effects(Type::Never),
             TypeExpression::Call(_) => PyTypeEval::with_default_effects(Type::Never),
             TypeExpression::Unary(_) => PyTypeEval::with_default_effects(Type::Never),
-            TypeExpression::Binary(_) => PyTypeEval::with_default_effects(Type::Never),
+            TypeExpression::Binary(expression_binary) => {
+                self.evaluate_expression_binary(abstract_state, expression_binary)
+            }
             TypeExpression::LiteralInteger(literal_integer) => {
                 PyTypeEval::with_default_effects(Type::new_integer_literal(literal_integer.clone()))
             }
@@ -97,6 +136,7 @@ impl ConstraintSolver<'_> {
     }
 
     pub fn evaluate_type_constraint(
+        &self,
         abstract_state: &mut EvaluationState,
         type_constraint: &ConstraintDefinition<TypeExpression>,
     ) {
@@ -104,7 +144,7 @@ impl ConstraintSolver<'_> {
             .type_evaluations
             .values
             .get(&type_constraint.right);
-        let new_eval = Self::evaluate_type_expression(abstract_state, &type_constraint.left);
+        let new_eval = self.evaluate_type_expression(abstract_state, &type_constraint.left);
 
         abstract_state.type_evaluations.values.insert(
             type_constraint.right.clone(),
@@ -154,7 +194,7 @@ impl GraphAnalyser for ConstraintSolver<'_> {
         match &node {
             ConstraintNode::Constraint(constraint) => match constraint.as_ref() {
                 Constraint::Type(constraint_type) => {
-                    Self::evaluate_type_constraint(&mut abstract_state, constraint_type)
+                    self.evaluate_type_constraint(&mut abstract_state, constraint_type)
                 }
                 Constraint::Exception(_) => {}
             },
@@ -269,10 +309,10 @@ mod tests {
         "##},
         indoc! {r##"
         a@(1:0) = builtins.Literal[0]
-        a@(3:6) = builtins.Literal[0]
-        a@(4:4) = Never
-        a@(6:4) = builtins.Literal[0]
-        b@(6:0) = builtins.Literal[0]
+        a@(3:6) = Any
+        a@(4:4) = Any
+        a@(6:4) = Any
+        b@(6:0) = Any
         "##},  // TODO: fix this when operations are implemented
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {

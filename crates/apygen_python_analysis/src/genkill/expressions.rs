@@ -17,6 +17,7 @@ use crate::abstract_environment::{
 };
 use crate::analysis::cfg::nodes;
 use crate::analysis::namespace::Location;
+use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::calls::Arguments;
 use crate::genkill::literals::{
@@ -172,12 +173,14 @@ impl PyTypeEval {
     }
 }
 
+#[macro_export]
 macro_rules! is_type_unreachable {
     ($ty:expr) => {
         matches!($ty, Type::Never | Type::NoReturn)
     };
 }
 
+#[macro_export]
 macro_rules! pytype_return_unreachable {
     ($effects:expr, $ty:expr) => {
         if is_type_unreachable!($ty) {
@@ -186,6 +189,7 @@ macro_rules! pytype_return_unreachable {
     };
 }
 
+#[macro_export]
 macro_rules! pytype_consume_or_return {
     ($effects:expr, $eval:expr) => {{
         let ty = $effects.consume($eval);
@@ -484,9 +488,25 @@ pub fn call_binary_op(
     right: &Type,
 ) -> PyTypeEval {
     match (left, right) {
-        (Type::Literal(left), Type::Literal(right)) => {
-            type_literal::call_binary_op(context, left.as_ref(), operator, right.as_ref())
-        }
+        (Type::Literal(left), Type::Literal(right)) => type_literal::call_binary_op(
+            left.as_ref(),
+            match operator {
+                nodes::Operator::Add => BinaryOperator::Add,
+                nodes::Operator::Sub => BinaryOperator::Sub,
+                nodes::Operator::Mult => BinaryOperator::Mult,
+                nodes::Operator::MatMult => BinaryOperator::MatMult,
+                nodes::Operator::Div => BinaryOperator::Div,
+                nodes::Operator::Mod => BinaryOperator::Mod,
+                nodes::Operator::Pow => BinaryOperator::Pow,
+                nodes::Operator::LShift => BinaryOperator::LShift,
+                nodes::Operator::RShift => BinaryOperator::RShift,
+                nodes::Operator::BitOr => BinaryOperator::BitOr,
+                nodes::Operator::BitXor => BinaryOperator::BitXor,
+                nodes::Operator::BitAnd => BinaryOperator::BitAnd,
+                nodes::Operator::FloorDiv => BinaryOperator::FloorDiv,
+            },
+            right.as_ref(),
+        ),
         (Type::Any, _) | (_, Type::Any) => PyTypeEval::unknown(),
         _ => call_operator(context, environment_location, left, operator, right),
     }
@@ -542,7 +562,15 @@ pub fn gen_unary_op(
         Type::Literal(type_literal) => {
             pytype_consume_or_return!(
                 effects,
-                type_literal::call_unary_op(type_literal.as_ref(), expr_unary_op.op)
+                type_literal::call_unary_op(
+                    type_literal.as_ref(),
+                    match expr_unary_op.op {
+                        nodes::UnaryOp::Invert => UnaryOperator::Invert,
+                        nodes::UnaryOp::Not => UnaryOperator::Not,
+                        nodes::UnaryOp::UAdd => UnaryOperator::UAdd,
+                        nodes::UnaryOp::USub => UnaryOperator::USub,
+                    }
+                )
             )
         }
         Type::Never | Type::NoReturn => unreachable!("target should not be unreachable"),
