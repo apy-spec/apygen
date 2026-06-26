@@ -1230,6 +1230,7 @@ impl TypeUnion {
                     self.add_type(inner_ty.clone());
                 }
             }
+            Type::Never => {}
             _ => {
                 self.types.insert(ty);
             }
@@ -1374,7 +1375,7 @@ impl Lattice for Type {
             let mut type_union = TypeUnion::new();
             type_union.add_type(Arc::new(self.clone()));
             type_union.add_type(Arc::new(other.clone()));
-            Type::Union(type_union)
+            type_union.simplify().as_ref().clone()
         }
     }
 }
@@ -1811,6 +1812,15 @@ pub enum Completeness {
     Partial,
 }
 
+impl Display for Completeness {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Completeness::Total => write!(f, "Total"),
+            Completeness::Partial => write!(f, "Partial"),
+        }
+    }
+}
+
 impl OrdLattice for Completeness {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -1818,6 +1828,15 @@ pub enum Pureness {
     #[default]
     Pure,
     Impure,
+}
+
+impl Display for Pureness {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Pureness::Pure => write!(f, "Pure"),
+            Pureness::Impure => write!(f, "Impure"),
+        }
+    }
 }
 
 impl OrdLattice for Pureness {}

@@ -31,6 +31,7 @@ use apygen_analysis::cfg::nodes::{
 };
 use apygen_analysis::lattice::Lattice;
 use std::collections::BTreeMap;
+use std::fmt::Display;
 use std::sync::Arc;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
@@ -65,6 +66,16 @@ impl PyEffects {
         self.pureness = self.pureness.join(&eval.effects.pureness);
         self.completeness = self.completeness.join(&eval.effects.completeness);
         eval.value
+    }
+}
+
+impl Display for PyEffects {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{{exceptions: {}, pureness: {}, completeness: {}}}",
+            self.exceptions, self.pureness, self.completeness
+        )
     }
 }
 
@@ -109,6 +120,12 @@ impl<T> PyValueEval<T> {
     pub fn extend_effects(mut self, effects: &PyEffects) -> Self {
         self.effects = self.effects.join(effects);
         self
+    }
+}
+
+impl<T: Display> Display for PyValueEval<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{value: {}, effects: {}}}", self.value, self.effects)
     }
 }
 

@@ -9,16 +9,7 @@ modules:
     attributes:
       first:
         kind: VARIABLE
-        type:
-          id: Union
-          module: typing
-          history_index: 0
-          arguments:
-            - id: Never
-              module: typing
-              history_index: 0
-              arguments: []
-            - None
+        type: None
         description: ""
         initialised: true
         readonly: false
@@ -44,16 +35,7 @@ modules:
         visibility: PUBLIC
       second:
         kind: VARIABLE
-        type:
-          id: Union
-          module: typing
-          history_index: 0
-          arguments:
-            - id: Never
-              module: typing
-              history_index: 0
-              arguments: []
-            - None
+        type: None
         description: ""
         initialised: true
         readonly: false
