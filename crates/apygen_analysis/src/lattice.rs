@@ -7,11 +7,6 @@ pub trait ContextualLattice<C>: Sized {
     fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error>;
 
     fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error>;
-
-    fn join_assign(&mut self, context: &C, other: &Self) -> Result<(), Self::Error> {
-        *self = self.join(context, other)?;
-        Ok(())
-    }
 }
 
 impl<C, T: ContextualLattice<C> + PartialEq + Eq> ContextualLattice<C> for Arc<T> {
@@ -62,13 +57,6 @@ pub trait Lattice {
     fn includes(&self, other: &Self) -> bool;
 
     fn join(&self, other: &Self) -> Self;
-
-    fn join_assign(&mut self, other: &Self)
-    where
-        Self: Sized,
-    {
-        *self = self.join(other);
-    }
 }
 
 impl<T: Lattice + PartialEq + Eq> Lattice for Arc<T> {

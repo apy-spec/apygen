@@ -94,6 +94,16 @@ pub enum EdgeData {
     Return,
 }
 
+impl EdgeData {
+    pub fn is_normal_flow(&self) -> bool {
+        !self.is_exception_flow()
+    }
+
+    pub fn is_exception_flow(&self) -> bool {
+        matches!(self, Self::Exception(_, _) | Self::UnhandledException)
+    }
+}
+
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     struct PointType: u8 {

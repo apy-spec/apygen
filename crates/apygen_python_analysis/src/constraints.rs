@@ -12,6 +12,7 @@ use apygen_analysis::namespace::Namespace;
 use num_bigint::BigInt;
 use num_complex::Complex64;
 use num_traits::Num;
+use std::collections::HashSet;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
 use std::sync::Arc;
@@ -143,8 +144,66 @@ pub struct LatticeMap<K: Ord, V> {
 }
 
 impl<K: Ord, V> LatticeMap<K, V> {
+    pub fn unit(key: K, value: V) -> Self {
+        Self::new(imbl::OrdMap::unit(key, value))
+    }
+
     pub fn new(values: imbl::OrdMap<K, V>) -> Self {
         Self { values }
+    }
+}
+
+impl<K: Clone + Ord, V: Clone> LatticeMap<K, V> {
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+        self.values.insert(key, value)
+    }
+
+    pub fn remove(&mut self, key: &K) -> Option<V> {
+        self.values.remove(key)
+    }
+
+    pub fn drain(&mut self, f: impl Fn(&(K, V)) -> bool) -> Self {
+        let mut drained = Self::default();
+
+        self.values = self
+            .values
+            .clone()
+            .into_iter()
+            .filter(|entry| {
+                if f(entry) {
+                    let (key, value) = entry;
+                    drained.insert(key.clone(), value.clone());
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        drained
+    }
+
+    pub fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
+        self.values.extend(iter);
+    }
+
+    pub fn update(&self, key: K, value: V) -> Self {
+        Self::new(self.values.update(key, value))
+    }
+
+    pub fn union(self, other: Self) -> Self {
+        Self::new(self.values.union(other.values))
+    }
+}
+
+impl<K: Clone + Ord, V: Clone + Lattice> LatticeMap<K, V> {
+    pub fn update_join(self, key: K, value: V) -> Self {
+        Self::new(
+            self.values
+                .update_with(key, value, |self_value, other_value| {
+                    self_value.join(&other_value)
+                }),
+        )
     }
 }
 
@@ -177,6 +236,20 @@ impl<K: Clone + Ord, V: Clone + Lattice> Lattice for LatticeMap<K, V> {
 impl<K: Ord, V> Default for LatticeMap<K, V> {
     fn default() -> Self {
         Self::new(imbl::OrdMap::default())
+    }
+}
+
+impl<K: Ord, V> Deref for LatticeMap<K, V> {
+    type Target = imbl::OrdMap<K, V>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.values
+    }
+}
+
+impl<K: Ord, V> AsRef<imbl::OrdMap<K, V>> for LatticeMap<K, V> {
+    fn as_ref(&self) -> &imbl::OrdMap<K, V> {
+        &self.values
     }
 }
 
@@ -777,7 +850,7 @@ impl Lattice for ConstraintGraph {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AbstractEnvironment {
-    pub current_nodes: LatticeSet<(ConstraintNode, Guard)>,
+    pub current_nodes: LatticeMap<ConstraintNode, Guard>,
     pub variable_locations: LatticeMap<VariableName, LatticeSet<Location>>,
     pub constraint_graph: ConstraintGraph,
 }
@@ -785,10 +858,10 @@ pub struct AbstractEnvironment {
 impl Default for AbstractEnvironment {
     fn default() -> Self {
         Self {
-            current_nodes: LatticeSet::unit((
+            current_nodes: LatticeMap::unit(
                 ConstraintNode::Entry,
                 Guard::Multiple(LatticeSet::default()),
-            )),
+            ),
             variable_locations: LatticeMap::default(),
             constraint_graph: ConstraintGraph::default(),
         }
@@ -847,6 +920,46 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(self.import_tx.send(module)?)
     }
 
+    pub fn filter_guard(&self, edge_datas: &HashSet<EdgeData>, guard: &Guard) -> Option<Guard> {
+        let guard_is_matching = match guard {
+            Guard::IsTrue(_) => edge_datas.contains(&EdgeData::Conditional(true)),
+            Guard::IsFalse(_) => edge_datas.contains(&EdgeData::Conditional(false)),
+            Guard::Succeed(_) => edge_datas
+                .iter()
+                .any(|edge_data| edge_data.is_normal_flow()),
+            Guard::Raise { .. } => edge_datas
+                .iter()
+                .any(|edge_data| edge_data.is_exception_flow()),
+            Guard::Multiple(guards) => {
+                return if guards.is_empty() {
+                    Some(guard.clone())
+                } else {
+                    let mut new_guards: LatticeSet<_> = guards
+                        .iter()
+                        .filter_map(|guard| self.filter_guard(edge_datas, guard))
+                        .collect();
+
+                    if new_guards.len() == 1 {
+                        Some(
+                            new_guards
+                                .values
+                                .remove_min()
+                                .expect("new_guards is not empty"),
+                        )
+                    } else {
+                        Some(Guard::Multiple(new_guards))
+                    }
+                };
+            }
+        };
+
+        if guard_is_matching {
+            Some(guard.clone())
+        } else {
+            None
+        }
+    }
+
     pub fn create_include_constraint(
         &self,
         abstract_environment: &mut AbstractEnvironment,
@@ -858,7 +971,7 @@ impl<'a> ConstraintsBuilder<'a> {
             ConstraintDefinition::new(left.clone(), ConstraintKind::Include, right.clone()),
         )));
 
-        let mut current_nodes = LatticeSet::unit((node.clone(), Guard::default()));
+        let mut current_nodes = LatticeMap::unit(node.clone(), Guard::default());
 
         let current_empty_constraint = ConstraintNode::Empty(location);
 
@@ -879,13 +992,13 @@ impl<'a> ConstraintsBuilder<'a> {
                 node.clone(),
                 Guard::Succeed(left.clone()),
             );
-            current_nodes.insert((
+            current_nodes = current_nodes.update_join(
                 from.clone(),
                 Guard::Raise {
                     expression: left.clone(),
                     exception: None,
                 },
-            ));
+            );
         }
 
         abstract_environment.current_nodes = current_nodes;
@@ -918,7 +1031,7 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         abstract_environment: &mut AbstractEnvironment,
         location: Location,
-        guards: &[Guard],
+        guards: LatticeSet<Guard>,
     ) {
         let node = ConstraintNode::Empty(location);
 
@@ -930,8 +1043,7 @@ impl<'a> ConstraintsBuilder<'a> {
             );
         }
 
-        abstract_environment.current_nodes =
-            LatticeSet::from_iter(guards.iter().map(|guard| (node.clone(), guard.clone())));
+        abstract_environment.current_nodes = LatticeMap::unit(node, Guard::Multiple(guards));
     }
 
     pub fn gen_module_name(
@@ -1407,7 +1519,7 @@ impl<'a> ConstraintsBuilder<'a> {
             .values
             .get(&variable_name)
         {
-            let mut current_nodes: LatticeSet<(ConstraintNode, Guard)> = LatticeSet::default();
+            let mut current_nodes: LatticeMap<ConstraintNode, Guard> = LatticeMap::default();
             for (from, guard) in target_abstract_environment.current_nodes.as_ref() {
                 for previous_location in &definitions.values {
                     if *previous_location == location {
@@ -1427,7 +1539,8 @@ impl<'a> ConstraintsBuilder<'a> {
                         location_constraint.clone(),
                         guard.clone(),
                     );
-                    current_nodes.insert((location_constraint.clone(), Guard::default()));
+                    current_nodes =
+                        current_nodes.update_join(location_constraint.clone(), Guard::default());
                 }
             }
             target_abstract_environment.current_nodes = current_nodes;
@@ -1762,14 +1875,14 @@ impl<'a> ConstraintsBuilder<'a> {
         self.assign_empty_constraint(
             &mut target_abstract_environment,
             self.gen_variable_location(stmt_while.range),
-            &[
+            LatticeSet::from_iter([
                 Guard::IsTrue(condition_expression.clone()),
                 Guard::IsFalse(condition_expression.clone()),
                 Guard::Raise {
                     expression: condition_expression.clone(),
                     exception: None,
                 },
-            ],
+            ]),
         );
 
         Ok(target_abstract_environment)
@@ -1794,14 +1907,14 @@ impl<'a> ConstraintsBuilder<'a> {
         self.assign_empty_constraint(
             &mut target_abstract_environment,
             self.gen_variable_location(stmt_if.range),
-            &[
+            LatticeSet::from_iter([
                 Guard::IsTrue(condition_expression.clone()),
                 Guard::IsFalse(condition_expression.clone()),
                 Guard::Raise {
                     expression: condition_expression.clone(),
                     exception: None,
                 },
-            ],
+            ]),
         );
 
         Ok(target_abstract_environment)
@@ -1946,36 +2059,13 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         target_abstract_environment.current_nodes = target_abstract_environment
             .current_nodes
             .iter()
-            .filter(|(current_node, guard)| match guard {
-                Guard::IsTrue(_) => edge_datas.contains(&EdgeData::Conditional(true)),
-                Guard::IsFalse(_) => edge_datas.contains(&EdgeData::Conditional(false)),
-                Guard::Succeed(_) => edge_datas.iter().any(|edge_data| match edge_data {
-                    EdgeData::Unconditional
-                    | EdgeData::Conditional(_)
-                    | EdgeData::Match(_)
-                    | EdgeData::Break
-                    | EdgeData::Continue
-                    | EdgeData::Return => true,
-                    EdgeData::Exception(_, _) | EdgeData::UnhandledException => false,
-                }),
-                Guard::Raise { .. } => edge_datas.iter().any(|edge_data| match edge_data {
-                    EdgeData::Unconditional
-                    | EdgeData::Conditional(_)
-                    | EdgeData::Match(_)
-                    | EdgeData::Break
-                    | EdgeData::Continue
-                    | EdgeData::Return => false,
-                    EdgeData::Exception(_, _) | EdgeData::UnhandledException => true,
-                }),
-                Guard::Multiple(guards) => {
-                    if guards.is_empty() {
-                        true
-                    } else {
-                        todo!("Handle multiple guards {}", guards);
-                    }
+            .filter_map(|(current_node, guard)| {
+                if let Some(new_guard) = self.filter_guard(edge_datas, guard) {
+                    Some((current_node.clone(), new_guard))
+                } else {
+                    None
                 }
             })
-            .cloned()
             .collect();
 
         if to == ProgramPoint::Exit {
