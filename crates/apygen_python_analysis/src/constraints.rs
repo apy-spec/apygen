@@ -2714,11 +2714,9 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "a@(1:0) ⊑ a~(3:13)";
-            "a@(1:0) ⊑ a~(4:28)";
-            "a@(1:0) ⊑ a~(6:39)";
             "a@(4:24) ⊑ a~(3:13)";
-            "a@(4:24) ⊑ a~(4:28)";
-            "a@(4:24) ⊑ a~(6:39)";
+            "a~(3:13) ⊑ a~(4:28)";
+            "a~(3:13) ⊑ a~(6:39)";
             "a~(6:39) ⊑ b@(6:35)";
             "(a~(4:28)) + (1) ⊑ a@(4:24)";
             "0 ⊑ a@(1:0)";
@@ -2731,15 +2729,11 @@ mod tests {
             "#entry" -> "0 ⊑ a@(1:0)" [label="#succeed(0)"];
             "#entry" -> "#exceptions(0) ⊑ #raised_exceptions()" [label="#raise(0)"];
             "a@(1:0) ⊑ a~(3:13)" -> "#empty(3:7)" [label="{}"];
-            "a@(1:0) ⊑ a~(4:28)" -> "(a~(4:28)) + (1) ⊑ a@(4:24)" [label="#succeed((a~(4:28)) + (1))"];
-            "a@(1:0) ⊑ a~(4:28)" -> "#exceptions((a~(4:28)) + (1)) ⊑ #raised_exceptions()" [label="#raise((a~(4:28)) + (1))"];
-            "a@(1:0) ⊑ a~(6:39)" -> "a~(6:39) ⊑ b@(6:35)" [label="#succeed(a~(6:39))"];
-            "a@(1:0) ⊑ a~(6:39)" -> "#exceptions(a~(6:39)) ⊑ #raised_exceptions()" [label="#raise(a~(6:39))"];
             "a@(4:24) ⊑ a~(3:13)" -> "#empty(3:7)" [label="{}"];
-            "a@(4:24) ⊑ a~(4:28)" -> "(a~(4:28)) + (1) ⊑ a@(4:24)" [label="#succeed((a~(4:28)) + (1))"];
-            "a@(4:24) ⊑ a~(4:28)" -> "#exceptions((a~(4:28)) + (1)) ⊑ #raised_exceptions()" [label="#raise((a~(4:28)) + (1))"];
-            "a@(4:24) ⊑ a~(6:39)" -> "a~(6:39) ⊑ b@(6:35)" [label="#succeed(a~(6:39))"];
-            "a@(4:24) ⊑ a~(6:39)" -> "#exceptions(a~(6:39)) ⊑ #raised_exceptions()" [label="#raise(a~(6:39))"];
+            "a~(3:13) ⊑ a~(4:28)" -> "(a~(4:28)) + (1) ⊑ a@(4:24)" [label="#succeed((a~(4:28)) + (1))"];
+            "a~(3:13) ⊑ a~(4:28)" -> "#exceptions((a~(4:28)) + (1)) ⊑ #raised_exceptions()" [label="#raise((a~(4:28)) + (1))"];
+            "a~(3:13) ⊑ a~(6:39)" -> "a~(6:39) ⊑ b@(6:35)" [label="#succeed(a~(6:39))"];
+            "a~(3:13) ⊑ a~(6:39)" -> "#exceptions(a~(6:39)) ⊑ #raised_exceptions()" [label="#raise(a~(6:39))"];
             "a~(6:39) ⊑ b@(6:35)" -> "#exit" [label="{}"];
             "(a~(4:28)) + (1) ⊑ a@(4:24)" -> "a@(1:0) ⊑ a~(3:13)" [label="{}"];
             "(a~(4:28)) + (1) ⊑ a@(4:24)" -> "a@(4:24) ⊑ a~(3:13)" [label="{}"];
@@ -2751,10 +2745,8 @@ mod tests {
             "#exceptions((a~(3:13)) < (5)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
             "#exceptions((a~(4:28)) + (1)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
             "#exceptions(0) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
-            "#empty(3:7)" -> "a@(1:0) ⊑ a~(4:28)" [label="#is_true((a~(3:13)) < (5))"];
-            "#empty(3:7)" -> "a@(1:0) ⊑ a~(6:39)" [label="#is_false((a~(3:13)) < (5))"];
-            "#empty(3:7)" -> "a@(4:24) ⊑ a~(4:28)" [label="#is_true((a~(3:13)) < (5))"];
-            "#empty(3:7)" -> "a@(4:24) ⊑ a~(6:39)" [label="#is_false((a~(3:13)) < (5))"];
+            "#empty(3:7)" -> "a~(3:13) ⊑ a~(4:28)" [label="#is_true((a~(3:13)) < (5))"];
+            "#empty(3:7)" -> "a~(3:13) ⊑ a~(6:39)" [label="#is_false((a~(3:13)) < (5))"];
             "#empty(3:7)" -> "#exceptions((a~(3:13)) < (5)) ⊑ #raised_exceptions()" [label="#raise((a~(3:13)) < (5))"];
         }
         "##},
