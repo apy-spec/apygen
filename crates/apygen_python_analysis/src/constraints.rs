@@ -959,8 +959,11 @@ impl<'a> ConstraintsBuilder<'a> {
     }
 
     pub fn gen_variable_location(&self, range: TextRange) -> Location {
-        let line = self.cfg.line_index.line_index(range.start()).get();
-        Location::new(line, range.start().to_usize())
+        let range_offset = range.start();
+        let line = self.cfg.line_index.line_index(range_offset).get();
+        let line_offset = self.cfg.line_index.line_starts()[line - 1];
+        let offset = range_offset - line_offset;
+        Location::new(line, offset.to_usize())
     }
 
     pub fn gen_parameter(
@@ -2635,50 +2638,50 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "a@(4:20) ⊑ a@(8:49)";
-            "a@(6:37) ⊑ a@(8:49)";
-            "a@(8:49) ⊑ b@(8:45)";
-            "x@(1:0) ⊑ x@(3:13)";
-            "42 ⊑ a@(4:20)";
-            "67 ⊑ a@(6:37)";
+            "a@(4:4) ⊑ a@(8:4)";
+            "a@(6:4) ⊑ a@(8:4)";
+            "a@(8:4) ⊑ b@(8:0)";
+            "x@(1:0) ⊑ x@(3:3)";
+            "42 ⊑ a@(4:4)";
+            "67 ⊑ a@(6:4)";
             "True ⊑ x@(1:0)";
-            "#exceptions(a@(8:49)) ⊑ #raised_exceptions()";
-            "#exceptions(x@(3:13)) ⊑ #raised_exceptions()";
+            "#exceptions(a@(8:4)) ⊑ #raised_exceptions()";
+            "#exceptions(x@(3:3)) ⊑ #raised_exceptions()";
             "#exceptions(42) ⊑ #raised_exceptions()";
             "#exceptions(67) ⊑ #raised_exceptions()";
             "#exceptions(True) ⊑ #raised_exceptions()";
-            "#empty(3:10)";
-            "#empty(4:20)";
-            "#empty(6:37)";
+            "#empty(3:0)";
+            "#empty(4:4)";
+            "#empty(6:4)";
             "#exit";
             "#entry" -> "True ⊑ x@(1:0)" [label="#succeed(True)"];
             "#entry" -> "#exceptions(True) ⊑ #raised_exceptions()" [label="#raise(True)"];
-            "a@(4:20) ⊑ a@(8:49)" -> "a@(8:49) ⊑ b@(8:45)" [label="#succeed(a@(8:49))"];
-            "a@(4:20) ⊑ a@(8:49)" -> "#exceptions(a@(8:49)) ⊑ #raised_exceptions()" [label="#raise(a@(8:49))"];
-            "a@(6:37) ⊑ a@(8:49)" -> "a@(8:49) ⊑ b@(8:45)" [label="#succeed(a@(8:49))"];
-            "a@(6:37) ⊑ a@(8:49)" -> "#exceptions(a@(8:49)) ⊑ #raised_exceptions()" [label="#raise(a@(8:49))"];
-            "a@(8:49) ⊑ b@(8:45)" -> "#exit" [label="{}"];
-            "x@(1:0) ⊑ x@(3:13)" -> "#empty(3:10)" [label="{}"];
-            "42 ⊑ a@(4:20)" -> "a@(4:20) ⊑ a@(8:49)" [label="{}"];
-            "42 ⊑ a@(4:20)" -> "a@(6:37) ⊑ a@(8:49)" [label="{}"];
-            "42 ⊑ a@(4:20)" -> "#exit" [label="{}"];
-            "67 ⊑ a@(6:37)" -> "a@(4:20) ⊑ a@(8:49)" [label="{}"];
-            "67 ⊑ a@(6:37)" -> "a@(6:37) ⊑ a@(8:49)" [label="{}"];
-            "67 ⊑ a@(6:37)" -> "#exit" [label="{}"];
-            "True ⊑ x@(1:0)" -> "x@(1:0) ⊑ x@(3:13)" [label="{}"];
+            "a@(4:4) ⊑ a@(8:4)" -> "a@(8:4) ⊑ b@(8:0)" [label="#succeed(a@(8:4))"];
+            "a@(4:4) ⊑ a@(8:4)" -> "#exceptions(a@(8:4)) ⊑ #raised_exceptions()" [label="#raise(a@(8:4))"];
+            "a@(6:4) ⊑ a@(8:4)" -> "a@(8:4) ⊑ b@(8:0)" [label="#succeed(a@(8:4))"];
+            "a@(6:4) ⊑ a@(8:4)" -> "#exceptions(a@(8:4)) ⊑ #raised_exceptions()" [label="#raise(a@(8:4))"];
+            "a@(8:4) ⊑ b@(8:0)" -> "#exit" [label="{}"];
+            "x@(1:0) ⊑ x@(3:3)" -> "#empty(3:0)" [label="{}"];
+            "42 ⊑ a@(4:4)" -> "a@(4:4) ⊑ a@(8:4)" [label="{}"];
+            "42 ⊑ a@(4:4)" -> "a@(6:4) ⊑ a@(8:4)" [label="{}"];
+            "42 ⊑ a@(4:4)" -> "#exit" [label="{}"];
+            "67 ⊑ a@(6:4)" -> "a@(4:4) ⊑ a@(8:4)" [label="{}"];
+            "67 ⊑ a@(6:4)" -> "a@(6:4) ⊑ a@(8:4)" [label="{}"];
+            "67 ⊑ a@(6:4)" -> "#exit" [label="{}"];
+            "True ⊑ x@(1:0)" -> "x@(1:0) ⊑ x@(3:3)" [label="{}"];
             "True ⊑ x@(1:0)" -> "#exit" [label="{}"];
-            "#exceptions(a@(8:49)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
-            "#exceptions(x@(3:13)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(a@(8:4)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(x@(3:3)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
             "#exceptions(42) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
             "#exceptions(67) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
             "#exceptions(True) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
-            "#empty(3:10)" -> "#exceptions(x@(3:13)) ⊑ #raised_exceptions()" [label="#raise(x@(3:13))"];
-            "#empty(3:10)" -> "#empty(4:20)" [label="#is_true(x@(3:13))"];
-            "#empty(3:10)" -> "#empty(6:37)" [label="#is_false(x@(3:13))"];
-            "#empty(4:20)" -> "42 ⊑ a@(4:20)" [label="#succeed(42)"];
-            "#empty(4:20)" -> "#exceptions(42) ⊑ #raised_exceptions()" [label="#raise(42)"];
-            "#empty(6:37)" -> "67 ⊑ a@(6:37)" [label="#succeed(67)"];
-            "#empty(6:37)" -> "#exceptions(67) ⊑ #raised_exceptions()" [label="#raise(67)"];
+            "#empty(3:0)" -> "#exceptions(x@(3:3)) ⊑ #raised_exceptions()" [label="#raise(x@(3:3))"];
+            "#empty(3:0)" -> "#empty(4:4)" [label="#is_true(x@(3:3))"];
+            "#empty(3:0)" -> "#empty(6:4)" [label="#is_false(x@(3:3))"];
+            "#empty(4:4)" -> "42 ⊑ a@(4:4)" [label="#succeed(42)"];
+            "#empty(4:4)" -> "#exceptions(42) ⊑ #raised_exceptions()" [label="#raise(42)"];
+            "#empty(6:4)" -> "67 ⊑ a@(6:4)" [label="#succeed(67)"];
+            "#empty(6:4)" -> "#exceptions(67) ⊑ #raised_exceptions()" [label="#raise(67)"];
         }
         "##},
         vec![],
@@ -2695,41 +2698,41 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "a@(1:0) ⊑ a@(3:13)";
-            "a@(3:13) ⊑ a@(4:28)";
-            "a@(3:13) ⊑ a@(6:39)";
-            "a@(4:24) ⊑ a@(3:13)";
-            "a@(6:39) ⊑ b@(6:35)";
-            "(a@(4:28)) + (1) ⊑ a@(4:24)";
+            "a@(1:0) ⊑ a@(3:6)";
+            "a@(3:6) ⊑ a@(4:8)";
+            "a@(3:6) ⊑ a@(6:4)";
+            "a@(4:4) ⊑ a@(3:6)";
+            "a@(6:4) ⊑ b@(6:0)";
+            "(a@(4:8)) + (1) ⊑ a@(4:4)";
             "0 ⊑ a@(1:0)";
-            "#exceptions(a@(6:39)) ⊑ #raised_exceptions()";
-            "#exceptions((a@(3:13)) < (5)) ⊑ #raised_exceptions()";
-            "#exceptions((a@(4:28)) + (1)) ⊑ #raised_exceptions()";
+            "#exceptions(a@(6:4)) ⊑ #raised_exceptions()";
+            "#exceptions((a@(3:6)) < (5)) ⊑ #raised_exceptions()";
+            "#exceptions((a@(4:8)) + (1)) ⊑ #raised_exceptions()";
             "#exceptions(0) ⊑ #raised_exceptions()";
-            "#empty(3:7)";
+            "#empty(3:0)";
             "#exit";
             "#entry" -> "0 ⊑ a@(1:0)" [label="#succeed(0)"];
             "#entry" -> "#exceptions(0) ⊑ #raised_exceptions()" [label="#raise(0)"];
-            "a@(1:0) ⊑ a@(3:13)" -> "#empty(3:7)" [label="{}"];
-            "a@(3:13) ⊑ a@(4:28)" -> "(a@(4:28)) + (1) ⊑ a@(4:24)" [label="#succeed((a@(4:28)) + (1))"];
-            "a@(3:13) ⊑ a@(4:28)" -> "#exceptions((a@(4:28)) + (1)) ⊑ #raised_exceptions()" [label="#raise((a@(4:28)) + (1))"];
-            "a@(3:13) ⊑ a@(6:39)" -> "a@(6:39) ⊑ b@(6:35)" [label="#succeed(a@(6:39))"];
-            "a@(3:13) ⊑ a@(6:39)" -> "#exceptions(a@(6:39)) ⊑ #raised_exceptions()" [label="#raise(a@(6:39))"];
-            "a@(4:24) ⊑ a@(3:13)" -> "#empty(3:7)" [label="{}"];
-            "a@(6:39) ⊑ b@(6:35)" -> "#exit" [label="{}"];
-            "(a@(4:28)) + (1) ⊑ a@(4:24)" -> "a@(1:0) ⊑ a@(3:13)" [label="{}"];
-            "(a@(4:28)) + (1) ⊑ a@(4:24)" -> "a@(4:24) ⊑ a@(3:13)" [label="{}"];
-            "(a@(4:28)) + (1) ⊑ a@(4:24)" -> "#exit" [label="{}"];
-            "0 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a@(3:13)" [label="{}"];
-            "0 ⊑ a@(1:0)" -> "a@(4:24) ⊑ a@(3:13)" [label="{}"];
+            "a@(1:0) ⊑ a@(3:6)" -> "#empty(3:0)" [label="{}"];
+            "a@(3:6) ⊑ a@(4:8)" -> "(a@(4:8)) + (1) ⊑ a@(4:4)" [label="#succeed((a@(4:8)) + (1))"];
+            "a@(3:6) ⊑ a@(4:8)" -> "#exceptions((a@(4:8)) + (1)) ⊑ #raised_exceptions()" [label="#raise((a@(4:8)) + (1))"];
+            "a@(3:6) ⊑ a@(6:4)" -> "a@(6:4) ⊑ b@(6:0)" [label="#succeed(a@(6:4))"];
+            "a@(3:6) ⊑ a@(6:4)" -> "#exceptions(a@(6:4)) ⊑ #raised_exceptions()" [label="#raise(a@(6:4))"];
+            "a@(4:4) ⊑ a@(3:6)" -> "#empty(3:0)" [label="{}"];
+            "a@(6:4) ⊑ b@(6:0)" -> "#exit" [label="{}"];
+            "(a@(4:8)) + (1) ⊑ a@(4:4)" -> "a@(1:0) ⊑ a@(3:6)" [label="{}"];
+            "(a@(4:8)) + (1) ⊑ a@(4:4)" -> "a@(4:4) ⊑ a@(3:6)" [label="{}"];
+            "(a@(4:8)) + (1) ⊑ a@(4:4)" -> "#exit" [label="{}"];
+            "0 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a@(3:6)" [label="{}"];
+            "0 ⊑ a@(1:0)" -> "a@(4:4) ⊑ a@(3:6)" [label="{}"];
             "0 ⊑ a@(1:0)" -> "#exit" [label="{}"];
-            "#exceptions(a@(6:39)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
-            "#exceptions((a@(3:13)) < (5)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
-            "#exceptions((a@(4:28)) + (1)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(a@(6:4)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions((a@(3:6)) < (5)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions((a@(4:8)) + (1)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
             "#exceptions(0) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
-            "#empty(3:7)" -> "a@(3:13) ⊑ a@(4:28)" [label="#is_true((a@(3:13)) < (5))"];
-            "#empty(3:7)" -> "a@(3:13) ⊑ a@(6:39)" [label="#is_false((a@(3:13)) < (5))"];
-            "#empty(3:7)" -> "#exceptions((a@(3:13)) < (5)) ⊑ #raised_exceptions()" [label="#raise((a@(3:13)) < (5))"];
+            "#empty(3:0)" -> "a@(3:6) ⊑ a@(4:8)" [label="#is_true((a@(3:6)) < (5))"];
+            "#empty(3:0)" -> "a@(3:6) ⊑ a@(6:4)" [label="#is_false((a@(3:6)) < (5))"];
+            "#empty(3:0)" -> "#exceptions((a@(3:6)) < (5)) ⊑ #raised_exceptions()" [label="#raise((a@(3:6)) < (5))"];
         }
         "##},
         vec![],

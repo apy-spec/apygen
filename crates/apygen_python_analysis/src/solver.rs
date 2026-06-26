@@ -250,12 +250,12 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        a@(4:20) = builtins.Literal[42]
-        a@(6:37) = builtins.Literal[67]
-        a@(8:49) = Union[builtins.Literal[42], builtins.Literal[67]]
-        b@(8:45) = Union[builtins.Literal[42], builtins.Literal[67]]
+        a@(4:4) = builtins.Literal[42]
+        a@(6:4) = builtins.Literal[67]
+        a@(8:4) = Union[builtins.Literal[42], builtins.Literal[67]]
+        b@(8:0) = Union[builtins.Literal[42], builtins.Literal[67]]
         x@(1:0) = builtins.Literal[true]
-        x@(3:13) = builtins.Literal[true]
+        x@(3:3) = builtins.Literal[true]
         "##},
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
