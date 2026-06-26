@@ -258,6 +258,23 @@ mod tests {
         x@(3:3) = builtins.Literal[true]
         "##},
     )]
+    #[case::simple_while_statement(
+        indoc! {r##"
+        a = 0
+
+        while a < 5:
+            a = a + 1
+
+        b = a
+        "##},
+        indoc! {r##"
+        a@(1:0) = builtins.Literal[0]
+        a@(3:6) = builtins.Literal[0]
+        a@(4:4) = Never
+        a@(6:4) = builtins.Literal[0]
+        b@(6:0) = builtins.Literal[0]
+        "##},  // TODO: fix this when operations are implemented
+    )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
         let (namespace, _) = generate_constraints(&source);
 
@@ -269,9 +286,9 @@ mod tests {
 
         let types = analysis(&solver).expect("analysis should work");
 
-        let exit_evaluations = &types.evaluation_states[&ConstraintNode::Exit];
+        let type_exit_evaluations = &types.evaluation_states[&ConstraintNode::TypeExit];
 
-        let actual_types = exit_state
+        let actual_types: String = exit_state
             .variable_locations
             .values
             .iter()
@@ -282,15 +299,15 @@ mod tests {
                     format!(
                         "{} = {}\n",
                         expression_variable.clone(),
-                        exit_evaluations.type_evaluations.values
+                        type_exit_evaluations.type_evaluations.values
                             [&TypeExpression::Variable(expression_variable)]
                             .value
                     )
                 })
             })
             .flatten()
-            .collect::<String>();
+            .collect();
 
-        assert_eq!(expected_types, actual_types);
+        assert_eq!(expected_types, actual_types, "{actual_types}");
     }
 }
