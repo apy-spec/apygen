@@ -2901,7 +2901,7 @@ mod tests {
             .constraint_graph
             .dot();
 
-        assert_eq!(expected_dot, actual_dot,);
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
         assert_eq!(expected_imports, actual_imports);
     }
 }
