@@ -200,49 +200,38 @@ impl<K: Ord + Display, V: Display> Display for LatticeMap<K, V> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VariableLocation {
+pub struct Location {
     pub line: usize,
     pub offset: usize,
 }
 
-impl VariableLocation {
+impl Location {
     pub fn new(line: usize, offset: usize) -> Self {
         Self { line, offset }
     }
 }
 
-impl Display for VariableLocation {
+impl Display for Location {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.line, self.offset)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum VariableDefinition {
-    At(VariableLocation),
-    Before(VariableLocation),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionVariable {
     pub name: VariableName,
-    pub definition: VariableDefinition,
+    pub location: Location,
 }
 
 impl ExpressionVariable {
-    pub fn new(name: VariableName, definition: VariableDefinition) -> Self {
-        Self { name, definition }
+    pub fn new(name: VariableName, location: Location) -> Self {
+        Self { name, location }
     }
 }
 
 impl Display for ExpressionVariable {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match &self.definition {
-            VariableDefinition::At(program_point) => write!(f, "{}@({})", self.name, program_point),
-            VariableDefinition::Before(program_point) => {
-                write!(f, "{}~({})", self.name, program_point)
-            }
-        }
+        write!(f, "{}@({})", self.name, self.location)
     }
 }
 
@@ -460,7 +449,7 @@ pub enum UnaryOperator {
 impl Display for UnaryOperator {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let symbol = match self {
-            UnaryOperator::Invert => "~",
+            UnaryOperator::Invert => "@",
             UnaryOperator::Not => "not",
             UnaryOperator::UAdd => "+",
             UnaryOperator::USub => "-",
@@ -705,7 +694,7 @@ impl Display for Constraint {
 pub enum ConstraintNode {
     Entry,
     Constraint(Arc<Constraint>),
-    Empty(VariableLocation),
+    Empty(Location),
     Exit,
 }
 
@@ -785,7 +774,7 @@ impl Lattice for ConstraintGraph {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AbstractEnvironment {
     pub current_nodes: LatticeSet<(ConstraintNode, Guard)>,
-    pub variable_definitions: LatticeMap<VariableName, LatticeSet<VariableDefinition>>,
+    pub variable_locations: LatticeMap<VariableName, LatticeSet<Location>>,
     pub constraint_graph: ConstraintGraph,
 }
 
@@ -796,7 +785,7 @@ impl Default for AbstractEnvironment {
                 ConstraintNode::Entry,
                 Guard::Multiple(LatticeSet::default()),
             )),
-            variable_definitions: LatticeMap::default(),
+            variable_locations: LatticeMap::default(),
             constraint_graph: ConstraintGraph::default(),
         }
     }
@@ -804,16 +793,14 @@ impl Default for AbstractEnvironment {
 impl Lattice for AbstractEnvironment {
     fn includes(&self, other: &Self) -> bool {
         self.current_nodes.includes(&other.current_nodes)
-            && self
-                .variable_definitions
-                .includes(&other.variable_definitions)
+            && self.variable_locations.includes(&other.variable_locations)
             && self.constraint_graph.includes(&other.constraint_graph)
     }
 
     fn join(&self, other: &Self) -> Self {
         Self {
             current_nodes: self.current_nodes.join(&other.current_nodes),
-            variable_definitions: self.variable_definitions.join(&other.variable_definitions),
+            variable_locations: self.variable_locations.join(&other.variable_locations),
             constraint_graph: self.constraint_graph.join(&other.constraint_graph),
         }
     }
@@ -859,7 +846,7 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn create_include_constraint(
         &self,
         abstract_environment: &mut AbstractEnvironment,
-        location: VariableLocation,
+        location: Location,
         left: Arc<TypeExpression>,
         right: Arc<TypeExpression>,
     ) {
@@ -903,32 +890,30 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn assign_variable(
         &self,
         abstract_environment: &mut AbstractEnvironment,
-        location: VariableLocation,
+        location: Location,
         variable: VariableName,
         type_expression: Arc<TypeExpression>,
     ) {
-        let variable_definition = VariableDefinition::At(location.clone());
-
         self.create_include_constraint(
             abstract_environment,
             location.clone(),
             type_expression,
             Arc::new(TypeExpression::Variable(ExpressionVariable::new(
                 variable.clone(),
-                variable_definition.clone(),
+                location.clone(),
             ))),
         );
 
         abstract_environment
-            .variable_definitions
+            .variable_locations
             .values
-            .insert(variable, LatticeSet::unit(variable_definition));
+            .insert(variable, LatticeSet::unit(location));
     }
 
     pub fn assign_empty_constraint(
         &self,
         abstract_environment: &mut AbstractEnvironment,
-        location: VariableLocation,
+        location: Location,
         guards: &[Guard],
     ) {
         let node = ConstraintNode::Empty(location);
@@ -973,9 +958,9 @@ impl<'a> ConstraintsBuilder<'a> {
         }
     }
 
-    pub fn gen_variable_location(&self, range: TextRange) -> VariableLocation {
+    pub fn gen_variable_location(&self, range: TextRange) -> Location {
         let line = self.cfg.line_index.line_index(range.start()).get();
-        VariableLocation::new(line, range.start().to_usize())
+        Location::new(line, range.start().to_usize())
     }
 
     pub fn gen_parameter(
@@ -1016,9 +1001,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     ConstraintDefinition::equal(
                         TypeExpression::Variable(ExpressionVariable::new(
                             parameter_name.clone(),
-                            VariableDefinition::At(
-                                self.gen_variable_location(parameter_with_default.range),
-                            ),
+                            self.gen_variable_location(parameter_with_default.range),
                         )),
                         type_expression,
                     ),
@@ -1406,28 +1389,28 @@ impl<'a> ConstraintsBuilder<'a> {
         expr_name: &nodes::ExprName,
     ) -> Result<TypeExpression, ConstraintsBuilderError> {
         let variable_name = self.gen_variable_name(program_point, &expr_name.id)?;
-        let definition = VariableDefinition::Before(self.gen_variable_location(expr_name.range));
+        let location = self.gen_variable_location(expr_name.range);
         let variable_expression = TypeExpression::Variable(ExpressionVariable::new(
             variable_name.clone(),
-            definition.clone(),
+            location.clone(),
         ));
 
         if let Some(definitions) = target_abstract_environment
-            .variable_definitions
+            .variable_locations
             .values
             .get(&variable_name)
         {
             let mut current_nodes: LatticeSet<(ConstraintNode, Guard)> = LatticeSet::default();
             for (from, guard) in target_abstract_environment.current_nodes.as_ref() {
-                for previous_definition in &definitions.values {
-                    if *previous_definition == definition {
+                for previous_location in &definitions.values {
+                    if *previous_location == location {
                         continue;
                     }
                     let location_constraint = ConstraintNode::Constraint(Arc::new(
                         Constraint::Type(ConstraintDefinition::include(
                             TypeExpression::Variable(ExpressionVariable::new(
                                 variable_name.clone(),
-                                previous_definition.clone(),
+                                previous_location.clone(),
                             )),
                             variable_expression.clone(),
                         )),
@@ -1444,9 +1427,9 @@ impl<'a> ConstraintsBuilder<'a> {
         }
 
         target_abstract_environment
-            .variable_definitions
+            .variable_locations
             .values
-            .insert(variable_name.clone(), LatticeSet::unit(definition));
+            .insert(variable_name.clone(), LatticeSet::unit(location));
 
         Ok(variable_expression)
     }
@@ -1583,16 +1566,15 @@ impl<'a> ConstraintsBuilder<'a> {
                 );
             } else {
                 let identifier = Arc::new(module_name.identifiers.first().clone());
-                let definition =
-                    VariableDefinition::At(self.gen_variable_location(alias.name.range));
+                let location = self.gen_variable_location(alias.name.range);
 
                 target_abstract_environment
-                    .variable_definitions
+                    .variable_locations
                     .values
-                    .insert(identifier.clone(), LatticeSet::unit(definition.clone()));
+                    .insert(identifier.clone(), LatticeSet::unit(location.clone()));
 
                 let mut expression_option = Some(Arc::new(TypeExpression::Variable(
-                    ExpressionVariable::new(identifier, definition),
+                    ExpressionVariable::new(identifier, location),
                 )));
 
                 let mut variable_location = self.gen_variable_location(alias.name.range);
@@ -2653,15 +2635,15 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "a@(4:20) ⊑ a~(8:49)";
-            "a@(6:37) ⊑ a~(8:49)";
-            "a~(8:49) ⊑ b@(8:45)";
-            "x@(1:0) ⊑ x~(3:13)";
+            "a@(4:20) ⊑ a@(8:49)";
+            "a@(6:37) ⊑ a@(8:49)";
+            "a@(8:49) ⊑ b@(8:45)";
+            "x@(1:0) ⊑ x@(3:13)";
             "42 ⊑ a@(4:20)";
             "67 ⊑ a@(6:37)";
             "True ⊑ x@(1:0)";
-            "#exceptions(a~(8:49)) ⊑ #raised_exceptions()";
-            "#exceptions(x~(3:13)) ⊑ #raised_exceptions()";
+            "#exceptions(a@(8:49)) ⊑ #raised_exceptions()";
+            "#exceptions(x@(3:13)) ⊑ #raised_exceptions()";
             "#exceptions(42) ⊑ #raised_exceptions()";
             "#exceptions(67) ⊑ #raised_exceptions()";
             "#exceptions(True) ⊑ #raised_exceptions()";
@@ -2671,28 +2653,28 @@ mod tests {
             "#exit";
             "#entry" -> "True ⊑ x@(1:0)" [label="#succeed(True)"];
             "#entry" -> "#exceptions(True) ⊑ #raised_exceptions()" [label="#raise(True)"];
-            "a@(4:20) ⊑ a~(8:49)" -> "a~(8:49) ⊑ b@(8:45)" [label="#succeed(a~(8:49))"];
-            "a@(4:20) ⊑ a~(8:49)" -> "#exceptions(a~(8:49)) ⊑ #raised_exceptions()" [label="#raise(a~(8:49))"];
-            "a@(6:37) ⊑ a~(8:49)" -> "a~(8:49) ⊑ b@(8:45)" [label="#succeed(a~(8:49))"];
-            "a@(6:37) ⊑ a~(8:49)" -> "#exceptions(a~(8:49)) ⊑ #raised_exceptions()" [label="#raise(a~(8:49))"];
-            "a~(8:49) ⊑ b@(8:45)" -> "#exit" [label="{}"];
-            "x@(1:0) ⊑ x~(3:13)" -> "#empty(3:10)" [label="{}"];
-            "42 ⊑ a@(4:20)" -> "a@(4:20) ⊑ a~(8:49)" [label="{}"];
-            "42 ⊑ a@(4:20)" -> "a@(6:37) ⊑ a~(8:49)" [label="{}"];
+            "a@(4:20) ⊑ a@(8:49)" -> "a@(8:49) ⊑ b@(8:45)" [label="#succeed(a@(8:49))"];
+            "a@(4:20) ⊑ a@(8:49)" -> "#exceptions(a@(8:49)) ⊑ #raised_exceptions()" [label="#raise(a@(8:49))"];
+            "a@(6:37) ⊑ a@(8:49)" -> "a@(8:49) ⊑ b@(8:45)" [label="#succeed(a@(8:49))"];
+            "a@(6:37) ⊑ a@(8:49)" -> "#exceptions(a@(8:49)) ⊑ #raised_exceptions()" [label="#raise(a@(8:49))"];
+            "a@(8:49) ⊑ b@(8:45)" -> "#exit" [label="{}"];
+            "x@(1:0) ⊑ x@(3:13)" -> "#empty(3:10)" [label="{}"];
+            "42 ⊑ a@(4:20)" -> "a@(4:20) ⊑ a@(8:49)" [label="{}"];
+            "42 ⊑ a@(4:20)" -> "a@(6:37) ⊑ a@(8:49)" [label="{}"];
             "42 ⊑ a@(4:20)" -> "#exit" [label="{}"];
-            "67 ⊑ a@(6:37)" -> "a@(4:20) ⊑ a~(8:49)" [label="{}"];
-            "67 ⊑ a@(6:37)" -> "a@(6:37) ⊑ a~(8:49)" [label="{}"];
+            "67 ⊑ a@(6:37)" -> "a@(4:20) ⊑ a@(8:49)" [label="{}"];
+            "67 ⊑ a@(6:37)" -> "a@(6:37) ⊑ a@(8:49)" [label="{}"];
             "67 ⊑ a@(6:37)" -> "#exit" [label="{}"];
-            "True ⊑ x@(1:0)" -> "x@(1:0) ⊑ x~(3:13)" [label="{}"];
+            "True ⊑ x@(1:0)" -> "x@(1:0) ⊑ x@(3:13)" [label="{}"];
             "True ⊑ x@(1:0)" -> "#exit" [label="{}"];
-            "#exceptions(a~(8:49)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
-            "#exceptions(x~(3:13)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(a@(8:49)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(x@(3:13)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
             "#exceptions(42) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
             "#exceptions(67) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
             "#exceptions(True) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
-            "#empty(3:10)" -> "#exceptions(x~(3:13)) ⊑ #raised_exceptions()" [label="#raise(x~(3:13))"];
-            "#empty(3:10)" -> "#empty(4:20)" [label="#is_true(x~(3:13))"];
-            "#empty(3:10)" -> "#empty(6:37)" [label="#is_false(x~(3:13))"];
+            "#empty(3:10)" -> "#exceptions(x@(3:13)) ⊑ #raised_exceptions()" [label="#raise(x@(3:13))"];
+            "#empty(3:10)" -> "#empty(4:20)" [label="#is_true(x@(3:13))"];
+            "#empty(3:10)" -> "#empty(6:37)" [label="#is_false(x@(3:13))"];
             "#empty(4:20)" -> "42 ⊑ a@(4:20)" [label="#succeed(42)"];
             "#empty(4:20)" -> "#exceptions(42) ⊑ #raised_exceptions()" [label="#raise(42)"];
             "#empty(6:37)" -> "67 ⊑ a@(6:37)" [label="#succeed(67)"];
@@ -2713,41 +2695,41 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "a@(1:0) ⊑ a~(3:13)";
-            "a@(4:24) ⊑ a~(3:13)";
-            "a~(3:13) ⊑ a~(4:28)";
-            "a~(3:13) ⊑ a~(6:39)";
-            "a~(6:39) ⊑ b@(6:35)";
-            "(a~(4:28)) + (1) ⊑ a@(4:24)";
+            "a@(1:0) ⊑ a@(3:13)";
+            "a@(3:13) ⊑ a@(4:28)";
+            "a@(3:13) ⊑ a@(6:39)";
+            "a@(4:24) ⊑ a@(3:13)";
+            "a@(6:39) ⊑ b@(6:35)";
+            "(a@(4:28)) + (1) ⊑ a@(4:24)";
             "0 ⊑ a@(1:0)";
-            "#exceptions(a~(6:39)) ⊑ #raised_exceptions()";
-            "#exceptions((a~(3:13)) < (5)) ⊑ #raised_exceptions()";
-            "#exceptions((a~(4:28)) + (1)) ⊑ #raised_exceptions()";
+            "#exceptions(a@(6:39)) ⊑ #raised_exceptions()";
+            "#exceptions((a@(3:13)) < (5)) ⊑ #raised_exceptions()";
+            "#exceptions((a@(4:28)) + (1)) ⊑ #raised_exceptions()";
             "#exceptions(0) ⊑ #raised_exceptions()";
             "#empty(3:7)";
             "#exit";
             "#entry" -> "0 ⊑ a@(1:0)" [label="#succeed(0)"];
             "#entry" -> "#exceptions(0) ⊑ #raised_exceptions()" [label="#raise(0)"];
-            "a@(1:0) ⊑ a~(3:13)" -> "#empty(3:7)" [label="{}"];
-            "a@(4:24) ⊑ a~(3:13)" -> "#empty(3:7)" [label="{}"];
-            "a~(3:13) ⊑ a~(4:28)" -> "(a~(4:28)) + (1) ⊑ a@(4:24)" [label="#succeed((a~(4:28)) + (1))"];
-            "a~(3:13) ⊑ a~(4:28)" -> "#exceptions((a~(4:28)) + (1)) ⊑ #raised_exceptions()" [label="#raise((a~(4:28)) + (1))"];
-            "a~(3:13) ⊑ a~(6:39)" -> "a~(6:39) ⊑ b@(6:35)" [label="#succeed(a~(6:39))"];
-            "a~(3:13) ⊑ a~(6:39)" -> "#exceptions(a~(6:39)) ⊑ #raised_exceptions()" [label="#raise(a~(6:39))"];
-            "a~(6:39) ⊑ b@(6:35)" -> "#exit" [label="{}"];
-            "(a~(4:28)) + (1) ⊑ a@(4:24)" -> "a@(1:0) ⊑ a~(3:13)" [label="{}"];
-            "(a~(4:28)) + (1) ⊑ a@(4:24)" -> "a@(4:24) ⊑ a~(3:13)" [label="{}"];
-            "(a~(4:28)) + (1) ⊑ a@(4:24)" -> "#exit" [label="{}"];
-            "0 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a~(3:13)" [label="{}"];
-            "0 ⊑ a@(1:0)" -> "a@(4:24) ⊑ a~(3:13)" [label="{}"];
+            "a@(1:0) ⊑ a@(3:13)" -> "#empty(3:7)" [label="{}"];
+            "a@(3:13) ⊑ a@(4:28)" -> "(a@(4:28)) + (1) ⊑ a@(4:24)" [label="#succeed((a@(4:28)) + (1))"];
+            "a@(3:13) ⊑ a@(4:28)" -> "#exceptions((a@(4:28)) + (1)) ⊑ #raised_exceptions()" [label="#raise((a@(4:28)) + (1))"];
+            "a@(3:13) ⊑ a@(6:39)" -> "a@(6:39) ⊑ b@(6:35)" [label="#succeed(a@(6:39))"];
+            "a@(3:13) ⊑ a@(6:39)" -> "#exceptions(a@(6:39)) ⊑ #raised_exceptions()" [label="#raise(a@(6:39))"];
+            "a@(4:24) ⊑ a@(3:13)" -> "#empty(3:7)" [label="{}"];
+            "a@(6:39) ⊑ b@(6:35)" -> "#exit" [label="{}"];
+            "(a@(4:28)) + (1) ⊑ a@(4:24)" -> "a@(1:0) ⊑ a@(3:13)" [label="{}"];
+            "(a@(4:28)) + (1) ⊑ a@(4:24)" -> "a@(4:24) ⊑ a@(3:13)" [label="{}"];
+            "(a@(4:28)) + (1) ⊑ a@(4:24)" -> "#exit" [label="{}"];
+            "0 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a@(3:13)" [label="{}"];
+            "0 ⊑ a@(1:0)" -> "a@(4:24) ⊑ a@(3:13)" [label="{}"];
             "0 ⊑ a@(1:0)" -> "#exit" [label="{}"];
-            "#exceptions(a~(6:39)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
-            "#exceptions((a~(3:13)) < (5)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
-            "#exceptions((a~(4:28)) + (1)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions(a@(6:39)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions((a@(3:13)) < (5)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
+            "#exceptions((a@(4:28)) + (1)) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
             "#exceptions(0) ⊑ #raised_exceptions()" -> "#exit" [label="{}"];
-            "#empty(3:7)" -> "a~(3:13) ⊑ a~(4:28)" [label="#is_true((a~(3:13)) < (5))"];
-            "#empty(3:7)" -> "a~(3:13) ⊑ a~(6:39)" [label="#is_false((a~(3:13)) < (5))"];
-            "#empty(3:7)" -> "#exceptions((a~(3:13)) < (5)) ⊑ #raised_exceptions()" [label="#raise((a~(3:13)) < (5))"];
+            "#empty(3:7)" -> "a@(3:13) ⊑ a@(4:28)" [label="#is_true((a@(3:13)) < (5))"];
+            "#empty(3:7)" -> "a@(3:13) ⊑ a@(6:39)" [label="#is_false((a@(3:13)) < (5))"];
+            "#empty(3:7)" -> "#exceptions((a@(3:13)) < (5)) ⊑ #raised_exceptions()" [label="#raise((a@(3:13)) < (5))"];
         }
         "##},
         vec![],
