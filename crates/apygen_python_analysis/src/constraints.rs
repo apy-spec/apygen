@@ -785,7 +785,7 @@ impl Lattice for ConstraintGraph {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AbstractEnvironment {
     pub current_nodes: LatticeSet<(ConstraintNode, Guard)>,
-    pub variable_locations: LatticeMap<VariableName, LatticeSet<VariableLocation>>,
+    pub variable_definitions: LatticeMap<VariableName, LatticeSet<VariableDefinition>>,
     pub constraint_graph: ConstraintGraph,
 }
 
@@ -796,7 +796,7 @@ impl Default for AbstractEnvironment {
                 ConstraintNode::Entry,
                 Guard::Multiple(LatticeSet::default()),
             )),
-            variable_locations: LatticeMap::default(),
+            variable_definitions: LatticeMap::default(),
             constraint_graph: ConstraintGraph::default(),
         }
     }
@@ -804,14 +804,16 @@ impl Default for AbstractEnvironment {
 impl Lattice for AbstractEnvironment {
     fn includes(&self, other: &Self) -> bool {
         self.current_nodes.includes(&other.current_nodes)
-            && self.variable_locations.includes(&other.variable_locations)
+            && self
+                .variable_definitions
+                .includes(&other.variable_definitions)
             && self.constraint_graph.includes(&other.constraint_graph)
     }
 
     fn join(&self, other: &Self) -> Self {
         Self {
             current_nodes: self.current_nodes.join(&other.current_nodes),
-            variable_locations: self.variable_locations.join(&other.variable_locations),
+            variable_definitions: self.variable_definitions.join(&other.variable_definitions),
             constraint_graph: self.constraint_graph.join(&other.constraint_graph),
         }
     }
@@ -905,20 +907,22 @@ impl<'a> ConstraintsBuilder<'a> {
         variable: VariableName,
         type_expression: Arc<TypeExpression>,
     ) {
+        let variable_definition = VariableDefinition::At(location.clone());
+
         self.create_include_constraint(
             abstract_environment,
             location.clone(),
             type_expression,
             Arc::new(TypeExpression::Variable(ExpressionVariable::new(
                 variable.clone(),
-                VariableDefinition::At(location.clone()),
+                variable_definition.clone(),
             ))),
         );
 
         abstract_environment
-            .variable_locations
+            .variable_definitions
             .values
-            .insert(variable, LatticeSet::from_iter([location]));
+            .insert(variable, LatticeSet::unit(variable_definition));
     }
 
     pub fn assign_empty_constraint(
@@ -1402,28 +1406,28 @@ impl<'a> ConstraintsBuilder<'a> {
         expr_name: &nodes::ExprName,
     ) -> Result<TypeExpression, ConstraintsBuilderError> {
         let variable_name = self.gen_variable_name(program_point, &expr_name.id)?;
-        let variable_location = self.gen_variable_location(expr_name.range);
+        let definition = VariableDefinition::Before(self.gen_variable_location(expr_name.range));
         let variable_expression = TypeExpression::Variable(ExpressionVariable::new(
             variable_name.clone(),
-            VariableDefinition::Before(variable_location.clone()),
+            definition.clone(),
         ));
 
-        if let Some(locations) = target_abstract_environment
-            .variable_locations
+        if let Some(definitions) = target_abstract_environment
+            .variable_definitions
             .values
             .get(&variable_name)
         {
             let mut current_nodes: LatticeSet<(ConstraintNode, Guard)> = LatticeSet::default();
             for (from, guard) in target_abstract_environment.current_nodes.as_ref() {
-                for location in &locations.values {
-                    if location == &variable_location {
+                for previous_definition in &definitions.values {
+                    if *previous_definition == definition {
                         continue;
                     }
                     let location_constraint = ConstraintNode::Constraint(Arc::new(
                         Constraint::Type(ConstraintDefinition::include(
                             TypeExpression::Variable(ExpressionVariable::new(
                                 variable_name.clone(),
-                                VariableDefinition::At(location.clone()),
+                                previous_definition.clone(),
                             )),
                             variable_expression.clone(),
                         )),
@@ -1438,6 +1442,11 @@ impl<'a> ConstraintsBuilder<'a> {
             }
             target_abstract_environment.current_nodes = current_nodes;
         }
+
+        target_abstract_environment
+            .variable_definitions
+            .values
+            .insert(variable_name.clone(), LatticeSet::unit(definition));
 
         Ok(variable_expression)
     }
@@ -1574,18 +1583,16 @@ impl<'a> ConstraintsBuilder<'a> {
                 );
             } else {
                 let identifier = Arc::new(module_name.identifiers.first().clone());
-                let location = self.gen_variable_location(alias.name.range);
+                let definition =
+                    VariableDefinition::At(self.gen_variable_location(alias.name.range));
 
                 target_abstract_environment
-                    .variable_locations
+                    .variable_definitions
                     .values
-                    .insert(
-                        identifier.clone(),
-                        LatticeSet::from_iter([location.clone()]),
-                    );
+                    .insert(identifier.clone(), LatticeSet::unit(definition.clone()));
 
                 let mut expression_option = Some(Arc::new(TypeExpression::Variable(
-                    ExpressionVariable::new(identifier, VariableDefinition::At(location)),
+                    ExpressionVariable::new(identifier, definition),
                 )));
 
                 let mut variable_location = self.gen_variable_location(alias.name.range);
