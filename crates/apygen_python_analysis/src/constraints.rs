@@ -661,9 +661,9 @@ impl Display for ConstraintKind {
 }
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConstraintDefinition<T> {
-    left: Arc<T>,
-    kind: ConstraintKind,
-    right: Arc<T>,
+    pub left: Arc<T>,
+    pub kind: ConstraintKind,
+    pub right: Arc<T>,
 }
 
 impl<T: Clone> ConstraintDefinition<T> {
