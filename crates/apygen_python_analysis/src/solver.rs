@@ -1,7 +1,7 @@
-use crate::abstract_environment::{RaisedExceptions, Type, TypeLiteral};
+use crate::abstract_environment::{Completeness, RaisedExceptions, Type, TypeLiteral};
 use crate::constraints::{
-    IncludeConstraint, IncludeConstraintDefinition, ConstraintGraph, ConstraintNode, ExceptionExpression,
-    ExpressionBinary, LatticeMap, TypeExpression,
+    ConstraintGraph, ConstraintNode, ExceptionExpression, ExpressionBinary, IncludeConstraint,
+    IncludeConstraintDefinition, LatticeMap, TypeExpression,
 };
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::is_type_unreachable;
@@ -99,7 +99,10 @@ impl ConstraintSolver<'_> {
         }
 
         match type_expression {
-            TypeExpression::Variable(_) => PyTypeEval::with_default_effects(Type::Never),
+            TypeExpression::Variable(_) => PyTypeEval::new(
+                Type::Never,
+                PyEffects::new().with_completeness(Completeness::Partial),
+            ),
             TypeExpression::Import(_) => PyTypeEval::with_default_effects(Type::Never),
             TypeExpression::Attribute(_) => PyTypeEval::with_default_effects(Type::Never),
             TypeExpression::Subscript(_) => PyTypeEval::with_default_effects(Type::Never),
