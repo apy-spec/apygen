@@ -1,6 +1,6 @@
 use crate::abstract_environment::{RaisedExceptions, Type, TypeLiteral};
 use crate::constraints::{
-    Constraint, ConstraintDefinition, ConstraintGraph, ConstraintNode, ExceptionExpression,
+    IncludeConstraint, IncludeConstraintDefinition, ConstraintGraph, ConstraintNode, ExceptionExpression,
     ExpressionBinary, LatticeMap, TypeExpression,
 };
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
@@ -138,7 +138,7 @@ impl ConstraintSolver<'_> {
     pub fn evaluate_type_constraint(
         &self,
         abstract_state: &mut EvaluationState,
-        type_constraint: &ConstraintDefinition<TypeExpression>,
+        type_constraint: &IncludeConstraintDefinition<TypeExpression>,
     ) {
         let previous_eval = abstract_state
             .type_evaluations
@@ -193,10 +193,10 @@ impl GraphAnalyser for ConstraintSolver<'_> {
 
         match &node {
             ConstraintNode::Constraint(constraint) => match constraint.as_ref() {
-                Constraint::Type(constraint_type) => {
+                IncludeConstraint::Type(constraint_type) => {
                     self.evaluate_type_constraint(&mut abstract_state, constraint_type)
                 }
-                Constraint::Exception(_) => {}
+                IncludeConstraint::Exception(_) => {}
             },
             _ => {}
         }

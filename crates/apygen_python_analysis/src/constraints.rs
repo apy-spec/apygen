@@ -706,59 +706,36 @@ impl Display for Guard {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ConstraintKind {
-    Include,
-    Equal,
-}
-
-impl Display for ConstraintKind {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let symbol = match self {
-            ConstraintKind::Include => "⊑",
-            ConstraintKind::Equal => "=",
-        };
-
-        write!(f, "{}", symbol)
-    }
-}
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ConstraintDefinition<T> {
+pub struct IncludeConstraintDefinition<T> {
     pub left: Arc<T>,
-    pub kind: ConstraintKind,
     pub right: Arc<T>,
 }
 
-impl<T: Clone> ConstraintDefinition<T> {
-    pub fn new(left: Arc<T>, kind: ConstraintKind, right: Arc<T>) -> Self {
-        Self { left, kind, right }
-    }
-
-    pub fn equal(left: T, right: T) -> Self {
-        Self::new(Arc::new(left), ConstraintKind::Equal, Arc::new(right))
-    }
-
-    pub fn include(left: T, right: T) -> Self {
-        Self::new(Arc::new(left), ConstraintKind::Include, Arc::new(right))
+impl<T: Clone> IncludeConstraintDefinition<T> {
+    pub fn new(left: Arc<T>, right: Arc<T>) -> Self {
+        Self { left, right }
     }
 }
 
-impl<T: Display> Display for ConstraintDefinition<T> {
+impl<T: Display> Display for IncludeConstraintDefinition<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {} {}", self.left, self.kind, self.right)
+        write!(f, "{} ⊑ {}", self.left, self.right)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Constraint {
-    Type(ConstraintDefinition<TypeExpression>),
-    Exception(ConstraintDefinition<ExceptionExpression>),
+pub enum IncludeConstraint {
+    Type(IncludeConstraintDefinition<TypeExpression>),
+    Exception(IncludeConstraintDefinition<ExceptionExpression>),
 }
 
-impl Display for Constraint {
+impl Display for IncludeConstraint {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Constraint::Type(constraint_type) => write!(f, "{}", constraint_type),
-            Constraint::Exception(constraint_exception) => write!(f, "{}", constraint_exception),
+            IncludeConstraint::Type(constraint_type) => write!(f, "{}", constraint_type),
+            IncludeConstraint::Exception(constraint_exception) => {
+                write!(f, "{}", constraint_exception)
+            }
         }
     }
 }
@@ -766,7 +743,7 @@ impl Display for Constraint {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConstraintNode {
     Entry,
-    Constraint(Arc<Constraint>),
+    Constraint(Arc<IncludeConstraint>),
     Empty(Location),
     TypeExit,
     ExceptionExit,
@@ -804,6 +781,10 @@ impl ConstraintGraph {
             .values
             .entry(to)
             .or_insert(guard);
+    }
+
+    pub fn exists(&self, from: &ConstraintNode, to: &ConstraintNode) -> bool {
+        self.edges.get(from).and_then(|tos| tos.get(to)).is_some()
     }
 
     pub fn dot(&self) -> String {
@@ -880,6 +861,45 @@ impl Lattice for AbstractEnvironment {
             variable_locations: self.variable_locations.join(&other.variable_locations),
             constraint_graph: self.constraint_graph.join(&other.constraint_graph),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TypeExpressionEval {
+    pub expression: TypeExpression,
+    pub variables: imbl::OrdSet<ExpressionVariable>,
+}
+
+impl TypeExpressionEval {
+    pub fn new(expression: TypeExpression, variables: imbl::OrdSet<ExpressionVariable>) -> Self {
+        Self {
+            expression,
+            variables,
+        }
+    }
+
+    pub fn without_variables(expression: TypeExpression) -> Self {
+        Self::new(expression, imbl::OrdSet::default())
+    }
+
+    pub fn consume(&mut self, eval: TypeExpressionEval) -> TypeExpression {
+        self.variables.extend(eval.variables);
+        eval.expression
+    }
+
+    pub fn map(self, f: impl FnOnce(TypeExpression) -> TypeExpression) -> Self {
+        Self::new(f(self.expression), self.variables)
+    }
+
+    pub fn merge(
+        self,
+        other: Self,
+        f: impl FnOnce(TypeExpression, TypeExpression) -> TypeExpression,
+    ) -> Self {
+        Self::new(
+            f(self.expression, other.expression),
+            self.variables.union(other.variables),
+        )
     }
 }
 
@@ -960,6 +980,51 @@ impl<'a> ConstraintsBuilder<'a> {
         }
     }
 
+    pub fn create_used_variables_constraints(
+        &self,
+        abstract_environment: &mut AbstractEnvironment,
+        used_variables: imbl::OrdSet<ExpressionVariable>,
+    ) {
+        if used_variables.is_empty() {
+            return;
+        }
+
+        let mut current_nodes: LatticeMap<ConstraintNode, Guard> = LatticeMap::default();
+
+        for used_variable in used_variables {
+            if let Some(previous_locations) = abstract_environment
+                .variable_locations
+                .get(&used_variable.name)
+            {
+                for previous_location in previous_locations.as_ref() {
+                    let node = ConstraintNode::Constraint(Arc::new(IncludeConstraint::Type(
+                        IncludeConstraintDefinition::new(
+                            Arc::new(TypeExpression::Variable(ExpressionVariable::new(
+                                used_variable.name.clone(),
+                                previous_location.clone(),
+                            ))),
+                            Arc::new(TypeExpression::Variable(used_variable.clone())),
+                        ),
+                    )));
+                    for (current_node, guard) in abstract_environment.current_nodes.as_ref() {
+                        abstract_environment.constraint_graph.add_edge(
+                            current_node.clone(),
+                            node.clone(),
+                            guard.clone(),
+                        );
+                    }
+                    current_nodes.insert(node, Guard::default());
+                }
+                abstract_environment.variable_locations.insert(
+                    used_variable.name.clone(),
+                    LatticeSet::unit(used_variable.location.clone()),
+                );
+            }
+        }
+
+        abstract_environment.current_nodes = current_nodes;
+    }
+
     pub fn create_include_constraint(
         &self,
         abstract_environment: &mut AbstractEnvironment,
@@ -967,8 +1032,8 @@ impl<'a> ConstraintsBuilder<'a> {
         left: Arc<TypeExpression>,
         right: Arc<TypeExpression>,
     ) {
-        let node = ConstraintNode::Constraint(Arc::new(Constraint::Type(
-            ConstraintDefinition::new(left.clone(), ConstraintKind::Include, right.clone()),
+        let node = ConstraintNode::Constraint(Arc::new(IncludeConstraint::Type(
+            IncludeConstraintDefinition::new(left.clone(), right.clone()),
         )));
 
         let mut current_nodes = LatticeMap::unit(node.clone(), Guard::default());
@@ -1108,21 +1173,17 @@ impl<'a> ConstraintsBuilder<'a> {
             self.gen_parameter(program_point, &parameter_with_default.parameter)?;
 
         if let Some(default) = &parameter_with_default.default {
-            let type_expression = self.gen_expr(
-                &Namespace::default(),
-                program_point,
-                target_abstract_environment,
-                &default,
-            )?;
+            let type_expression =
+                self.evaluate_expr(&Namespace::default(), program_point, &default)?;
             constraint_graph.add_edge(
                 ConstraintNode::Entry,
-                ConstraintNode::Constraint(Arc::new(Constraint::Type(
-                    ConstraintDefinition::equal(
-                        TypeExpression::Variable(ExpressionVariable::new(
+                ConstraintNode::Constraint(Arc::new(IncludeConstraint::Type(
+                    IncludeConstraintDefinition::new(
+                        Arc::new(TypeExpression::Variable(ExpressionVariable::new(
                             parameter_name.clone(),
                             self.gen_variable_location(parameter_with_default.range),
-                        )),
-                        type_expression,
+                        ))),
+                        Arc::new(type_expression.expression),
                     ),
                 ))),
                 Guard::default(),
@@ -1172,19 +1233,16 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(abstract_environment)
     }
 
-    pub fn gen_expr_bool_op(
+    pub fn evaluate_expr_bool_op(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
-        target_abstract_environment: &mut AbstractEnvironment,
         expr_bool_op: &nodes::ExprBoolOp,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
+    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
         let mut values_iter = expr_bool_op.values.iter();
 
-        let mut type_expression = match values_iter.next() {
-            Some(value) => {
-                self.gen_expr(namespace, program_point, target_abstract_environment, value)?
-            }
+        let mut eval = match values_iter.next() {
+            Some(value) => self.evaluate_expr(namespace, program_point, value)?,
             None => {
                 return Err(ConstraintsBuilderError::InvalidExprBoolOp {
                     expr: expr_bool_op.clone(),
@@ -1198,40 +1256,29 @@ impl<'a> ConstraintsBuilder<'a> {
         };
 
         for value in values_iter {
-            type_expression = TypeExpression::Binary(ExpressionBinary {
-                left: Arc::new(type_expression),
-                operator: operator.clone(),
-                right: Arc::new(self.gen_expr(
-                    namespace,
-                    program_point,
-                    target_abstract_environment,
-                    &value,
-                )?),
-            });
+            eval = eval.merge(
+                self.evaluate_expr(namespace, program_point, &value)?,
+                |left, right| {
+                    TypeExpression::Binary(ExpressionBinary {
+                        left: Arc::new(left),
+                        operator: operator.clone(),
+                        right: Arc::new(right),
+                    })
+                },
+            )
         }
 
-        Ok(type_expression)
+        Ok(eval)
     }
 
-    pub fn gen_expr_bin_op(
+    pub fn evaluate_expr_bin_op(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
-        target_abstract_environment: &mut AbstractEnvironment,
         expr_bin_op: &nodes::ExprBinOp,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let left = self.gen_expr(
-            namespace,
-            program_point,
-            target_abstract_environment,
-            &expr_bin_op.left,
-        )?;
-        let right = self.gen_expr(
-            namespace,
-            program_point,
-            target_abstract_environment,
-            &expr_bin_op.right,
-        )?;
+    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+        let left_eval = self.evaluate_expr(namespace, program_point, &expr_bin_op.left)?;
+        let right_eval = self.evaluate_expr(namespace, program_point, &expr_bin_op.right)?;
 
         let operator = match expr_bin_op.op {
             nodes::Operator::Add => BinaryOperator::Add,
@@ -1249,26 +1296,22 @@ impl<'a> ConstraintsBuilder<'a> {
             nodes::Operator::FloorDiv => BinaryOperator::FloorDiv,
         };
 
-        Ok(TypeExpression::Binary(ExpressionBinary {
-            left: Arc::new(left),
-            operator,
-            right: Arc::new(right),
+        Ok(left_eval.merge(right_eval, |left, right| {
+            TypeExpression::Binary(ExpressionBinary {
+                left: Arc::new(left),
+                operator,
+                right: Arc::new(right),
+            })
         }))
     }
 
-    pub fn gen_expr_unary_op(
+    pub fn evaluate_expr_unary_op(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
-        target_abstract_environment: &mut AbstractEnvironment,
         expr_unary_op: &nodes::ExprUnaryOp,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let operand = self.gen_expr(
-            namespace,
-            program_point,
-            target_abstract_environment,
-            &expr_unary_op.operand,
-        )?;
+    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+        let operand_eval = self.evaluate_expr(namespace, program_point, &expr_unary_op.operand)?;
 
         let operator = match expr_unary_op.op {
             nodes::UnaryOp::Invert => UnaryOperator::Invert,
@@ -1277,25 +1320,21 @@ impl<'a> ConstraintsBuilder<'a> {
             nodes::UnaryOp::USub => UnaryOperator::USub,
         };
 
-        Ok(TypeExpression::Unary(ExpressionUnary {
-            operator,
-            operand: Arc::new(operand),
+        Ok(operand_eval.map(|operand| {
+            TypeExpression::Unary(ExpressionUnary {
+                operator,
+                operand: Arc::new(operand),
+            })
         }))
     }
 
-    pub fn gen_expr_compare(
+    pub fn evaluate_expr_compare(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
-        target_abstract_environment: &mut AbstractEnvironment,
         expr_compare: &nodes::ExprCompare,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let mut type_expression = self.gen_expr(
-            namespace,
-            program_point,
-            target_abstract_environment,
-            &expr_compare.left,
-        )?;
+    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+        let mut eval = self.evaluate_expr(namespace, program_point, &expr_compare.left)?;
 
         if expr_compare.ops.is_empty()
             || expr_compare.comparators.is_empty()
@@ -1320,45 +1359,35 @@ impl<'a> ConstraintsBuilder<'a> {
                 nodes::CmpOp::NotIn => BinaryOperator::NotIn,
             };
 
-            let comparator = self.gen_expr(
-                namespace,
-                program_point,
-                target_abstract_environment,
-                comparator,
-            )?;
+            let comparator = self.evaluate_expr(namespace, program_point, comparator)?;
 
-            type_expression = TypeExpression::Binary(ExpressionBinary {
-                left: Arc::new(type_expression),
-                operator,
-                right: Arc::new(comparator),
+            eval = eval.merge(comparator, |left, right| {
+                TypeExpression::Binary(ExpressionBinary {
+                    left: Arc::new(left),
+                    operator,
+                    right: Arc::new(right),
+                })
             });
         }
 
-        Ok(type_expression)
+        Ok(eval)
     }
 
-    pub fn gen_expr_call(
+    pub fn evaluate_expr_call(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
-        target_abstract_environment: &mut AbstractEnvironment,
         expr_call: &nodes::ExprCall,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let func = self.gen_expr(
-            namespace,
-            program_point,
-            target_abstract_environment,
-            &expr_call.func,
-        )?;
+    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+        let mut func_eval = self.evaluate_expr(namespace, program_point, &expr_call.func)?;
 
         let mut positional_arguments: imbl::Vector<Arc<TypeExpression>> = imbl::Vector::new();
         for positional_argument in &expr_call.arguments.args {
-            positional_arguments.push_back(Arc::new(self.gen_expr(
+            positional_arguments.push_back(Arc::new(func_eval.consume(self.evaluate_expr(
                 namespace,
                 program_point,
-                target_abstract_environment,
                 &positional_argument,
-            )?));
+            )?)));
         }
 
         let mut keyword_arguments: imbl::Vector<KeywordArgument> = imbl::Vector::new();
@@ -1367,26 +1396,26 @@ impl<'a> ConstraintsBuilder<'a> {
                 Some(identifier) => Some(self.gen_variable_name(program_point, &identifier)?),
                 None => None,
             };
-            let keyword_type = self.gen_expr(
-                namespace,
-                program_point,
-                target_abstract_environment,
-                &keyword_argument.value,
-            )?;
             keyword_arguments.push_back(KeywordArgument {
                 name: keyword_name,
-                value: Arc::new(keyword_type),
+                value: Arc::new(func_eval.consume(self.evaluate_expr(
+                    namespace,
+                    program_point,
+                    &keyword_argument.value,
+                )?)),
             });
         }
 
-        Ok(TypeExpression::Call(ExpressionCall {
-            target: Arc::new(func),
-            positional_arguments,
-            keyword_arguments,
+        Ok(func_eval.map(|func| {
+            TypeExpression::Call(ExpressionCall {
+                target: Arc::new(func),
+                positional_arguments,
+                keyword_arguments,
+            })
         }))
     }
 
-    pub fn gen_expr_string_literal(
+    pub fn evaluate_expr_string_literal(
         &self,
         expr_string_literal: &nodes::ExprStringLiteral,
     ) -> TypeExpression {
@@ -1395,7 +1424,7 @@ impl<'a> ConstraintsBuilder<'a> {
         })
     }
 
-    pub fn gen_expr_bytes_literal(
+    pub fn evaluate_expr_bytes_literal(
         &self,
         expr_bytes_literal: &nodes::ExprBytesLiteral,
     ) -> TypeExpression {
@@ -1409,7 +1438,7 @@ impl<'a> ConstraintsBuilder<'a> {
         })
     }
 
-    pub fn gen_expr_number_literal(
+    pub fn evaluate_expr_number_literal(
         &self,
         expr_number_literal: &nodes::ExprNumberLiteral,
     ) -> TypeExpression {
@@ -1437,7 +1466,7 @@ impl<'a> ConstraintsBuilder<'a> {
         }
     }
 
-    pub fn gen_expr_boolean_literal(
+    pub fn evaluate_expr_boolean_literal(
         &self,
         expr_boolean_literal: &nodes::ExprBooleanLiteral,
     ) -> TypeExpression {
@@ -1446,141 +1475,81 @@ impl<'a> ConstraintsBuilder<'a> {
         })
     }
 
-    pub fn gen_expr_none_literal(&self) -> TypeExpression {
+    pub fn evaluate_expr_none_literal(&self) -> TypeExpression {
         TypeExpression::LiteralNone
     }
 
-    pub fn gen_expr_ellipsis_literal(&self) -> TypeExpression {
+    pub fn evaluate_expr_ellipsis_literal(&self) -> TypeExpression {
         TypeExpression::LiteralEllipsis
     }
 
-    pub fn gen_expr_attribute(
+    pub fn evaluate_expr_attribute(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
-        target_abstract_environment: &mut AbstractEnvironment,
         expr_attribute: &nodes::ExprAttribute,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let value = self.gen_expr(
-            namespace,
-            program_point,
-            target_abstract_environment,
-            &expr_attribute.value,
-        )?;
+    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+        let value_eval = self.evaluate_expr(namespace, program_point, &expr_attribute.value)?;
         let attribute = self.gen_variable_name(program_point, &expr_attribute.attr)?;
 
-        Ok(TypeExpression::Attribute(ExpressionAttribute {
-            value: Arc::new(value),
-            attribute,
+        Ok(value_eval.map(|value| {
+            TypeExpression::Attribute(ExpressionAttribute {
+                value: Arc::new(value),
+                attribute,
+            })
         }))
     }
 
-    pub fn gen_expr_subscript(
+    pub fn evaluate_expr_subscript(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
-        target_abstract_environment: &mut AbstractEnvironment,
         expr_subscript: &nodes::ExprSubscript,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let value = self.gen_expr(
-            namespace,
-            program_point,
-            target_abstract_environment,
-            &expr_subscript.value,
-        )?;
-        let slice = self.gen_expr(
-            namespace,
-            program_point,
-            target_abstract_environment,
-            &expr_subscript.slice,
-        )?;
+    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+        let value_eval = self.evaluate_expr(namespace, program_point, &expr_subscript.value)?;
+        let slice_eval = self.evaluate_expr(namespace, program_point, &expr_subscript.slice)?;
 
-        Ok(TypeExpression::Subscript(ExpressionSubscript {
-            value: Arc::new(value),
-            slice: Arc::new(slice),
+        Ok(value_eval.merge(slice_eval, |value, slice| {
+            TypeExpression::Subscript(ExpressionSubscript {
+                value: Arc::new(value),
+                slice: Arc::new(slice),
+            })
         }))
     }
 
-    pub fn gen_name(
+    pub fn evaluate_name(
         &self,
         program_point: ProgramPoint,
-        target_abstract_environment: &mut AbstractEnvironment,
         expr_name: &nodes::ExprName,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
-        let variable_name = self.gen_variable_name(program_point, &expr_name.id)?;
-        let location = self.gen_variable_location(expr_name.range);
-        let variable_expression = TypeExpression::Variable(ExpressionVariable::new(
-            variable_name.clone(),
-            location.clone(),
-        ));
+    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+        let variable = ExpressionVariable::new(
+            self.gen_variable_name(program_point, &expr_name.id)?,
+            self.gen_variable_location(expr_name.range),
+        );
 
-        if let Some(definitions) = target_abstract_environment
-            .variable_locations
-            .values
-            .get(&variable_name)
-        {
-            let mut current_nodes: LatticeMap<ConstraintNode, Guard> = LatticeMap::default();
-            for (from, guard) in target_abstract_environment.current_nodes.as_ref() {
-                for previous_location in &definitions.values {
-                    if *previous_location == location {
-                        continue;
-                    }
-                    let location_constraint = ConstraintNode::Constraint(Arc::new(
-                        Constraint::Type(ConstraintDefinition::include(
-                            TypeExpression::Variable(ExpressionVariable::new(
-                                variable_name.clone(),
-                                previous_location.clone(),
-                            )),
-                            variable_expression.clone(),
-                        )),
-                    ));
-                    target_abstract_environment.constraint_graph.add_edge(
-                        from.clone(),
-                        location_constraint.clone(),
-                        guard.clone(),
-                    );
-                    current_nodes =
-                        current_nodes.update_join(location_constraint.clone(), Guard::default());
-                }
-            }
-            target_abstract_environment.current_nodes = current_nodes;
-        }
-
-        target_abstract_environment
-            .variable_locations
-            .values
-            .insert(variable_name.clone(), LatticeSet::unit(location));
-
-        Ok(variable_expression)
+        Ok(TypeExpressionEval::new(
+            TypeExpression::Variable(variable.clone()),
+            imbl::OrdSet::unit(variable),
+        ))
     }
 
-    pub fn gen_expr(
+    pub fn evaluate_expr(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
-        target_abstract_environment: &mut AbstractEnvironment,
         expr: &nodes::Expr,
-    ) -> Result<TypeExpression, ConstraintsBuilderError> {
+    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
         match expr {
-            nodes::Expr::BoolOp(expr_bool_op) => self.gen_expr_bool_op(
-                namespace,
-                program_point,
-                target_abstract_environment,
-                expr_bool_op,
-            ),
+            nodes::Expr::BoolOp(expr_bool_op) => {
+                self.evaluate_expr_bool_op(namespace, program_point, expr_bool_op)
+            }
             nodes::Expr::Named(_) => todo!(),
-            nodes::Expr::BinOp(expr_bin_op) => self.gen_expr_bin_op(
-                namespace,
-                program_point,
-                target_abstract_environment,
-                expr_bin_op,
-            ),
-            nodes::Expr::UnaryOp(expr_unary_op) => self.gen_expr_unary_op(
-                namespace,
-                program_point,
-                target_abstract_environment,
-                expr_unary_op,
-            ),
+            nodes::Expr::BinOp(expr_bin_op) => {
+                self.evaluate_expr_bin_op(namespace, program_point, expr_bin_op)
+            }
+            nodes::Expr::UnaryOp(expr_unary_op) => {
+                self.evaluate_expr_unary_op(namespace, program_point, expr_unary_op)
+            }
             nodes::Expr::Lambda(_) => todo!(),
             nodes::Expr::If(_) => todo!(),
             nodes::Expr::Dict(_) => todo!(),
@@ -1592,49 +1561,47 @@ impl<'a> ConstraintsBuilder<'a> {
             nodes::Expr::Await(_) => todo!(),
             nodes::Expr::Yield(_) => todo!(),
             nodes::Expr::YieldFrom(_) => todo!(),
-            nodes::Expr::Compare(expr_compare) => self.gen_expr_compare(
-                namespace,
-                program_point,
-                target_abstract_environment,
-                expr_compare,
-            ),
-            nodes::Expr::Call(expr_call) => self.gen_expr_call(
-                namespace,
-                program_point,
-                target_abstract_environment,
-                expr_call,
-            ),
+            nodes::Expr::Compare(expr_compare) => {
+                self.evaluate_expr_compare(namespace, program_point, expr_compare)
+            }
+            nodes::Expr::Call(expr_call) => {
+                self.evaluate_expr_call(namespace, program_point, expr_call)
+            }
             nodes::Expr::FString(_) => todo!(),
             nodes::Expr::StringLiteral(expr_string_literal) => {
-                Ok(self.gen_expr_string_literal(expr_string_literal))
+                Ok(TypeExpressionEval::without_variables(
+                    self.evaluate_expr_string_literal(expr_string_literal),
+                ))
             }
             nodes::Expr::BytesLiteral(expr_bytes_literal) => {
-                Ok(self.gen_expr_bytes_literal(expr_bytes_literal))
+                Ok(TypeExpressionEval::without_variables(
+                    self.evaluate_expr_bytes_literal(expr_bytes_literal),
+                ))
             }
             nodes::Expr::NumberLiteral(expr_number_literal) => {
-                Ok(self.gen_expr_number_literal(expr_number_literal))
+                Ok(TypeExpressionEval::without_variables(
+                    self.evaluate_expr_number_literal(expr_number_literal),
+                ))
             }
             nodes::Expr::BooleanLiteral(expr_boolean_literal) => {
-                Ok(self.gen_expr_boolean_literal(expr_boolean_literal))
+                Ok(TypeExpressionEval::without_variables(
+                    self.evaluate_expr_boolean_literal(expr_boolean_literal),
+                ))
             }
-            nodes::Expr::NoneLiteral(_) => Ok(self.gen_expr_none_literal()),
-            nodes::Expr::EllipsisLiteral(_) => Ok(self.gen_expr_ellipsis_literal()),
-            nodes::Expr::Attribute(expr_attribute) => self.gen_expr_attribute(
-                namespace,
-                program_point,
-                target_abstract_environment,
-                expr_attribute,
-            ),
-            nodes::Expr::Subscript(expr_subscript) => self.gen_expr_subscript(
-                namespace,
-                program_point,
-                target_abstract_environment,
-                expr_subscript,
-            ),
+            nodes::Expr::NoneLiteral(_) => Ok(TypeExpressionEval::without_variables(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::EllipsisLiteral(_) => Ok(TypeExpressionEval::without_variables(
+                self.evaluate_expr_ellipsis_literal(),
+            )),
+            nodes::Expr::Attribute(expr_attribute) => {
+                self.evaluate_expr_attribute(namespace, program_point, expr_attribute)
+            }
+            nodes::Expr::Subscript(expr_subscript) => {
+                self.evaluate_expr_subscript(namespace, program_point, expr_subscript)
+            }
             nodes::Expr::Starred(_) => todo!(),
-            nodes::Expr::Name(expr_name) => {
-                self.gen_name(program_point, target_abstract_environment, expr_name)
-            }
+            nodes::Expr::Name(expr_name) => self.evaluate_name(program_point, expr_name),
             nodes::Expr::List(_) => todo!(),
             nodes::Expr::Tuple(_) => todo!(),
             nodes::Expr::Slice(_) => todo!(),
@@ -1642,7 +1609,7 @@ impl<'a> ConstraintsBuilder<'a> {
         }
     }
 
-    pub fn gen_stmt_function_def(
+    pub fn evaluate_stmt_function_def(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
@@ -1662,7 +1629,7 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(target_abstract_environment)
     }
 
-    pub fn gen_stmt_import(
+    pub fn evaluate_stmt_import(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
@@ -1757,7 +1724,7 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(target_abstract_environment)
     }
 
-    pub fn gen_stmt_assign(
+    pub fn evaluate_stmt_assign(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
@@ -1766,12 +1733,11 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let type_expression = Arc::new(self.gen_expr(
-            namespace,
-            program_point,
-            &mut target_abstract_environment,
-            &stmt_assign.value,
-        )?);
+        let eval = self.evaluate_expr(namespace, program_point, &stmt_assign.value)?;
+
+        self.create_used_variables_constraints(&mut target_abstract_environment, eval.variables);
+
+        let type_expression = Arc::new(eval.expression);
 
         let mut current_nodes: LatticeSet<(ConstraintNode, Guard)> = LatticeSet::default();
         for target_expr in &stmt_assign.targets {
@@ -1813,7 +1779,7 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(target_abstract_environment)
     }
 
-    pub fn gen_stmt_ann_assign(
+    pub fn evaluate_stmt_ann_assign(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
@@ -1830,12 +1796,11 @@ impl<'a> ConstraintsBuilder<'a> {
             return Ok(target_abstract_environment);
         };
 
-        let type_expression = Arc::new(self.gen_expr(
-            namespace,
-            program_point,
-            &mut target_abstract_environment,
-            &value,
-        )?);
+        let eval = self.evaluate_expr(namespace, program_point, value)?;
+
+        self.create_used_variables_constraints(&mut target_abstract_environment, eval.variables);
+
+        let type_expression = Arc::new(eval.expression);
 
         match target {
             AssignmentTarget::Name(target_name) => {
@@ -1856,7 +1821,7 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(target_abstract_environment)
     }
 
-    pub fn gen_stmt_while(
+    pub fn evaluate_stmt_while(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
@@ -1865,12 +1830,14 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let condition_expression = Arc::new(self.gen_expr(
-            namespace,
-            program_point,
+        let condition_eval = self.evaluate_expr(namespace, program_point, &stmt_while.test)?;
+
+        self.create_used_variables_constraints(
             &mut target_abstract_environment,
-            &stmt_while.test,
-        )?);
+            condition_eval.variables,
+        );
+
+        let condition_expression = Arc::new(condition_eval.expression);
 
         self.assign_empty_constraint(
             &mut target_abstract_environment,
@@ -1888,7 +1855,7 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(target_abstract_environment)
     }
 
-    pub fn gen_stmt_if(
+    pub fn evaluate_stmt_if(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
@@ -1897,12 +1864,14 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let condition_expression = Arc::new(self.gen_expr(
-            namespace,
-            program_point,
+        let condition_eval = self.evaluate_expr(namespace, program_point, &stmt_if.test)?;
+
+        self.create_used_variables_constraints(
             &mut target_abstract_environment,
-            &stmt_if.test,
-        )?);
+            condition_eval.variables,
+        );
+
+        let condition_expression = Arc::new(condition_eval.expression);
 
         self.assign_empty_constraint(
             &mut target_abstract_environment,
@@ -1920,7 +1889,7 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(target_abstract_environment)
     }
 
-    pub fn gen_stmt(
+    pub fn evaluate_stmt(
         &self,
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
@@ -1928,7 +1897,7 @@ impl<'a> ConstraintsBuilder<'a> {
     ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
         match stmt {
             nodes::Stmt::FunctionDef(stmt_function_def) => {
-                self.gen_stmt_function_def(namespace, program_point, stmt_function_def)
+                self.evaluate_stmt_function_def(namespace, program_point, stmt_function_def)
             }
             nodes::Stmt::ClassDef(_) => {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
@@ -1940,13 +1909,13 @@ impl<'a> ConstraintsBuilder<'a> {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
             }
             nodes::Stmt::Assign(stmt_assign) => {
-                self.gen_stmt_assign(namespace, program_point, stmt_assign)
+                self.evaluate_stmt_assign(namespace, program_point, stmt_assign)
             }
             nodes::Stmt::AugAssign(_) => {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
             }
             nodes::Stmt::AnnAssign(stmt_ann_assign) => {
-                self.gen_stmt_ann_assign(namespace, program_point, stmt_ann_assign)
+                self.evaluate_stmt_ann_assign(namespace, program_point, stmt_ann_assign)
             }
             nodes::Stmt::TypeAlias(_) => {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
@@ -1955,9 +1924,9 @@ impl<'a> ConstraintsBuilder<'a> {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
             }
             nodes::Stmt::While(stmt_while) => {
-                self.gen_stmt_while(namespace, program_point, stmt_while)
+                self.evaluate_stmt_while(namespace, program_point, stmt_while)
             }
-            nodes::Stmt::If(stmt_if) => self.gen_stmt_if(namespace, program_point, stmt_if),
+            nodes::Stmt::If(stmt_if) => self.evaluate_stmt_if(namespace, program_point, stmt_if),
             nodes::Stmt::With(_) => {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
             }
@@ -1974,7 +1943,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
             }
             nodes::Stmt::Import(stmt_import) => {
-                self.gen_stmt_import(namespace, program_point, &stmt_import)
+                self.evaluate_stmt_import(namespace, program_point, &stmt_import)
             }
             nodes::Stmt::ImportFrom(_) => {
                 Ok(namespace.clone_abstract_environment_or_default(program_point))
@@ -2037,7 +2006,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         program_point: ProgramPoint,
     ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
         if let Some(NodeData::Statement(statement_data)) = self.cfg.node_data(&program_point) {
-            self.gen_stmt(namespace, program_point, statement_data.statement())
+            self.evaluate_stmt(namespace, program_point, statement_data.statement())
         } else {
             Ok(namespace.clone_abstract_environment_or_default(program_point))
         }
@@ -2075,11 +2044,11 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                         if edge_datas.contains(&EdgeData::UnhandledException) =>
                     {
                         let unhandled_exception_constraint = ConstraintNode::Constraint(Arc::new(
-                            Constraint::Exception(ConstraintDefinition::include(
-                                ExceptionExpression::Type(expression.clone()),
-                                ExceptionExpression::Raised(RaisedException {
+                            IncludeConstraint::Exception(IncludeConstraintDefinition::new(
+                                Arc::new(ExceptionExpression::Type(expression.clone())),
+                                Arc::new(ExceptionExpression::Raised(RaisedException {
                                     program_points: imbl::Vector::new(),
-                                }),
+                                })),
                             )),
                         ));
 
