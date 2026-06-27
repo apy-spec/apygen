@@ -565,6 +565,22 @@ pub enum TypeExpression {
     LiteralEllipsis,
 }
 
+impl TypeExpression {
+    pub fn is_constant(&self) -> bool {
+        matches!(
+            self,
+            TypeExpression::LiteralInteger(_)
+                | TypeExpression::LiteralFloat(_)
+                | TypeExpression::LiteralComplex(_)
+                | TypeExpression::LiteralString(_)
+                | TypeExpression::LiteralBytes(_)
+                | TypeExpression::LiteralBoolean(_)
+                | TypeExpression::LiteralNone
+                | TypeExpression::LiteralEllipsis
+        )
+    }
+}
+
 impl Display for TypeExpression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1044,6 +1060,19 @@ impl<'a> ConstraintsBuilder<'a> {
         )));
 
         let mut current_nodes = LatticeMap::unit(node.clone(), Guard::default());
+
+        if left.is_constant() {
+            for (from, guard) in abstract_environment.current_nodes.as_ref() {
+                abstract_environment.constraint_graph.add_edge(
+                    from.clone(),
+                    node.clone(),
+                    guard.clone(),
+                );
+            }
+
+            abstract_environment.current_nodes = current_nodes;
+            return;
+        }
 
         let current_empty_constraint = ConstraintNode::Empty(location);
 
@@ -2309,16 +2338,11 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "42 ⊑ a@(1:0)";
-            "#exceptions(42) ⊑ #raised_exceptions()";
             "#type_exit";
-            "#exception_exit";
             "#exit";
-            "#entry" -> "42 ⊑ a@(1:0)" [label="#succeed(42)"];
-            "#entry" -> "#exceptions(42) ⊑ #raised_exceptions()" [label="#raise(42)"];
+            "#entry" -> "42 ⊑ a@(1:0)" [label="{}"];
             "42 ⊑ a@(1:0)" -> "#type_exit" [label="{}"];
-            "#exceptions(42) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
-            "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2329,16 +2353,11 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "4200000000000000000000000000 ⊑ a@(1:0)";
-            "#exceptions(4200000000000000000000000000) ⊑ #raised_exceptions()";
             "#type_exit";
-            "#exception_exit";
             "#exit";
-            "#entry" -> "4200000000000000000000000000 ⊑ a@(1:0)" [label="#succeed(4200000000000000000000000000)"];
-            "#entry" -> "#exceptions(4200000000000000000000000000) ⊑ #raised_exceptions()" [label="#raise(4200000000000000000000000000)"];
+            "#entry" -> "4200000000000000000000000000 ⊑ a@(1:0)" [label="{}"];
             "4200000000000000000000000000 ⊑ a@(1:0)" -> "#type_exit" [label="{}"];
-            "#exceptions(4200000000000000000000000000) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
-            "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
         vec![],
@@ -2857,12 +2876,10 @@ mod tests {
             "(a@(3:4)) + (a@(3:8)) ⊑ b@(3:0)";
             "4 ⊑ a@(1:0)";
             "#exceptions((a@(3:4)) + (a@(3:8))) ⊑ #raised_exceptions()";
-            "#exceptions(4) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "4 ⊑ a@(1:0)" [label="#succeed(4)"];
-            "#entry" -> "#exceptions(4) ⊑ #raised_exceptions()" [label="#raise(4)"];
+            "#entry" -> "4 ⊑ a@(1:0)" [label="{}"];
             "a@(1:0) ⊑ a@(3:4)" -> "(a@(3:4)) + (a@(3:8)) ⊑ b@(3:0)" [label="#succeed((a@(3:4)) + (a@(3:8)))"];
             "a@(1:0) ⊑ a@(3:4)" -> "#exceptions((a@(3:4)) + (a@(3:8))) ⊑ #raised_exceptions()" [label="#raise((a@(3:4)) + (a@(3:8)))"];
             "a@(1:0) ⊑ a@(3:8)" -> "(a@(3:4)) + (a@(3:8)) ⊑ b@(3:0)" [label="#succeed((a@(3:4)) + (a@(3:8)))"];
@@ -2871,7 +2888,6 @@ mod tests {
             "4 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a@(3:4)" [label="{}"];
             "4 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a@(3:8)" [label="{}"];
             "#exceptions((a@(3:4)) + (a@(3:8))) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions(4) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -2901,17 +2917,11 @@ mod tests {
             "True ⊑ x@(1:0)";
             "#exceptions(a@(8:4)) ⊑ #raised_exceptions()";
             "#exceptions(x@(3:3)) ⊑ #raised_exceptions()";
-            "#exceptions(42) ⊑ #raised_exceptions()";
-            "#exceptions(67) ⊑ #raised_exceptions()";
-            "#exceptions(True) ⊑ #raised_exceptions()";
             "#empty(3:0)";
-            "#empty(4:4)";
-            "#empty(6:4)";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "True ⊑ x@(1:0)" [label="#succeed(True)"];
-            "#entry" -> "#exceptions(True) ⊑ #raised_exceptions()" [label="#raise(True)"];
+            "#entry" -> "True ⊑ x@(1:0)" [label="{}"];
             "a@(4:4) ⊑ a@(8:4)" -> "a@(8:4) ⊑ b@(8:0)" [label="#succeed(a@(8:4))"];
             "a@(4:4) ⊑ a@(8:4)" -> "#exceptions(a@(8:4)) ⊑ #raised_exceptions()" [label="#raise(a@(8:4))"];
             "a@(6:4) ⊑ a@(8:4)" -> "a@(8:4) ⊑ b@(8:0)" [label="#succeed(a@(8:4))"];
@@ -2925,16 +2935,9 @@ mod tests {
             "True ⊑ x@(1:0)" -> "x@(1:0) ⊑ x@(3:3)" [label="{}"];
             "#exceptions(a@(8:4)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#exceptions(x@(3:3)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions(42) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions(67) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions(True) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#empty(3:0)" -> "42 ⊑ a@(4:4)" [label="#is_true(x@(3:3))"];
+            "#empty(3:0)" -> "67 ⊑ a@(6:4)" [label="#is_false(x@(3:3))"];
             "#empty(3:0)" -> "#exceptions(x@(3:3)) ⊑ #raised_exceptions()" [label="#raise(x@(3:3))"];
-            "#empty(3:0)" -> "#empty(4:4)" [label="#is_true(x@(3:3))"];
-            "#empty(3:0)" -> "#empty(6:4)" [label="#is_false(x@(3:3))"];
-            "#empty(4:4)" -> "42 ⊑ a@(4:4)" [label="#succeed(42)"];
-            "#empty(4:4)" -> "#exceptions(42) ⊑ #raised_exceptions()" [label="#raise(42)"];
-            "#empty(6:4)" -> "67 ⊑ a@(6:4)" [label="#succeed(67)"];
-            "#empty(6:4)" -> "#exceptions(67) ⊑ #raised_exceptions()" [label="#raise(67)"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -2963,13 +2966,11 @@ mod tests {
             "#exceptions(a@(6:4)) ⊑ #raised_exceptions()";
             "#exceptions((a@(3:6)) < (5)) ⊑ #raised_exceptions()";
             "#exceptions((a@(4:8)) + (1)) ⊑ #raised_exceptions()";
-            "#exceptions(0) ⊑ #raised_exceptions()";
             "#empty(3:0)";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "0 ⊑ a@(1:0)" [label="#succeed(0)"];
-            "#entry" -> "#exceptions(0) ⊑ #raised_exceptions()" [label="#raise(0)"];
+            "#entry" -> "0 ⊑ a@(1:0)" [label="{}"];
             "a@(1:0) ⊑ a@(3:6)" -> "#empty(3:0)" [label="{}"];
             "a@(3:6) ⊑ a@(4:8)" -> "(a@(4:8)) + (1) ⊑ a@(4:4)" [label="#succeed((a@(4:8)) + (1))"];
             "a@(3:6) ⊑ a@(4:8)" -> "#exceptions((a@(4:8)) + (1)) ⊑ #raised_exceptions()" [label="#raise((a@(4:8)) + (1))"];
@@ -2984,7 +2985,6 @@ mod tests {
             "#exceptions(a@(6:4)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#exceptions((a@(3:6)) < (5)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#exceptions((a@(4:8)) + (1)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions(0) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#empty(3:0)" -> "a@(3:6) ⊑ a@(4:8)" [label="#is_true((a@(3:6)) < (5))"];
             "#empty(3:0)" -> "a@(3:6) ⊑ a@(6:4)" [label="#is_false((a@(3:6)) < (5))"];
             "#empty(3:0)" -> "#exceptions((a@(3:6)) < (5)) ⊑ #raised_exceptions()" [label="#raise((a@(3:6)) < (5))"];
