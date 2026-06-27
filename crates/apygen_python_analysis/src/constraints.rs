@@ -867,11 +867,14 @@ impl Lattice for AbstractEnvironment {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypeExpressionEval {
     pub expression: TypeExpression,
-    pub variables: imbl::OrdSet<ExpressionVariable>,
+    pub variables: LatticeMap<VariableName, LatticeSet<Location>>,
 }
 
 impl TypeExpressionEval {
-    pub fn new(expression: TypeExpression, variables: imbl::OrdSet<ExpressionVariable>) -> Self {
+    pub fn new(
+        expression: TypeExpression,
+        variables: LatticeMap<VariableName, LatticeSet<Location>>,
+    ) -> Self {
         Self {
             expression,
             variables,
@@ -879,11 +882,11 @@ impl TypeExpressionEval {
     }
 
     pub fn without_variables(expression: TypeExpression) -> Self {
-        Self::new(expression, imbl::OrdSet::default())
+        Self::new(expression, LatticeMap::default())
     }
 
     pub fn consume(&mut self, eval: TypeExpressionEval) -> TypeExpression {
-        self.variables.extend(eval.variables);
+        self.variables = self.variables.join(&eval.variables);
         eval.expression
     }
 
@@ -898,7 +901,7 @@ impl TypeExpressionEval {
     ) -> Self {
         Self::new(
             f(self.expression, other.expression),
-            self.variables.union(other.variables),
+            self.variables.join(&other.variables),
         )
     }
 }
@@ -983,7 +986,7 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn create_used_variables_constraints(
         &self,
         abstract_environment: &mut AbstractEnvironment,
-        used_variables: imbl::OrdSet<ExpressionVariable>,
+        used_variables: LatticeMap<VariableName, LatticeSet<Location>>,
     ) {
         if used_variables.is_empty() {
             return;
@@ -991,34 +994,38 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let mut current_nodes: LatticeMap<ConstraintNode, Guard> = LatticeMap::default();
 
-        for used_variable in used_variables {
+        for (used_variable_name, used_locations) in used_variables.as_ref() {
             if let Some(previous_locations) = abstract_environment
                 .variable_locations
-                .get(&used_variable.name)
+                .get(used_variable_name)
             {
                 for previous_location in previous_locations.as_ref() {
-                    let node = ConstraintNode::Constraint(Arc::new(IncludeConstraint::Type(
-                        IncludeConstraintDefinition::new(
-                            Arc::new(TypeExpression::Variable(ExpressionVariable::new(
-                                used_variable.name.clone(),
-                                previous_location.clone(),
-                            ))),
-                            Arc::new(TypeExpression::Variable(used_variable.clone())),
-                        ),
-                    )));
-                    for (current_node, guard) in abstract_environment.current_nodes.as_ref() {
-                        abstract_environment.constraint_graph.add_edge(
-                            current_node.clone(),
-                            node.clone(),
-                            guard.clone(),
-                        );
+                    for used_location in used_locations.as_ref() {
+                        let node = ConstraintNode::Constraint(Arc::new(IncludeConstraint::Type(
+                            IncludeConstraintDefinition::new(
+                                Arc::new(TypeExpression::Variable(ExpressionVariable::new(
+                                    used_variable_name.clone(),
+                                    previous_location.clone(),
+                                ))),
+                                Arc::new(TypeExpression::Variable(ExpressionVariable::new(
+                                    used_variable_name.clone(),
+                                    used_location.clone(),
+                                ))),
+                            ),
+                        )));
+                        for (current_node, guard) in abstract_environment.current_nodes.as_ref() {
+                            abstract_environment.constraint_graph.add_edge(
+                                current_node.clone(),
+                                node.clone(),
+                                guard.clone(),
+                            );
+                        }
+                        current_nodes.insert(node, Guard::default());
                     }
-                    current_nodes.insert(node, Guard::default());
                 }
-                abstract_environment.variable_locations.insert(
-                    used_variable.name.clone(),
-                    LatticeSet::unit(used_variable.location.clone()),
-                );
+                abstract_environment
+                    .variable_locations
+                    .insert(used_variable_name.clone(), used_locations.clone());
             }
         }
 
@@ -1522,14 +1529,15 @@ impl<'a> ConstraintsBuilder<'a> {
         program_point: ProgramPoint,
         expr_name: &nodes::ExprName,
     ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
-        let variable = ExpressionVariable::new(
-            self.gen_variable_name(program_point, &expr_name.id)?,
-            self.gen_variable_location(expr_name.range),
-        );
+        let variable_name = self.gen_variable_name(program_point, &expr_name.id)?;
+        let variable_location = self.gen_variable_location(expr_name.range);
 
         Ok(TypeExpressionEval::new(
-            TypeExpression::Variable(variable.clone()),
-            imbl::OrdSet::unit(variable),
+            TypeExpression::Variable(ExpressionVariable::new(
+                variable_name.clone(),
+                variable_location.clone(),
+            )),
+            LatticeMap::unit(variable_name, LatticeSet::unit(variable_location)),
         ))
     }
 
@@ -2069,6 +2077,12 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                         );
                     }
                     _ => {
+                        if edge_datas
+                            .iter()
+                            .all(|edge_data| matches!(edge_data, EdgeData::UnhandledException))
+                        {
+                            continue;
+                        }
                         target_abstract_environment.constraint_graph.add_edge(
                             from.clone(),
                             ConstraintNode::TypeExit,
@@ -2829,6 +2843,41 @@ mod tests {
         "##},
         vec![],
     )]
+    #[case::add_same_variable(
+        indoc! {r##"
+        a = 4
+
+        b = a + a
+        "##},
+        indoc! {r##"
+        digraph "Constraints" {
+            "#entry";
+            "a@(1:0) ⊑ a@(3:4)";
+            "a@(1:0) ⊑ a@(3:8)";
+            "(a@(3:4)) + (a@(3:8)) ⊑ b@(3:0)";
+            "4 ⊑ a@(1:0)";
+            "#exceptions((a@(3:4)) + (a@(3:8))) ⊑ #raised_exceptions()";
+            "#exceptions(4) ⊑ #raised_exceptions()";
+            "#type_exit";
+            "#exception_exit";
+            "#exit";
+            "#entry" -> "4 ⊑ a@(1:0)" [label="#succeed(4)"];
+            "#entry" -> "#exceptions(4) ⊑ #raised_exceptions()" [label="#raise(4)"];
+            "a@(1:0) ⊑ a@(3:4)" -> "(a@(3:4)) + (a@(3:8)) ⊑ b@(3:0)" [label="#succeed((a@(3:4)) + (a@(3:8)))"];
+            "a@(1:0) ⊑ a@(3:4)" -> "#exceptions((a@(3:4)) + (a@(3:8))) ⊑ #raised_exceptions()" [label="#raise((a@(3:4)) + (a@(3:8)))"];
+            "a@(1:0) ⊑ a@(3:8)" -> "(a@(3:4)) + (a@(3:8)) ⊑ b@(3:0)" [label="#succeed((a@(3:4)) + (a@(3:8)))"];
+            "a@(1:0) ⊑ a@(3:8)" -> "#exceptions((a@(3:4)) + (a@(3:8))) ⊑ #raised_exceptions()" [label="#raise((a@(3:4)) + (a@(3:8)))"];
+            "(a@(3:4)) + (a@(3:8)) ⊑ b@(3:0)" -> "#type_exit" [label="{}"];
+            "4 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a@(3:4)" [label="{}"];
+            "4 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a@(3:8)" [label="{}"];
+            "#exceptions((a@(3:4)) + (a@(3:8))) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions(4) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#type_exit" -> "#exit" [label="{}"];
+            "#exception_exit" -> "#exit" [label="{}"];
+        }
+        "##},
+        vec![],
+    )]
     #[case::simple_if_statement(
         indoc! {r##"
         x = True
@@ -2871,12 +2920,9 @@ mod tests {
             "x@(1:0) ⊑ x@(3:3)" -> "#empty(3:0)" [label="{}"];
             "42 ⊑ a@(4:4)" -> "a@(4:4) ⊑ a@(8:4)" [label="{}"];
             "42 ⊑ a@(4:4)" -> "a@(6:4) ⊑ a@(8:4)" [label="{}"];
-            "42 ⊑ a@(4:4)" -> "#type_exit" [label="{}"];
             "67 ⊑ a@(6:4)" -> "a@(4:4) ⊑ a@(8:4)" [label="{}"];
             "67 ⊑ a@(6:4)" -> "a@(6:4) ⊑ a@(8:4)" [label="{}"];
-            "67 ⊑ a@(6:4)" -> "#type_exit" [label="{}"];
             "True ⊑ x@(1:0)" -> "x@(1:0) ⊑ x@(3:3)" [label="{}"];
-            "True ⊑ x@(1:0)" -> "#type_exit" [label="{}"];
             "#exceptions(a@(8:4)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#exceptions(x@(3:3)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#exceptions(42) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
@@ -2933,10 +2979,8 @@ mod tests {
             "a@(6:4) ⊑ b@(6:0)" -> "#type_exit" [label="{}"];
             "(a@(4:8)) + (1) ⊑ a@(4:4)" -> "a@(1:0) ⊑ a@(3:6)" [label="{}"];
             "(a@(4:8)) + (1) ⊑ a@(4:4)" -> "a@(4:4) ⊑ a@(3:6)" [label="{}"];
-            "(a@(4:8)) + (1) ⊑ a@(4:4)" -> "#type_exit" [label="{}"];
             "0 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a@(3:6)" [label="{}"];
             "0 ⊑ a@(1:0)" -> "a@(4:4) ⊑ a@(3:6)" [label="{}"];
-            "0 ⊑ a@(1:0)" -> "#type_exit" [label="{}"];
             "#exceptions(a@(6:4)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#exceptions((a@(3:6)) < (5)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#exceptions((a@(4:8)) + (1)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
