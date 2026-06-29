@@ -309,6 +309,47 @@ impl Display for ExpressionVariable {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExpressionOverride {
+    pub previous: Arc<TypeExpression>,
+    pub new: Arc<TypeExpression>,
+}
+
+impl ExpressionOverride {
+    pub fn new(previous: Arc<TypeExpression>, new: Arc<TypeExpression>) -> Self {
+        Self { previous, new }
+    }
+}
+
+impl Display for ExpressionOverride {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#override(previous={}, new={})", self.previous, self.new)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExpressionFunction {
+    pub location: Location,
+
+    pub is_async: bool,
+}
+
+impl ExpressionFunction {
+    pub fn new(location: Location, is_async: bool) -> Self {
+        Self { location, is_async }
+    }
+}
+
+impl Display for ExpressionFunction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "#function(location={}, async={})",
+            self.location, self.is_async
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionImport {
     pub module: ModuleName,
 }
@@ -416,15 +457,6 @@ pub struct Parameter {
     pub kind: ParameterKind,
 
     pub is_optional: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ExpressionFunction {
-    pub program_point: ProgramPoint,
-
-    pub parameters: Arc<Vec<Parameter>>,
-
-    pub is_async: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -549,6 +581,8 @@ impl Display for ExpressionUnary {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TypeExpression {
     Variable(ExpressionVariable),
+    Override(ExpressionOverride),
+    Function(ExpressionFunction),
     Import(ExpressionImport),
     Attribute(ExpressionAttribute),
     Subscript(ExpressionSubscript),
@@ -585,6 +619,8 @@ impl Display for TypeExpression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             TypeExpression::Variable(expression_variable) => write!(f, "{}", expression_variable),
+            TypeExpression::Override(expression_override) => write!(f, "{}", expression_override),
+            TypeExpression::Function(expression_function) => write!(f, "{}", expression_function),
             TypeExpression::Import(expression_import) => write!(f, "{}", expression_import),
             TypeExpression::Attribute(expression_attribute) => {
                 write!(f, "{}", expression_attribute)
@@ -847,76 +883,107 @@ impl Lattice for ConstraintGraph {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AbstractEnvironment {
+    pub arguments: LatticeMap<VariableName, LatticeSet<TypeExpression>>,
+    pub return_type: LatticeSet<TypeExpression>,
+    pub exceptions: LatticeSet<ExceptionExpression>,
     pub current_nodes: LatticeMap<ConstraintNode, Guard>,
     pub variable_locations: LatticeMap<VariableName, LatticeSet<Location>>,
     pub constraint_graph: ConstraintGraph,
+    pub sub_abstract_environments: LatticeMap<Location, AbstractEnvironment>,
 }
 
 impl Default for AbstractEnvironment {
     fn default() -> Self {
         Self {
+            arguments: LatticeMap::default(),
+            return_type: LatticeSet::default(),
+            exceptions: LatticeSet::default(),
             current_nodes: LatticeMap::unit(
                 ConstraintNode::Entry,
                 Guard::Multiple(LatticeSet::default()),
             ),
             variable_locations: LatticeMap::default(),
             constraint_graph: ConstraintGraph::default(),
+            sub_abstract_environments: LatticeMap::default(),
         }
     }
 }
 impl Lattice for AbstractEnvironment {
     fn includes(&self, other: &Self) -> bool {
-        self.current_nodes.includes(&other.current_nodes)
+        self.arguments.includes(&other.arguments)
+            && self.return_type.includes(&other.return_type)
+            && self.exceptions.includes(&other.exceptions)
+            && self.current_nodes.includes(&other.current_nodes)
             && self.variable_locations.includes(&other.variable_locations)
             && self.constraint_graph.includes(&other.constraint_graph)
+            && self
+                .sub_abstract_environments
+                .includes(&other.sub_abstract_environments)
     }
 
     fn join(&self, other: &Self) -> Self {
         Self {
+            arguments: self.arguments.join(&other.arguments),
+            return_type: self.return_type.join(&other.return_type),
+            exceptions: self.exceptions.join(&other.exceptions),
             current_nodes: self.current_nodes.join(&other.current_nodes),
             variable_locations: self.variable_locations.join(&other.variable_locations),
             constraint_graph: self.constraint_graph.join(&other.constraint_graph),
+            sub_abstract_environments: self
+                .sub_abstract_environments
+                .join(&other.sub_abstract_environments),
         }
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UsedVariables {
+    pub names: LatticeMap<VariableName, LatticeSet<Location>>,
+}
+
+impl UsedVariables {
+    pub fn new(names: LatticeMap<VariableName, LatticeSet<Location>>) -> Self {
+        Self { names }
+    }
+
+    pub fn consume<T>(&mut self, eval: ExpressionEval<T>) -> T {
+        self.names = self.names.join(&eval.variables.names);
+        eval.value
+    }
+}
+
+impl Lattice for UsedVariables {
+    fn includes(&self, other: &Self) -> bool {
+        self.names.includes(&other.names)
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        Self::new(self.names.join(&other.names))
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TypeExpressionEval {
-    pub expression: TypeExpression,
-    pub variables: LatticeMap<VariableName, LatticeSet<Location>>,
+pub struct ExpressionEval<T> {
+    pub value: T,
+    pub variables: UsedVariables,
 }
 
-impl TypeExpressionEval {
-    pub fn new(
-        expression: TypeExpression,
-        variables: LatticeMap<VariableName, LatticeSet<Location>>,
-    ) -> Self {
-        Self {
-            expression,
-            variables,
-        }
+impl<T> ExpressionEval<T> {
+    pub fn new(value: T, variables: UsedVariables) -> Self {
+        Self { value, variables }
     }
 
-    pub fn without_variables(expression: TypeExpression) -> Self {
-        Self::new(expression, LatticeMap::default())
+    pub fn only_value(value: T) -> Self {
+        Self::new(value, UsedVariables::default())
     }
 
-    pub fn consume(&mut self, eval: TypeExpressionEval) -> TypeExpression {
-        self.variables = self.variables.join(&eval.variables);
-        eval.expression
+    pub fn map(self, f: impl FnOnce(T) -> T) -> Self {
+        Self::new(f(self.value), self.variables)
     }
 
-    pub fn map(self, f: impl FnOnce(TypeExpression) -> TypeExpression) -> Self {
-        Self::new(f(self.expression), self.variables)
-    }
-
-    pub fn merge(
-        self,
-        other: Self,
-        f: impl FnOnce(TypeExpression, TypeExpression) -> TypeExpression,
-    ) -> Self {
+    pub fn merge(self, other: Self, f: impl FnOnce(T, T) -> T) -> Self {
         Self::new(
-            f(self.expression, other.expression),
+            f(self.value, other.value),
             self.variables.join(&other.variables),
         )
     }
@@ -1002,15 +1069,15 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn create_used_variables_constraints(
         &self,
         abstract_environment: &mut AbstractEnvironment,
-        used_variables: LatticeMap<VariableName, LatticeSet<Location>>,
+        used_variables: UsedVariables,
     ) {
-        if used_variables.is_empty() {
+        if used_variables.names.is_empty() {
             return;
         }
 
         let mut current_nodes: LatticeMap<ConstraintNode, Guard> = LatticeMap::default();
 
-        for (used_variable_name, used_locations) in used_variables.as_ref() {
+        for (used_variable_name, used_locations) in used_variables.names.as_ref() {
             if let Some(previous_locations) = abstract_environment
                 .variable_locations
                 .get(used_variable_name)
@@ -1183,90 +1250,101 @@ impl<'a> ConstraintsBuilder<'a> {
         Location::new(line, offset.to_usize())
     }
 
-    pub fn gen_parameter(
+    pub fn evaluate_parameter(
         &self,
         program_point: ProgramPoint,
         parameter: &nodes::Parameter,
-    ) -> Result<(VariableName, ConstraintGraph), ConstraintsBuilderError> {
+    ) -> Result<(VariableName, Option<ExpressionEval<TypeExpression>>), ConstraintsBuilderError>
+    {
         let parameter_name = self.gen_variable_name(program_point, &parameter.name)?;
-
-        let constraint_graph = ConstraintGraph::default();
 
         if let Some(annotation) = &parameter.annotation {
             // TODO: add support for annotations
         }
 
-        Ok((parameter_name, constraint_graph))
+        Ok((parameter_name, None))
     }
 
-    pub fn gen_parameter_with_default(
+    pub fn evaluate_parameter_with_default(
         &self,
         program_point: ProgramPoint,
-        target_abstract_environment: &mut AbstractEnvironment,
         parameter_with_default: &nodes::ParameterWithDefault,
-    ) -> Result<(VariableName, ConstraintGraph), ConstraintsBuilderError> {
-        let (parameter_name, mut constraint_graph) =
-            self.gen_parameter(program_point, &parameter_with_default.parameter)?;
+    ) -> Result<(VariableName, Option<ExpressionEval<TypeExpression>>), ConstraintsBuilderError>
+    {
+        let (parameter_name, annotation_eval_option) =
+            self.evaluate_parameter(program_point, &parameter_with_default.parameter)?;
 
-        if let Some(default) = &parameter_with_default.default {
-            let type_expression =
+        let parameter_eval_option = if let Some(default) = &parameter_with_default.default {
+            let default_eval =
                 self.evaluate_expr(&Namespace::default(), program_point, &default)?;
-            constraint_graph.add_edge(
-                ConstraintNode::Entry,
-                ConstraintNode::Constraint(Arc::new(IncludeConstraint::Type(
-                    IncludeConstraintDefinition::new(
-                        Arc::new(TypeExpression::Variable(ExpressionVariable::new(
-                            parameter_name.clone(),
-                            self.gen_variable_location(parameter_with_default.range),
-                        ))),
-                        Arc::new(type_expression.expression),
-                    ),
-                ))),
-                Guard::default(),
-            );
-        }
 
-        Ok((parameter_name, constraint_graph))
+            if let Some(annotation_eval) = annotation_eval_option {
+                Some(annotation_eval.merge(default_eval, |annotation, default| {
+                    TypeExpression::Override(ExpressionOverride::new(
+                        Arc::new(annotation),
+                        Arc::new(default),
+                    ))
+                }))
+            } else {
+                Some(default_eval)
+            }
+        } else {
+            annotation_eval_option
+        };
+
+        Ok((parameter_name, parameter_eval_option))
     }
 
     pub fn gen_parameters(
         &self,
         program_point: ProgramPoint,
-        target_abstract_environment: &mut AbstractEnvironment,
         parameters: &nodes::Parameters,
-    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
-        let mut abstract_environment = AbstractEnvironment::default();
+    ) -> Result<
+        ExpressionEval<LatticeMap<VariableName, LatticeSet<TypeExpression>>>,
+        ConstraintsBuilderError,
+    > {
+        let positional_only_parameters = parameters
+            .posonlyargs
+            .iter()
+            .map(|parameter| self.evaluate_parameter_with_default(program_point, &parameter));
+        let positional_or_keyword_parameters = parameters
+            .args
+            .iter()
+            .map(|parameter| self.evaluate_parameter(program_point, &parameter.parameter));
+        let var_positional_parameters = parameters
+            .vararg
+            .iter()
+            .map(|parameter| self.evaluate_parameter(program_point, &parameter));
+        let keyword_only_parameters = parameters
+            .kwonlyargs
+            .iter()
+            .map(|parameter| self.evaluate_parameter_with_default(program_point, &parameter));
+        let var_keyword_parameters = parameters
+            .kwarg
+            .iter()
+            .map(|parameter| self.evaluate_parameter(program_point, &parameter));
 
-        for parameter in &parameters.posonlyargs {
-            let (parameter_name, constraints) = self.gen_parameter_with_default(
-                program_point,
-                target_abstract_environment,
-                &parameter,
-            )?;
+        let parameter_evals = positional_only_parameters
+            .chain(positional_or_keyword_parameters)
+            .chain(var_positional_parameters)
+            .chain(keyword_only_parameters)
+            .chain(var_keyword_parameters)
+            .collect::<Result<Vec<(VariableName, Option<ExpressionEval<TypeExpression>>)>, _>>()?;
+
+        let mut used_variables = UsedVariables::default();
+
+        let mut arguments = LatticeMap::default();
+
+        for (variable_name, parameter_eval_option) in parameter_evals {
+            let parameter_type_expression = if let Some(parameter_eval) = parameter_eval_option {
+                LatticeSet::unit(used_variables.consume(parameter_eval))
+            } else {
+                LatticeSet::default()
+            };
+            arguments = arguments.update_join(variable_name, parameter_type_expression);
         }
 
-        for parameter in &parameters.args {
-            let (parameter_name, constraints) =
-                self.gen_parameter(program_point, &parameter.parameter)?;
-        }
-
-        if let Some(parameter) = &parameters.vararg {
-            let (parameter_name, constraints) = self.gen_parameter(program_point, &parameter)?;
-        }
-
-        for parameter in &parameters.kwonlyargs {
-            let (parameter_name, constraints) = self.gen_parameter_with_default(
-                program_point,
-                target_abstract_environment,
-                &parameter,
-            )?;
-        }
-
-        if let Some(parameter) = &parameters.kwarg {
-            let (parameter_name, constraints) = self.gen_parameter(program_point, &parameter)?;
-        }
-
-        Ok(abstract_environment)
+        Ok(ExpressionEval::new(arguments, used_variables))
     }
 
     pub fn evaluate_expr_bool_op(
@@ -1274,7 +1352,7 @@ impl<'a> ConstraintsBuilder<'a> {
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
         expr_bool_op: &nodes::ExprBoolOp,
-    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+    ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
         let mut values_iter = expr_bool_op.values.iter();
 
         let mut eval = match values_iter.next() {
@@ -1312,7 +1390,7 @@ impl<'a> ConstraintsBuilder<'a> {
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
         expr_bin_op: &nodes::ExprBinOp,
-    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+    ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
         let left_eval = self.evaluate_expr(namespace, program_point, &expr_bin_op.left)?;
         let right_eval = self.evaluate_expr(namespace, program_point, &expr_bin_op.right)?;
 
@@ -1346,7 +1424,7 @@ impl<'a> ConstraintsBuilder<'a> {
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
         expr_unary_op: &nodes::ExprUnaryOp,
-    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+    ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
         let operand_eval = self.evaluate_expr(namespace, program_point, &expr_unary_op.operand)?;
 
         let operator = match expr_unary_op.op {
@@ -1369,7 +1447,7 @@ impl<'a> ConstraintsBuilder<'a> {
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
         expr_compare: &nodes::ExprCompare,
-    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+    ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
         let mut eval = self.evaluate_expr(namespace, program_point, &expr_compare.left)?;
 
         if expr_compare.ops.is_empty()
@@ -1414,16 +1492,18 @@ impl<'a> ConstraintsBuilder<'a> {
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
         expr_call: &nodes::ExprCall,
-    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+    ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
         let mut func_eval = self.evaluate_expr(namespace, program_point, &expr_call.func)?;
 
         let mut positional_arguments: imbl::Vector<Arc<TypeExpression>> = imbl::Vector::new();
         for positional_argument in &expr_call.arguments.args {
-            positional_arguments.push_back(Arc::new(func_eval.consume(self.evaluate_expr(
-                namespace,
-                program_point,
-                &positional_argument,
-            )?)));
+            positional_arguments.push_back(Arc::new(
+                func_eval.variables.consume(self.evaluate_expr(
+                    namespace,
+                    program_point,
+                    &positional_argument,
+                )?),
+            ));
         }
 
         let mut keyword_arguments: imbl::Vector<KeywordArgument> = imbl::Vector::new();
@@ -1434,7 +1514,7 @@ impl<'a> ConstraintsBuilder<'a> {
             };
             keyword_arguments.push_back(KeywordArgument {
                 name: keyword_name,
-                value: Arc::new(func_eval.consume(self.evaluate_expr(
+                value: Arc::new(func_eval.variables.consume(self.evaluate_expr(
                     namespace,
                     program_point,
                     &keyword_argument.value,
@@ -1524,7 +1604,7 @@ impl<'a> ConstraintsBuilder<'a> {
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
         expr_attribute: &nodes::ExprAttribute,
-    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+    ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
         let value_eval = self.evaluate_expr(namespace, program_point, &expr_attribute.value)?;
         let attribute = self.gen_variable_name(program_point, &expr_attribute.attr)?;
 
@@ -1541,7 +1621,7 @@ impl<'a> ConstraintsBuilder<'a> {
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
         expr_subscript: &nodes::ExprSubscript,
-    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+    ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
         let value_eval = self.evaluate_expr(namespace, program_point, &expr_subscript.value)?;
         let slice_eval = self.evaluate_expr(namespace, program_point, &expr_subscript.slice)?;
 
@@ -1557,16 +1637,19 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         program_point: ProgramPoint,
         expr_name: &nodes::ExprName,
-    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+    ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
         let variable_name = self.gen_variable_name(program_point, &expr_name.id)?;
         let variable_location = self.gen_variable_location(expr_name.range);
 
-        Ok(TypeExpressionEval::new(
+        Ok(ExpressionEval::new(
             TypeExpression::Variable(ExpressionVariable::new(
                 variable_name.clone(),
                 variable_location.clone(),
             )),
-            LatticeMap::unit(variable_name, LatticeSet::unit(variable_location)),
+            UsedVariables::new(LatticeMap::unit(
+                variable_name,
+                LatticeSet::unit(variable_location),
+            )),
         ))
     }
 
@@ -1575,7 +1658,7 @@ impl<'a> ConstraintsBuilder<'a> {
         namespace: &Namespace<AbstractEnvironment>,
         program_point: ProgramPoint,
         expr: &nodes::Expr,
-    ) -> Result<TypeExpressionEval, ConstraintsBuilderError> {
+    ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
         match expr {
             nodes::Expr::BoolOp(expr_bool_op) => {
                 self.evaluate_expr_bool_op(namespace, program_point, expr_bool_op)
@@ -1605,30 +1688,22 @@ impl<'a> ConstraintsBuilder<'a> {
                 self.evaluate_expr_call(namespace, program_point, expr_call)
             }
             nodes::Expr::FString(_) => todo!(),
-            nodes::Expr::StringLiteral(expr_string_literal) => {
-                Ok(TypeExpressionEval::without_variables(
-                    self.evaluate_expr_string_literal(expr_string_literal),
-                ))
-            }
-            nodes::Expr::BytesLiteral(expr_bytes_literal) => {
-                Ok(TypeExpressionEval::without_variables(
-                    self.evaluate_expr_bytes_literal(expr_bytes_literal),
-                ))
-            }
-            nodes::Expr::NumberLiteral(expr_number_literal) => {
-                Ok(TypeExpressionEval::without_variables(
-                    self.evaluate_expr_number_literal(expr_number_literal),
-                ))
-            }
-            nodes::Expr::BooleanLiteral(expr_boolean_literal) => {
-                Ok(TypeExpressionEval::without_variables(
-                    self.evaluate_expr_boolean_literal(expr_boolean_literal),
-                ))
-            }
-            nodes::Expr::NoneLiteral(_) => Ok(TypeExpressionEval::without_variables(
+            nodes::Expr::StringLiteral(expr_string_literal) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_string_literal(expr_string_literal),
+            )),
+            nodes::Expr::BytesLiteral(expr_bytes_literal) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_bytes_literal(expr_bytes_literal),
+            )),
+            nodes::Expr::NumberLiteral(expr_number_literal) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_number_literal(expr_number_literal),
+            )),
+            nodes::Expr::BooleanLiteral(expr_boolean_literal) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_boolean_literal(expr_boolean_literal),
+            )),
+            nodes::Expr::NoneLiteral(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
             )),
-            nodes::Expr::EllipsisLiteral(_) => Ok(TypeExpressionEval::without_variables(
+            nodes::Expr::EllipsisLiteral(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_ellipsis_literal(),
             )),
             nodes::Expr::Attribute(expr_attribute) => {
@@ -1655,13 +1730,24 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let identifier = self.gen_variable_name(program_point, &stmt_function_def.name)?;
+        let parameters = self.gen_parameters(ProgramPoint::Entry, &stmt_function_def.parameters)?;
 
-        let parameters = self.gen_parameters(
-            ProgramPoint::Entry,
+        self.create_used_variables_constraints(
             &mut target_abstract_environment,
-            &stmt_function_def.parameters,
-        )?;
+            parameters.variables,
+        );
+
+        let location = self.gen_variable_location(stmt_function_def.name.range);
+
+        self.assign_variable(
+            &mut target_abstract_environment,
+            location.clone(),
+            self.gen_variable_name(program_point, &stmt_function_def.name)?,
+            Arc::new(TypeExpression::Function(ExpressionFunction::new(
+                location,
+                stmt_function_def.is_async,
+            ))),
+        );
 
         Ok(target_abstract_environment)
     }
@@ -1774,7 +1860,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         self.create_used_variables_constraints(&mut target_abstract_environment, eval.variables);
 
-        let type_expression = Arc::new(eval.expression);
+        let type_expression = Arc::new(eval.value);
 
         let mut current_nodes: LatticeSet<(ConstraintNode, Guard)> = LatticeSet::default();
         for target_expr in &stmt_assign.targets {
@@ -1837,7 +1923,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         self.create_used_variables_constraints(&mut target_abstract_environment, eval.variables);
 
-        let type_expression = Arc::new(eval.expression);
+        let type_expression = Arc::new(eval.value);
 
         match target {
             AssignmentTarget::Name(target_name) => {
@@ -1874,7 +1960,7 @@ impl<'a> ConstraintsBuilder<'a> {
             condition_eval.variables,
         );
 
-        let condition_expression = Arc::new(condition_eval.expression);
+        let condition_expression = Arc::new(condition_eval.value);
 
         self.assign_empty_constraint(
             &mut target_abstract_environment,
@@ -1908,7 +1994,7 @@ impl<'a> ConstraintsBuilder<'a> {
             condition_eval.variables,
         );
 
-        let condition_expression = Arc::new(condition_eval.expression);
+        let condition_expression = Arc::new(condition_eval.value);
 
         self.assign_empty_constraint(
             &mut target_abstract_environment,
@@ -2988,6 +3074,38 @@ mod tests {
             "#empty(3:0)" -> "a@(3:6) ⊑ a@(4:8)" [label="#is_true((a@(3:6)) < (5))"];
             "#empty(3:0)" -> "a@(3:6) ⊑ a@(6:4)" [label="#is_false((a@(3:6)) < (5))"];
             "#empty(3:0)" -> "#exceptions((a@(3:6)) < (5)) ⊑ #raised_exceptions()" [label="#raise((a@(3:6)) < (5))"];
+            "#type_exit" -> "#exit" [label="{}"];
+            "#exception_exit" -> "#exit" [label="{}"];
+        }
+        "##},
+        vec![],
+    )]
+    #[case::simple_function_definition(
+        indoc! {r##"
+        def add_two(a, b):
+            return a + b
+
+        result = add_two(42, 67)
+        "##},
+        indoc! {r##"
+        digraph "Constraints" {
+            "#entry";
+            "add_two@(1:4) ⊑ add_two@(4:9)";
+            "#function(location=1:4, async=false) ⊑ add_two@(1:4)";
+            "(add_two@(4:9))(42, 67) ⊑ result@(4:0)";
+            "#exceptions(#function(location=1:4, async=false)) ⊑ #raised_exceptions()";
+            "#exceptions((add_two@(4:9))(42, 67)) ⊑ #raised_exceptions()";
+            "#type_exit";
+            "#exception_exit";
+            "#exit";
+            "#entry" -> "#function(location=1:4, async=false) ⊑ add_two@(1:4)" [label="#succeed(#function(location=1:4, async=false))"];
+            "#entry" -> "#exceptions(#function(location=1:4, async=false)) ⊑ #raised_exceptions()" [label="#raise(#function(location=1:4, async=false))"];
+            "add_two@(1:4) ⊑ add_two@(4:9)" -> "(add_two@(4:9))(42, 67) ⊑ result@(4:0)" [label="#succeed((add_two@(4:9))(42, 67))"];
+            "add_two@(1:4) ⊑ add_two@(4:9)" -> "#exceptions((add_two@(4:9))(42, 67)) ⊑ #raised_exceptions()" [label="#raise((add_two@(4:9))(42, 67))"];
+            "#function(location=1:4, async=false) ⊑ add_two@(1:4)" -> "add_two@(1:4) ⊑ add_two@(4:9)" [label="{}"];
+            "(add_two@(4:9))(42, 67) ⊑ result@(4:0)" -> "#type_exit" [label="{}"];
+            "#exceptions(#function(location=1:4, async=false)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((add_two@(4:9))(42, 67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }

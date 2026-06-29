@@ -103,6 +103,8 @@ impl ConstraintSolver<'_> {
                 Type::Never,
                 PyEffects::new().with_completeness(Completeness::Partial),
             ),
+            TypeExpression::Override(_) => PyTypeEval::with_default_effects(Type::Never),
+            TypeExpression::Function(_) => PyTypeEval::with_default_effects(Type::Never),
             TypeExpression::Import(_) => PyTypeEval::with_default_effects(Type::Never),
             TypeExpression::Attribute(_) => PyTypeEval::with_default_effects(Type::Never),
             TypeExpression::Subscript(_) => PyTypeEval::with_default_effects(Type::Never),
