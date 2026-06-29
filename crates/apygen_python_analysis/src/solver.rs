@@ -253,9 +253,7 @@ impl GraphAnalyser for ConstraintSolver<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constraints::{
-        AbstractEnvironment, ConstraintsBuilder, ExpressionVariable, ModuleName,
-    };
+    use crate::constraints::{AbstractEnvironment, AnalysisState, ConstraintsBuilder, ExpressionVariable, ModuleName};
     use apygen_analysis::analysis;
     use apygen_analysis::cfg::{Cfg, ProgramPoint};
     use apygen_analysis::namespace::Namespace;
@@ -263,7 +261,7 @@ mod tests {
     use rstest::rstest;
     use std::sync::mpsc;
 
-    fn generate_constraints(source: &str) -> (Namespace<AbstractEnvironment>, Vec<String>) {
+    fn generate_constraints(source: &str) -> (AnalysisState, Vec<String>) {
         let cfg = Cfg::parse(source).expect("Should build CFG");
 
         let (import_tx, import_rx) = mpsc::channel::<ModuleName>();
@@ -323,7 +321,7 @@ mod tests {
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
         let (namespace, _) = generate_constraints(&source);
 
-        let exit_state = &namespace.abstract_environments[&ProgramPoint::Exit];
+        let exit_state = &namespace.abstract_states[&ProgramPoint::Exit];
 
         let solver = ConstraintSolver {
             graph: &exit_state.constraint_graph,

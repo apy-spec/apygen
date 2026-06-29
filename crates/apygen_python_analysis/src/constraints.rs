@@ -4,11 +4,10 @@ use crate::abstract_environment::{
 use crate::genkill::assignment::AssignmentTarget;
 use apy::OneOrMany;
 use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
-use apygen_analysis::GraphAnalyser;
 use apygen_analysis::cfg::nodes::Number;
 use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint, Ranged, TextRange, nodes};
 use apygen_analysis::lattice::Lattice;
-use apygen_analysis::namespace::Namespace;
+use apygen_analysis::{GraphAnalyser, analysis};
 use num_bigint::BigInt;
 use num_complex::Complex64;
 use num_traits::Num;
@@ -881,44 +880,18 @@ impl Lattice for ConstraintGraph {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AbstractEnvironment {
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AbstractEnvironmentSpecification {
     pub arguments: LatticeMap<VariableName, LatticeSet<TypeExpression>>,
     pub return_type: LatticeSet<TypeExpression>,
     pub exceptions: LatticeSet<ExceptionExpression>,
-    pub current_nodes: LatticeMap<ConstraintNode, Guard>,
-    pub variable_locations: LatticeMap<VariableName, LatticeSet<Location>>,
-    pub constraint_graph: ConstraintGraph,
-    pub sub_abstract_environments: LatticeMap<Location, AbstractEnvironment>,
 }
 
-impl Default for AbstractEnvironment {
-    fn default() -> Self {
-        Self {
-            arguments: LatticeMap::default(),
-            return_type: LatticeSet::default(),
-            exceptions: LatticeSet::default(),
-            current_nodes: LatticeMap::unit(
-                ConstraintNode::Entry,
-                Guard::Multiple(LatticeSet::default()),
-            ),
-            variable_locations: LatticeMap::default(),
-            constraint_graph: ConstraintGraph::default(),
-            sub_abstract_environments: LatticeMap::default(),
-        }
-    }
-}
-impl Lattice for AbstractEnvironment {
+impl Lattice for AbstractEnvironmentSpecification {
     fn includes(&self, other: &Self) -> bool {
         self.arguments.includes(&other.arguments)
             && self.return_type.includes(&other.return_type)
             && self.exceptions.includes(&other.exceptions)
-            && self.current_nodes.includes(&other.current_nodes)
-            && self.variable_locations.includes(&other.variable_locations)
-            && self.constraint_graph.includes(&other.constraint_graph)
-            && self
-                .sub_abstract_environments
-                .includes(&other.sub_abstract_environments)
     }
 
     fn join(&self, other: &Self) -> Self {
@@ -926,13 +899,94 @@ impl Lattice for AbstractEnvironment {
             arguments: self.arguments.join(&other.arguments),
             return_type: self.return_type.join(&other.return_type),
             exceptions: self.exceptions.join(&other.exceptions),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AbstractEnvironment {
+    pub specification: AbstractEnvironmentSpecification,
+    pub current_nodes: LatticeMap<ConstraintNode, Guard>,
+    pub variable_locations: LatticeMap<VariableName, LatticeSet<Location>>,
+    pub constraint_graph: ConstraintGraph,
+    pub sub_analyses: LatticeMap<Location, AnalysisState>,
+}
+
+impl Default for AbstractEnvironment {
+    fn default() -> Self {
+        Self {
+            specification: AbstractEnvironmentSpecification::default(),
+            current_nodes: LatticeMap::unit(
+                ConstraintNode::Entry,
+                Guard::Multiple(LatticeSet::default()),
+            ),
+            variable_locations: LatticeMap::default(),
+            constraint_graph: ConstraintGraph::default(),
+            sub_analyses: LatticeMap::default(),
+        }
+    }
+}
+
+impl Lattice for AbstractEnvironment {
+    fn includes(&self, other: &Self) -> bool {
+        self.specification.includes(&other.specification)
+            && self.current_nodes.includes(&other.current_nodes)
+            && self.variable_locations.includes(&other.variable_locations)
+            && self.constraint_graph.includes(&other.constraint_graph)
+            && self.sub_analyses.includes(&other.sub_analyses)
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        Self {
+            specification: self.specification.join(&other.specification),
             current_nodes: self.current_nodes.join(&other.current_nodes),
             variable_locations: self.variable_locations.join(&other.variable_locations),
             constraint_graph: self.constraint_graph.join(&other.constraint_graph),
-            sub_abstract_environments: self
-                .sub_abstract_environments
-                .join(&other.sub_abstract_environments),
+            sub_analyses: self.sub_analyses.join(&other.sub_analyses),
         }
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AnalysisState {
+    pub abstract_states: LatticeMap<ProgramPoint, AbstractEnvironment>,
+}
+
+impl AnalysisState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn at_exit(&self) -> Option<&AbstractEnvironment> {
+        self.abstract_states.get(&ProgramPoint::Exit)
+    }
+
+    pub fn clone_abstract_environment_or_default(
+        &self,
+        program_point: ProgramPoint,
+    ) -> AbstractEnvironment {
+        self.abstract_states
+            .get(&program_point)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+impl Lattice for AnalysisState {
+    fn includes(&self, other: &Self) -> bool {
+        self.abstract_states.includes(&other.abstract_states)
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        Self {
+            abstract_states: self.abstract_states.join(&other.abstract_states),
+        }
+    }
+}
+
+impl Display for AnalysisState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.abstract_states.fmt(f)
     }
 }
 
@@ -1015,11 +1069,34 @@ pub enum ConstraintsBuilderError {
 pub struct ConstraintsBuilder<'a> {
     pub cfg: &'a Cfg,
     pub import_tx: &'a Sender<ModuleName>,
+    pub specification: Option<AbstractEnvironmentSpecification>,
 }
 
 impl<'a> ConstraintsBuilder<'a> {
     pub fn new(cfg: &'a Cfg, import_tx: &'a Sender<ModuleName>) -> ConstraintsBuilder<'a> {
-        ConstraintsBuilder { cfg, import_tx }
+        ConstraintsBuilder {
+            cfg,
+            import_tx,
+            specification: None,
+        }
+    }
+
+    pub fn with_cfg(mut self, cfg: &'a Cfg) -> ConstraintsBuilder<'a> {
+        self.cfg = cfg;
+        self
+    }
+
+    pub fn with_import_tx(mut self, import_tx: &'a Sender<ModuleName>) -> ConstraintsBuilder<'a> {
+        self.import_tx = import_tx;
+        self
+    }
+
+    pub fn with_specification(
+        mut self,
+        specification: AbstractEnvironmentSpecification,
+    ) -> ConstraintsBuilder<'a> {
+        self.specification = Some(specification);
+        self
     }
 
     pub fn import_module(&self, module: ModuleName) -> Result<(), ConstraintsBuilderError> {
@@ -1276,7 +1353,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let parameter_eval_option = if let Some(default) = &parameter_with_default.default {
             let default_eval =
-                self.evaluate_expr(&Namespace::default(), program_point, &default)?;
+                self.evaluate_expr(&AnalysisState::default(), program_point, &default)?;
 
             if let Some(annotation_eval) = annotation_eval_option {
                 Some(annotation_eval.merge(default_eval, |annotation, default| {
@@ -1349,7 +1426,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_bool_op(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         expr_bool_op: &nodes::ExprBoolOp,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1387,7 +1464,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_bin_op(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         expr_bin_op: &nodes::ExprBinOp,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1421,7 +1498,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_unary_op(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         expr_unary_op: &nodes::ExprUnaryOp,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1444,7 +1521,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_compare(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         expr_compare: &nodes::ExprCompare,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1489,7 +1566,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_call(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         expr_call: &nodes::ExprCall,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1601,7 +1678,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_attribute(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         expr_attribute: &nodes::ExprAttribute,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1618,7 +1695,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_subscript(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         expr_subscript: &nodes::ExprSubscript,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1655,7 +1732,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         expr: &nodes::Expr,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1723,7 +1800,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_stmt_function_def(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         stmt_function_def: &nodes::StmtFunctionDef,
     ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
@@ -1744,17 +1821,30 @@ impl<'a> ConstraintsBuilder<'a> {
             location.clone(),
             self.gen_variable_name(program_point, &stmt_function_def.name)?,
             Arc::new(TypeExpression::Function(ExpressionFunction::new(
-                location,
+                location.clone(),
                 stmt_function_def.is_async,
             ))),
         );
+
+        let function_builder = self
+            .clone()
+            .with_cfg(&self.cfg.cfgs()[&program_point])
+            .with_specification(AbstractEnvironmentSpecification {
+                arguments: parameters.value,
+                return_type: LatticeSet::default(),
+                exceptions: LatticeSet::default(),
+            });
+
+        target_abstract_environment
+            .sub_analyses
+            .insert(location, analysis(&function_builder)?);
 
         Ok(target_abstract_environment)
     }
 
     pub fn evaluate_stmt_import(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         stmt_import: &nodes::StmtImport,
     ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
@@ -1849,7 +1939,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_stmt_assign(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         stmt_assign: &nodes::StmtAssign,
     ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
@@ -1904,7 +1994,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_stmt_ann_assign(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         stmt_ann_assign: &nodes::StmtAnnAssign,
     ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
@@ -1946,7 +2036,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_stmt_while(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         stmt_while: &nodes::StmtWhile,
     ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
@@ -1980,7 +2070,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_stmt_if(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         stmt_if: &nodes::StmtIf,
     ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
@@ -2014,7 +2104,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_stmt(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
         stmt: &nodes::Stmt,
     ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
@@ -2099,7 +2189,7 @@ impl<'a> ConstraintsBuilder<'a> {
 impl GraphAnalyser for ConstraintsBuilder<'_> {
     type Node = ProgramPoint;
     type AbstractState = AbstractEnvironment;
-    type AnalysisState = Namespace<AbstractEnvironment>;
+    type AnalysisState = AnalysisState;
     type Error = ConstraintsBuilderError;
 
     fn entry_node(&self) -> Result<ProgramPoint, Self::Error> {
@@ -2117,15 +2207,25 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         }
     }
 
-    fn initialise_analysis_state(
-        &self,
-    ) -> Result<Namespace<AbstractEnvironment>, ConstraintsBuilderError> {
-        Ok(Namespace::new())
+    fn initialise_analysis_state(&self) -> Result<AnalysisState, ConstraintsBuilderError> {
+        let mut analysis_state = AnalysisState::new();
+
+        let mut entry_state = AbstractEnvironment::default();
+
+        if let Some(specification) = self.specification.clone() {
+            entry_state.specification = specification.clone();
+        }
+
+        analysis_state
+            .abstract_states
+            .insert(ProgramPoint::Entry, entry_state);
+
+        Ok(analysis_state)
     }
 
     fn analyse_node(
         &self,
-        namespace: &Namespace<AbstractEnvironment>,
+        namespace: &AnalysisState,
         program_point: ProgramPoint,
     ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
         if let Some(NodeData::Statement(statement_data)) = self.cfg.node_data(&program_point) {
@@ -2137,7 +2237,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 
     fn update_abstract_state(
         &self,
-        _namespace: &Namespace<AbstractEnvironment>,
+        _namespace: &AnalysisState,
         from: ProgramPoint,
         to: ProgramPoint,
         abstract_environment: &AbstractEnvironment,
@@ -2218,27 +2318,27 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 
     fn get_abstract_state<'a>(
         &self,
-        namespace: &'a Namespace<AbstractEnvironment>,
+        namespace: &'a AnalysisState,
         program_point: &ProgramPoint,
     ) -> Result<Option<&'a AbstractEnvironment>, ConstraintsBuilderError> {
-        Ok(namespace.abstract_environments.get(program_point))
+        Ok(namespace.abstract_states.get(program_point))
     }
 
     fn set_abstract_state(
         &self,
-        namespace: &mut Namespace<AbstractEnvironment>,
+        namespace: &mut AnalysisState,
         program_point: ProgramPoint,
         abstract_environment: AbstractEnvironment,
     ) -> Result<(), ConstraintsBuilderError> {
         namespace
-            .abstract_environments
+            .abstract_states
             .insert(program_point, abstract_environment);
         Ok(())
     }
 
     fn merge(
         &self,
-        _namespace: &Namespace<AbstractEnvironment>,
+        _namespace: &AnalysisState,
         _program_point: ProgramPoint,
         left: &AbstractEnvironment,
         right: &AbstractEnvironment,
@@ -2255,7 +2355,7 @@ mod tests {
     use rstest::rstest;
     use std::sync::mpsc;
 
-    fn generate_constraints(source: &str) -> (Namespace<AbstractEnvironment>, Vec<String>) {
+    fn generate_constraints(source: &str) -> (AnalysisState, Vec<String>) {
         let cfg = Cfg::parse(source).expect("Should build CFG");
 
         let (import_tx, import_rx) = mpsc::channel::<ModuleName>();
@@ -3118,7 +3218,7 @@ mod tests {
         #[case] expected_imports: Vec<&str>,
     ) {
         let (namespace, actual_imports) = generate_constraints(&source);
-        let actual_dot = namespace.abstract_environments[&ProgramPoint::Exit]
+        let actual_dot = namespace.abstract_states[&ProgramPoint::Exit]
             .constraint_graph
             .dot();
 
