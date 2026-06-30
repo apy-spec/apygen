@@ -216,6 +216,7 @@ impl<F: Filesystem> Into<Spec<F>> for SpecWithOrder<F> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinderSpec<I: Clone + Eq + Hash + Send + FromStr, F: Filesystem> {
     pub spec: Spec<F>,
     pub submodules: HashMap<I, FinderSpec<I, F>>,
