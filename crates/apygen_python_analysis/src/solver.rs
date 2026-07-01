@@ -168,8 +168,8 @@ impl GraphAnalyser for ConstraintSolver<'_> {
     type AnalysisState = SolverState;
     type Error = Infallible;
 
-    fn entry_node(&self) -> Result<Self::Node, Self::Error> {
-        Ok(ConstraintNode::Entry)
+    fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
+        Ok(std::iter::once(ConstraintNode::Entry))
     }
 
     fn next_nodes(
@@ -253,32 +253,13 @@ impl GraphAnalyser for ConstraintSolver<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constraints::{AbstractEnvironment, AnalysisState, ConstraintsBuilder, ExpressionVariable, ModuleName};
+    use crate::constraints::{
+        AbstractEnvironmentSpecification, ConstraintsBuilder, ExpressionVariable,
+    };
     use apygen_analysis::analysis;
     use apygen_analysis::cfg::{Cfg, ProgramPoint};
-    use apygen_analysis::namespace::Namespace;
     use indoc::indoc;
     use rstest::rstest;
-    use std::sync::mpsc;
-
-    fn generate_constraints(source: &str) -> (AnalysisState, Vec<String>) {
-        let cfg = Cfg::parse(source).expect("Should build CFG");
-
-        let (import_tx, import_rx) = mpsc::channel::<ModuleName>();
-
-        let constraints_builder = ConstraintsBuilder::new(&cfg, &import_tx);
-
-        let namespace = analysis(&constraints_builder).expect("constraint builder should work");
-
-        drop(import_tx);
-
-        let imports = import_rx
-            .iter()
-            .map(|module_name| module_name.join())
-            .collect::<Vec<_>>();
-
-        (namespace, imports)
-    }
 
     #[rstest]
     #[case::simple_if_statement(
@@ -319,9 +300,15 @@ mod tests {
         "##},  // TODO: fix this when operations are implemented
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
-        let (namespace, _) = generate_constraints(&source);
+        let cfg = Cfg::parse(source).expect("Should build CFG");
 
-        let exit_state = &namespace.abstract_states[&ProgramPoint::Exit];
+        let specification = AbstractEnvironmentSpecification::default();
+
+        let constraints_builder = ConstraintsBuilder::new(&cfg, &specification, None);
+
+        let analysis_state = analysis(&constraints_builder).expect("Should build constraints");
+
+        let exit_state = &analysis_state.abstract_states[&ProgramPoint::Exit];
 
         let solver = ConstraintSolver {
             graph: &exit_state.constraint_graph,

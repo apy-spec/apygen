@@ -2,20 +2,25 @@ use crate::abstract_environment::{
     LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger, LiteralString,
 };
 use crate::genkill::assignment::AssignmentTarget;
+use crate::worklist::load_cfg;
 use apy::OneOrMany;
 use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
 use apygen_analysis::cfg::nodes::Number;
 use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint, Ranged, TextRange, nodes};
 use apygen_analysis::lattice::Lattice;
 use apygen_analysis::{GraphAnalyser, analysis};
+use apygen_finder::filesystem::Filesystem;
+use apygen_finder::pathfinder::FinderSpec;
+use imbl::ordmap::Entry;
 use num_bigint::BigInt;
 use num_complex::Complex64;
 use num_traits::Num;
-use std::collections::HashSet;
+use rayon::iter::ParallelBridge;
+use rayon::iter::ParallelIterator;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
 use std::sync::Arc;
-use std::sync::mpsc::{SendError, Sender};
 use thiserror::Error;
 
 pub type ModuleName = Arc<QualifiedName>;
@@ -904,15 +909,21 @@ impl Lattice for AbstractEnvironmentSpecification {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AbstractEnvironment {
+pub struct ProgramEntityAbstractEnvironment {
     pub specification: AbstractEnvironmentSpecification,
     pub current_nodes: LatticeMap<ConstraintNode, Guard>,
     pub variable_locations: LatticeMap<VariableName, LatticeSet<Location>>,
     pub constraint_graph: ConstraintGraph,
-    pub sub_analyses: LatticeMap<Location, AnalysisState>,
+    pub imports: LatticeSet<ModuleName>,
+    pub sub_program_entities: LatticeSet<(
+        Location,
+        ProgramPoint,
+        ProgramEntityKind,
+        AbstractEnvironmentSpecification,
+    )>,
 }
 
-impl Default for AbstractEnvironment {
+impl Default for ProgramEntityAbstractEnvironment {
     fn default() -> Self {
         Self {
             specification: AbstractEnvironmentSpecification::default(),
@@ -922,18 +933,22 @@ impl Default for AbstractEnvironment {
             ),
             variable_locations: LatticeMap::default(),
             constraint_graph: ConstraintGraph::default(),
-            sub_analyses: LatticeMap::default(),
+            imports: LatticeSet::default(),
+            sub_program_entities: LatticeSet::default(),
         }
     }
 }
 
-impl Lattice for AbstractEnvironment {
+impl Lattice for ProgramEntityAbstractEnvironment {
     fn includes(&self, other: &Self) -> bool {
         self.specification.includes(&other.specification)
             && self.current_nodes.includes(&other.current_nodes)
             && self.variable_locations.includes(&other.variable_locations)
             && self.constraint_graph.includes(&other.constraint_graph)
-            && self.sub_analyses.includes(&other.sub_analyses)
+            && self.imports.includes(&other.imports)
+            && self
+                .sub_program_entities
+                .includes(&other.sub_program_entities)
     }
 
     fn join(&self, other: &Self) -> Self {
@@ -942,29 +957,30 @@ impl Lattice for AbstractEnvironment {
             current_nodes: self.current_nodes.join(&other.current_nodes),
             variable_locations: self.variable_locations.join(&other.variable_locations),
             constraint_graph: self.constraint_graph.join(&other.constraint_graph),
-            sub_analyses: self.sub_analyses.join(&other.sub_analyses),
+            imports: self.imports.join(&other.imports),
+            sub_program_entities: self.sub_program_entities.join(&other.sub_program_entities),
         }
     }
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AnalysisState {
-    pub abstract_states: LatticeMap<ProgramPoint, AbstractEnvironment>,
+pub struct ProgramEntityAnalysisState {
+    pub abstract_states: LatticeMap<ProgramPoint, ProgramEntityAbstractEnvironment>,
 }
 
-impl AnalysisState {
+impl ProgramEntityAnalysisState {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn at_exit(&self) -> Option<&AbstractEnvironment> {
+    pub fn at_exit(&self) -> Option<&ProgramEntityAbstractEnvironment> {
         self.abstract_states.get(&ProgramPoint::Exit)
     }
 
     pub fn clone_abstract_environment_or_default(
         &self,
         program_point: ProgramPoint,
-    ) -> AbstractEnvironment {
+    ) -> ProgramEntityAbstractEnvironment {
         self.abstract_states
             .get(&program_point)
             .cloned()
@@ -972,7 +988,7 @@ impl AnalysisState {
     }
 }
 
-impl Lattice for AnalysisState {
+impl Lattice for ProgramEntityAnalysisState {
     fn includes(&self, other: &Self) -> bool {
         self.abstract_states.includes(&other.abstract_states)
     }
@@ -984,7 +1000,7 @@ impl Lattice for AnalysisState {
     }
 }
 
-impl Display for AnalysisState {
+impl Display for ProgramEntityAnalysisState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.abstract_states.fmt(f)
     }
@@ -1055,8 +1071,6 @@ pub enum ConstraintsBuilderError {
         program_point: ProgramPoint,
         name: String,
     },
-    #[error("failed to send import `{0}`")]
-    SendImportError(#[from] SendError<ModuleName>),
     #[error("program point `{program_point}` is invalid")]
     InvalidProgramPoint { program_point: ProgramPoint },
     #[error("invalid bool expression `{expr:?}`")]
@@ -1065,42 +1079,52 @@ pub enum ConstraintsBuilderError {
     InvalidExprCompare { expr: nodes::ExprCompare },
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ProgramEntityKind {
+    Module,
+    Class,
+    Function,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProgramEntityAnalysisParentState<'a> {
+    pub state: &'a ProgramEntityAnalysisState,
+    pub kind: ProgramEntityKind,
+    pub parent: Option<&'a ProgramEntityAnalysisParentState<'a>>,
+}
+
+impl<'a> ProgramEntityAnalysisParentState<'a> {
+    pub fn new(
+        state: &'a ProgramEntityAnalysisState,
+        kind: ProgramEntityKind,
+        parent: Option<&'a ProgramEntityAnalysisParentState<'a>>,
+    ) -> Self {
+        Self {
+            state,
+            kind,
+            parent,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ConstraintsBuilder<'a> {
     pub cfg: &'a Cfg,
-    pub import_tx: &'a Sender<ModuleName>,
-    pub specification: Option<AbstractEnvironmentSpecification>,
+    pub specification: &'a AbstractEnvironmentSpecification,
+    pub analysis_parent_state: Option<&'a ProgramEntityAnalysisParentState<'a>>,
 }
 
 impl<'a> ConstraintsBuilder<'a> {
-    pub fn new(cfg: &'a Cfg, import_tx: &'a Sender<ModuleName>) -> ConstraintsBuilder<'a> {
+    pub fn new(
+        cfg: &'a Cfg,
+        specification: &'a AbstractEnvironmentSpecification,
+        analysis_parent_state: Option<&'a ProgramEntityAnalysisParentState<'a>>,
+    ) -> ConstraintsBuilder<'a> {
         ConstraintsBuilder {
             cfg,
-            import_tx,
-            specification: None,
+            specification,
+            analysis_parent_state,
         }
-    }
-
-    pub fn with_cfg(mut self, cfg: &'a Cfg) -> ConstraintsBuilder<'a> {
-        self.cfg = cfg;
-        self
-    }
-
-    pub fn with_import_tx(mut self, import_tx: &'a Sender<ModuleName>) -> ConstraintsBuilder<'a> {
-        self.import_tx = import_tx;
-        self
-    }
-
-    pub fn with_specification(
-        mut self,
-        specification: AbstractEnvironmentSpecification,
-    ) -> ConstraintsBuilder<'a> {
-        self.specification = Some(specification);
-        self
-    }
-
-    pub fn import_module(&self, module: ModuleName) -> Result<(), ConstraintsBuilderError> {
-        Ok(self.import_tx.send(module)?)
     }
 
     pub fn filter_guard(&self, edge_datas: &HashSet<EdgeData>, guard: &Guard) -> Option<Guard> {
@@ -1145,7 +1169,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn create_used_variables_constraints(
         &self,
-        abstract_environment: &mut AbstractEnvironment,
+        abstract_environment: &mut ProgramEntityAbstractEnvironment,
         used_variables: UsedVariables,
     ) {
         if used_variables.names.is_empty() {
@@ -1194,7 +1218,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn create_include_constraint(
         &self,
-        abstract_environment: &mut AbstractEnvironment,
+        abstract_environment: &mut ProgramEntityAbstractEnvironment,
         location: Location,
         left: Arc<TypeExpression>,
         right: Arc<TypeExpression>,
@@ -1251,7 +1275,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn assign_variable(
         &self,
-        abstract_environment: &mut AbstractEnvironment,
+        abstract_environment: &mut ProgramEntityAbstractEnvironment,
         location: Location,
         variable: VariableName,
         type_expression: Arc<TypeExpression>,
@@ -1274,7 +1298,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn assign_empty_constraint(
         &self,
-        abstract_environment: &mut AbstractEnvironment,
+        abstract_environment: &mut ProgramEntityAbstractEnvironment,
         location: Location,
         guards: LatticeSet<Guard>,
     ) {
@@ -1352,8 +1376,11 @@ impl<'a> ConstraintsBuilder<'a> {
             self.evaluate_parameter(program_point, &parameter_with_default.parameter)?;
 
         let parameter_eval_option = if let Some(default) = &parameter_with_default.default {
-            let default_eval =
-                self.evaluate_expr(&AnalysisState::default(), program_point, &default)?;
+            let default_eval = self.evaluate_expr(
+                &ProgramEntityAnalysisState::default(),
+                program_point,
+                &default,
+            )?;
 
             if let Some(annotation_eval) = annotation_eval_option {
                 Some(annotation_eval.merge(default_eval, |annotation, default| {
@@ -1426,7 +1453,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_bool_op(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         expr_bool_op: &nodes::ExprBoolOp,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1464,7 +1491,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_bin_op(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         expr_bin_op: &nodes::ExprBinOp,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1498,7 +1525,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_unary_op(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         expr_unary_op: &nodes::ExprUnaryOp,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1521,7 +1548,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_compare(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         expr_compare: &nodes::ExprCompare,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1566,7 +1593,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_call(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         expr_call: &nodes::ExprCall,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1678,7 +1705,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_attribute(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         expr_attribute: &nodes::ExprAttribute,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1695,7 +1722,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr_subscript(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         expr_subscript: &nodes::ExprSubscript,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1732,7 +1759,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_expr(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         expr: &nodes::Expr,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
@@ -1800,10 +1827,10 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_stmt_function_def(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         stmt_function_def: &nodes::StmtFunctionDef,
-    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
+    ) -> Result<ProgramEntityAbstractEnvironment, ConstraintsBuilderError> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
@@ -1826,28 +1853,26 @@ impl<'a> ConstraintsBuilder<'a> {
             ))),
         );
 
-        let function_builder = self
-            .clone()
-            .with_cfg(&self.cfg.cfgs()[&program_point])
-            .with_specification(AbstractEnvironmentSpecification {
+        target_abstract_environment.sub_program_entities.insert((
+            location,
+            program_point,
+            ProgramEntityKind::Function,
+            AbstractEnvironmentSpecification {
                 arguments: parameters.value,
                 return_type: LatticeSet::default(),
                 exceptions: LatticeSet::default(),
-            });
-
-        target_abstract_environment
-            .sub_analyses
-            .insert(location, analysis(&function_builder)?);
+            },
+        ));
 
         Ok(target_abstract_environment)
     }
 
     pub fn evaluate_stmt_import(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         stmt_import: &nodes::StmtImport,
-    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
+    ) -> Result<ProgramEntityAbstractEnvironment, ConstraintsBuilderError> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
@@ -1927,7 +1952,9 @@ impl<'a> ConstraintsBuilder<'a> {
                     .values,
             );
 
-            self.import_module(module_name.clone())?;
+            target_abstract_environment
+                .imports
+                .insert(module_name.clone());
         }
 
         target_abstract_environment
@@ -1939,10 +1966,10 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_stmt_assign(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         stmt_assign: &nodes::StmtAssign,
-    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
+    ) -> Result<ProgramEntityAbstractEnvironment, ConstraintsBuilderError> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
@@ -1994,10 +2021,10 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_stmt_ann_assign(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         stmt_ann_assign: &nodes::StmtAnnAssign,
-    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
+    ) -> Result<ProgramEntityAbstractEnvironment, ConstraintsBuilderError> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
@@ -2036,10 +2063,10 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_stmt_while(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         stmt_while: &nodes::StmtWhile,
-    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
+    ) -> Result<ProgramEntityAbstractEnvironment, ConstraintsBuilderError> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
@@ -2070,10 +2097,10 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_stmt_if(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         stmt_if: &nodes::StmtIf,
-    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
+    ) -> Result<ProgramEntityAbstractEnvironment, ConstraintsBuilderError> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
@@ -2104,10 +2131,10 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_stmt(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
         stmt: &nodes::Stmt,
-    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
+    ) -> Result<ProgramEntityAbstractEnvironment, ConstraintsBuilderError> {
         match stmt {
             nodes::Stmt::FunctionDef(stmt_function_def) => {
                 self.evaluate_stmt_function_def(namespace, program_point, stmt_function_def)
@@ -2188,12 +2215,12 @@ impl<'a> ConstraintsBuilder<'a> {
 
 impl GraphAnalyser for ConstraintsBuilder<'_> {
     type Node = ProgramPoint;
-    type AbstractState = AbstractEnvironment;
-    type AnalysisState = AnalysisState;
+    type AbstractState = ProgramEntityAbstractEnvironment;
+    type AnalysisState = ProgramEntityAnalysisState;
     type Error = ConstraintsBuilderError;
 
-    fn entry_node(&self) -> Result<ProgramPoint, Self::Error> {
-        Ok(ProgramPoint::Entry)
+    fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
+        Ok(std::iter::once(ProgramPoint::Entry))
     }
     fn next_nodes(
         &self,
@@ -2207,14 +2234,14 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         }
     }
 
-    fn initialise_analysis_state(&self) -> Result<AnalysisState, ConstraintsBuilderError> {
-        let mut analysis_state = AnalysisState::new();
+    fn initialise_analysis_state(
+        &self,
+    ) -> Result<ProgramEntityAnalysisState, ConstraintsBuilderError> {
+        let mut analysis_state = ProgramEntityAnalysisState::new();
 
-        let mut entry_state = AbstractEnvironment::default();
+        let mut entry_state = ProgramEntityAbstractEnvironment::default();
 
-        if let Some(specification) = self.specification.clone() {
-            entry_state.specification = specification.clone();
-        }
+        entry_state.specification = self.specification.clone();
 
         analysis_state
             .abstract_states
@@ -2225,9 +2252,9 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 
     fn analyse_node(
         &self,
-        namespace: &AnalysisState,
+        namespace: &ProgramEntityAnalysisState,
         program_point: ProgramPoint,
-    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
+    ) -> Result<ProgramEntityAbstractEnvironment, ConstraintsBuilderError> {
         if let Some(NodeData::Statement(statement_data)) = self.cfg.node_data(&program_point) {
             self.evaluate_stmt(namespace, program_point, statement_data.statement())
         } else {
@@ -2237,11 +2264,11 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 
     fn update_abstract_state(
         &self,
-        _namespace: &AnalysisState,
+        _namespace: &ProgramEntityAnalysisState,
         from: ProgramPoint,
         to: ProgramPoint,
-        abstract_environment: &AbstractEnvironment,
-    ) -> Result<Option<AbstractEnvironment>, ConstraintsBuilderError> {
+        abstract_environment: &ProgramEntityAbstractEnvironment,
+    ) -> Result<Option<ProgramEntityAbstractEnvironment>, ConstraintsBuilderError> {
         let Some(edge_datas) = self.cfg.edge_data(from, to) else {
             return Ok(None);
         };
@@ -2318,17 +2345,17 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 
     fn get_abstract_state<'a>(
         &self,
-        namespace: &'a AnalysisState,
+        namespace: &'a ProgramEntityAnalysisState,
         program_point: &ProgramPoint,
-    ) -> Result<Option<&'a AbstractEnvironment>, ConstraintsBuilderError> {
+    ) -> Result<Option<&'a ProgramEntityAbstractEnvironment>, ConstraintsBuilderError> {
         Ok(namespace.abstract_states.get(program_point))
     }
 
     fn set_abstract_state(
         &self,
-        namespace: &mut AnalysisState,
+        namespace: &mut ProgramEntityAnalysisState,
         program_point: ProgramPoint,
-        abstract_environment: AbstractEnvironment,
+        abstract_environment: ProgramEntityAbstractEnvironment,
     ) -> Result<(), ConstraintsBuilderError> {
         namespace
             .abstract_states
@@ -2338,41 +2365,277 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 
     fn merge(
         &self,
-        _namespace: &AnalysisState,
+        _namespace: &ProgramEntityAnalysisState,
         _program_point: ProgramPoint,
-        left: &AbstractEnvironment,
-        right: &AbstractEnvironment,
-    ) -> Result<AbstractEnvironment, ConstraintsBuilderError> {
+        left: &ProgramEntityAbstractEnvironment,
+        right: &ProgramEntityAbstractEnvironment,
+    ) -> Result<ProgramEntityAbstractEnvironment, ConstraintsBuilderError> {
         Ok(left.join(right))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProgramEntityLocation {
+    pub module_name: ModuleName,
+    pub location: Option<Location>,
+}
+
+impl ProgramEntityLocation {
+    pub fn new(module_name: ModuleName, location: Option<Location>) -> Self {
+        Self {
+            module_name,
+            location,
+        }
+    }
+
+    pub fn module(module_name: ModuleName) -> Self {
+        Self::new(module_name, None)
+    }
+}
+
+impl Display for ProgramEntityLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.module_name)?;
+        if let Some(location) = &self.location {
+            write!(f, "@({})", location)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ProgramEntityNode {
+    Entry,
+    Location(ProgramEntityLocation),
+    Exit,
+}
+
+impl Display for ProgramEntityNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProgramEntityNode::Entry => write!(f, "Entry"),
+            ProgramEntityNode::Location(location) => write!(f, "Location({})", location),
+            ProgramEntityNode::Exit => write!(f, "Exit"),
+        }
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProgramAnalysisState {
+    pub nodes: LatticeMap<ProgramEntityNode, ProgramEntityAbstractEnvironment>,
+    pub dependencies: LatticeMap<ProgramEntityNode, LatticeSet<ProgramEntityNode>>,
+}
+
+impl ProgramAnalysisState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(
+        &mut self,
+        node: ProgramEntityNode,
+        analysis_state: ProgramEntityAbstractEnvironment,
+    ) {
+        self.nodes.insert(node.clone(), analysis_state);
+    }
+
+    pub fn add_dependency(&mut self, from: ProgramEntityNode, to: ProgramEntityNode) {
+        self.dependencies.values.entry(from).or_default().insert(to);
+    }
+
+    pub fn remove_dependency(&mut self, from: ProgramEntityNode, to: ProgramEntityNode) {
+        if let Entry::Occupied(mut tos) = self.dependencies.values.entry(from) {
+            tos.get_mut().remove(&to);
+        }
+    }
+
+    pub fn dot(&self) -> String {
+        let mut edges: imbl::OrdSet<(ProgramEntityNode, ProgramEntityNode)> = imbl::OrdSet::new();
+        for (from, tos) in &self.dependencies.values {
+            for to in &tos.values {
+                edges.insert((from.clone(), to.clone()));
+            }
+        }
+
+        let mut dot_representation = String::from("digraph \"Dependency\" {\n");
+        for node in self.nodes.values.keys() {
+            dot_representation.push_str("    \"");
+            dot_representation.push_str(&node.to_string());
+            dot_representation.push_str("\";\n");
+        }
+        for (from, to) in &edges {
+            dot_representation.push_str("    \"");
+            dot_representation.push_str(&from.to_string());
+            dot_representation.push_str("\" -> \"");
+            dot_representation.push_str(&to.to_string());
+            dot_representation.push_str("\";\n");
+        }
+        dot_representation.push_str("}\n");
+
+        dot_representation
+    }
+}
+
+impl Lattice for ProgramAnalysisState {
+    fn includes(&self, other: &Self) -> bool {
+        self.nodes.includes(&other.nodes) && self.dependencies.includes(&other.dependencies)
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        Self {
+            nodes: self.nodes.join(&other.nodes),
+            dependencies: self.dependencies.join(&other.dependencies),
+        }
+    }
+}
+
+impl Display for ProgramAnalysisState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ApyAnalysisState {{ nodes: {:?}, dependency_edges: {:?} }}",
+            self.nodes, self.dependencies
+        )
+    }
+}
+
+pub fn import_cfg<F: Filesystem>(
+    specs: &HashMap<Identifier, FinderSpec<Identifier, F>>,
+    module_name: &ModuleName,
+) -> Option<Cfg> {
+    let mut finder_spec = specs.get(module_name.identifiers.first())?;
+
+    for identifier in module_name.identifiers.iter().skip(1) {
+        finder_spec = finder_spec.submodules.get(identifier)?;
+    }
+
+    load_cfg(&finder_spec.spec).ok()
+}
+
+#[derive(Debug, Error)]
+pub enum ConstraintsError {
+    #[error("failed to build constraints {0}")]
+    BuildError(#[from] ConstraintsBuilderError),
+}
+
+pub fn analyse_cfg<'a>(
+    location: ProgramEntityLocation,
+    cfg: &'a Cfg,
+    specification: &'a AbstractEnvironmentSpecification,
+    program_entity_kind: ProgramEntityKind,
+    program_entity_analysis_parent_state: Option<&'a ProgramEntityAnalysisParentState<'a>>,
+) -> ProgramAnalysisState {
+    let constraint_builder =
+        ConstraintsBuilder::new(cfg, specification, program_entity_analysis_parent_state);
+
+    let program_entity_analysis_state =
+        analysis(&constraint_builder).expect("constraint builder should work");
+    let program_entity_analysis_node = ProgramEntityNode::Location(location.clone());
+
+    let mut program_analysis_state = ProgramAnalysisState::default();
+
+    let sub_program_entity_analysis_parent_state = ProgramEntityAnalysisParentState::new(
+        &program_entity_analysis_state,
+        program_entity_kind,
+        program_entity_analysis_parent_state,
+    );
+    for (sub_location, sub_program_point, sub_program_entity_kind, sub_specification) in
+        program_entity_analysis_state.abstract_states[&ProgramPoint::Exit]
+            .sub_program_entities
+            .as_ref()
+    {
+        let sub_program_entity_location =
+            ProgramEntityLocation::new(location.module_name.clone(), Some(sub_location.clone()));
+
+        let sub_program_analysis_state = analyse_cfg(
+            sub_program_entity_location.clone(),
+            cfg.cfgs().get(sub_program_point).unwrap(),
+            sub_specification,
+            *sub_program_entity_kind,
+            Some(&sub_program_entity_analysis_parent_state),
+        );
+
+        program_analysis_state = program_analysis_state.join(&sub_program_analysis_state);
+
+        program_analysis_state.add_dependency(
+            ProgramEntityNode::Location(sub_program_entity_location),
+            program_entity_analysis_node.clone(),
+        );
+    }
+
+    program_analysis_state.insert(
+        program_entity_analysis_node,
+        program_entity_analysis_state.abstract_states[&ProgramPoint::Exit].clone(),
+    );
+
+    program_analysis_state
+}
+
+pub fn analyse_program<F: Filesystem>(
+    specs: HashMap<Identifier, FinderSpec<Identifier, F>>,
+    initial_modules: HashSet<ModuleName>,
+) -> ProgramAnalysisState {
+    let mut program_analysis: ProgramAnalysisState = ProgramAnalysisState::default();
+
+    let specs_ref = &specs;
+
+    let mut worklist = initial_modules;
+
+    while !worklist.is_empty() {
+        let new_program_analysis = worklist
+            .drain()
+            .par_bridge()
+            .map(|module_name| {
+                let cfg = import_cfg(specs_ref, &module_name).expect("Should build CFG");
+
+                analyse_cfg(
+                    ProgramEntityLocation::module(module_name),
+                    &cfg,
+                    &AbstractEnvironmentSpecification::default(),
+                    ProgramEntityKind::Module,
+                    None,
+                )
+            })
+            .reduce(
+                || ProgramAnalysisState::new(),
+                |left, right| left.join(&right),
+            );
+
+        for (node, analysis_state) in new_program_analysis.nodes.as_ref() {
+            let imports = analysis_state.imports.values.clone();
+
+            if imports.is_empty() {
+                program_analysis.add_dependency(ProgramEntityNode::Entry, node.clone());
+            } else {
+                for import in imports {
+                    let import_node =
+                        ProgramEntityNode::Location(ProgramEntityLocation::module(import.clone()));
+
+                    program_analysis.add_dependency(node.clone(), import_node.clone());
+                    program_analysis.add_dependency(ProgramEntityNode::Exit, node.clone());
+                    program_analysis
+                        .remove_dependency(ProgramEntityNode::Exit, import_node.clone());
+
+                    if !program_analysis.nodes.contains_key(&import_node) {
+                        worklist.insert(import.clone());
+                    }
+                }
+            }
+
+            program_analysis = program_analysis.join(&new_program_analysis);
+        }
+    }
+
+    program_analysis
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use apygen_analysis::analysis;
+    use imbl::ordset;
     use indoc::indoc;
     use rstest::rstest;
-    use std::sync::mpsc;
-
-    fn generate_constraints(source: &str) -> (AnalysisState, Vec<String>) {
-        let cfg = Cfg::parse(source).expect("Should build CFG");
-
-        let (import_tx, import_rx) = mpsc::channel::<ModuleName>();
-
-        let constraints_builder = ConstraintsBuilder::new(&cfg, &import_tx);
-
-        let namespace = analysis(&constraints_builder).expect("constraint builder should work");
-
-        drop(import_tx);
-
-        let imports = import_rx
-            .iter()
-            .map(|module_name| module_name.join())
-            .collect::<Vec<_>>();
-
-        (namespace, imports)
-    }
 
     #[rstest]
     #[case::import(
@@ -2393,7 +2656,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec!["some_module"],
+        ordset!["some_module"],
     )]
     #[case::import_as(
         "import some_module as mod",
@@ -2413,7 +2676,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec!["some_module"],
+        ordset!["some_module"],
     )]
     #[case::import_submodule(
         "import some_module.submodule",
@@ -2438,7 +2701,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec!["some_module.submodule"],
+        ordset!["some_module.submodule"],
     )]
     #[case::import_module_and_submodule(
         "import some_module, some_module.submodule",
@@ -2466,7 +2729,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec!["some_module", "some_module.submodule"],
+        ordset!["some_module", "some_module.submodule"],
     )]
     #[case::multiple_import(
         "import some_module, another_module",
@@ -2491,7 +2754,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec!["some_module", "another_module"],
+        ordset!["some_module", "another_module"],
     )]
     #[case::multiple_import_override(
         "import some_module as mod, another_module as mod",
@@ -2516,7 +2779,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec!["some_module", "another_module"],
+        ordset!["some_module", "another_module"],
     )]
     #[case::int_constant_assignment(
         "a = 42",
@@ -2531,7 +2794,7 @@ mod tests {
             "#type_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::bigint_constant_assignment(
         "a = 4200000000000000000000000000",
@@ -2546,7 +2809,7 @@ mod tests {
             "#type_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::add_operation(
         "add = 42 + 67",
@@ -2566,7 +2829,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::sub_operation(
         "sub = 42 - 67",
@@ -2586,7 +2849,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::mult_operation(
         "mult = 42 * 67",
@@ -2606,7 +2869,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::mat_mult_operation(
         "mat_mult = 42 @ 67",
@@ -2626,7 +2889,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::div_operation(
         "div = 42 / 67",
@@ -2646,7 +2909,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::floor_div_operation(
         "floor_div = 42 // 67",
@@ -2666,7 +2929,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::mod_operation(
         "mod = 42 % 67",
@@ -2686,7 +2949,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::pow_operation(
         "pow = 42 ** 67",
@@ -2706,7 +2969,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::shl_operation(
         "shl = 42 << 67",
@@ -2726,7 +2989,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::shr_operation(
         "shr = 42 >> 67",
@@ -2746,7 +3009,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::bit_or_operation(
         "bit_or = 42 | 67",
@@ -2766,7 +3029,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::bit_xor_operation(
         "bit_xor = 42 ^ 67",
@@ -2786,7 +3049,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::bit_and_operation(
         "bit_and = 42 & 67",
@@ -2806,7 +3069,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::and_operation(
         "and_ = 42 and 67",
@@ -2826,7 +3089,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::or_operation(
         "or_ = 42 or 67",
@@ -2846,7 +3109,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::eq_operation(
         "eq = 42 == 67",
@@ -2866,7 +3129,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::not_eq_operation(
         "not_eq = 42 != 67",
@@ -2886,7 +3149,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::lt_operation(
         "lt = 42 < 67",
@@ -2906,7 +3169,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::gt_operation(
         "gt = 42 > 67",
@@ -2926,7 +3189,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::lte_operation(
         "lte = 42 <= 67",
@@ -2946,7 +3209,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::gte_operation(
         "gte = 42 >= 67",
@@ -2966,7 +3229,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::is_operation(
         "is_ = 42 is 67",
@@ -2986,7 +3249,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::is_not_operation(
         "is_not = 42 is not 67",
@@ -3006,7 +3269,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::in_operation(
         "in_ = 42 in 67",
@@ -3026,7 +3289,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::not_in_operation(
         "not_in = 42 not in 67",
@@ -3046,7 +3309,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::add_same_variable(
         indoc! {r##"
@@ -3078,7 +3341,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::simple_if_statement(
         indoc! {r##"
@@ -3128,7 +3391,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::simple_while_statement(
         indoc! {r##"
@@ -3178,7 +3441,7 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     #[case::simple_function_definition(
         indoc! {r##"
@@ -3210,19 +3473,69 @@ mod tests {
             "#exception_exit" -> "#exit" [label="{}"];
         }
         "##},
-        vec![],
+        ordset![],
     )]
     fn test_constraints_generation(
         #[case] source: &str,
         #[case] expected_dot: &str,
-        #[case] expected_imports: Vec<&str>,
+        #[case] expected_imports: imbl::OrdSet<&str>,
     ) {
-        let (namespace, actual_imports) = generate_constraints(&source);
-        let actual_dot = namespace.abstract_states[&ProgramPoint::Exit]
-            .constraint_graph
-            .dot();
+        let cfg = Cfg::parse(source).expect("Should build CFG");
+
+        let specification = AbstractEnvironmentSpecification::default();
+
+        let constraints_builder = ConstraintsBuilder::new(&cfg, &specification, None);
+
+        let analysis_state =
+            analysis(&constraints_builder).expect("constraint builder should work");
+
+        let exit_state = analysis_state
+            .abstract_states
+            .get(&ProgramPoint::Exit)
+            .expect("exit should exist");
+
+        let actual_dot = exit_state.constraint_graph.dot();
+        let actual_imports = &exit_state.imports.values;
 
         assert_eq!(expected_dot, actual_dot, "{actual_dot}");
-        assert_eq!(expected_imports, actual_imports);
+        assert_eq!(
+            expected_imports
+                .into_iter()
+                .map(|expected_import| Arc::new(QualifiedName::parse(expected_import)))
+                .collect::<imbl::OrdSet<ModuleName>>(),
+            *actual_imports
+        );
+    }
+
+    #[rstest]
+    #[case::simple_function_definition(
+        indoc! {r##"
+        def add_two(a, b):
+            return a + b
+
+        result = add_two(42, 67)
+        "##},
+        indoc! {r##"
+        digraph "Dependency" {
+            "Location(test)";
+            "Location(test@(1:4))";
+            "Location(test@(1:4))" -> "Location(test)";
+        }
+        "##},
+    )]
+    fn test_cfg_analysis(#[case] source: &str, #[case] expected_dot: &str) {
+        let cfg = Cfg::parse(source).expect("Should build CFG");
+
+        let program_analysis_state = analyse_cfg(
+            ProgramEntityLocation::module(Arc::new(QualifiedName::parse("test"))),
+            &cfg,
+            &AbstractEnvironmentSpecification::default(),
+            ProgramEntityKind::Module,
+            None,
+        );
+
+        let actual_dot = program_analysis_state.dot();
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
     }
 }

@@ -10,11 +10,11 @@ pub trait GraphAnalyser {
     type AnalysisState;
     type Error;
 
-    fn entry_node(&self) -> Result<Self::Node, Self::Error>;
+    fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error>;
     fn next_nodes(
         &self,
         node: &Self::Node,
-    ) -> Result<impl Iterator<Item=&Self::Node>, Self::Error>;
+    ) -> Result<impl Iterator<Item = &Self::Node>, Self::Error>;
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error>;
     fn analyse_node(
@@ -61,10 +61,10 @@ pub fn analysis<
 ) -> Result<A, E> {
     let mut analysis_state = analyser.initialise_analysis_state()?;
 
-    let mut worklist = BTreeSet::from_iter([analyser.entry_node()?]);
+    let mut worklist = BTreeSet::from_iter(analyser.entry_nodes()?);
 
     while let Some(node) = worklist.pop_first() {
-        let abstract_state = analyser.analyse_node(&mut analysis_state, node.clone())?;
+        let abstract_state = analyser.analyse_node(&analysis_state, node.clone())?;
 
         for next_node in analyser.next_nodes(&node)? {
             let Some(updated_abstract_state) = analyser.update_abstract_state(
