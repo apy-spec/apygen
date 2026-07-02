@@ -909,18 +909,62 @@ impl Lattice for AbstractEnvironmentSpecification {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SubProgramEntity {
+    pub location: Location,
+    pub program_point: ProgramPoint,
+    pub kind: ProgramEntityKind,
+}
+
+impl SubProgramEntity {
+    pub fn new(location: Location, program_point: ProgramPoint, kind: ProgramEntityKind) -> Self {
+        Self {
+            location,
+            program_point,
+            kind,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SubProgramEntityContext {
+    pub specification: AbstractEnvironmentSpecification,
+    pub variable_locations: LatticeMap<VariableName, LatticeSet<Location>>,
+}
+
+impl SubProgramEntityContext {
+    pub fn new(
+        specification: AbstractEnvironmentSpecification,
+        variable_locations: LatticeMap<VariableName, LatticeSet<Location>>,
+    ) -> Self {
+        Self {
+            specification,
+            variable_locations,
+        }
+    }
+}
+
+impl Lattice for SubProgramEntityContext {
+    fn includes(&self, other: &Self) -> bool {
+        self.specification.includes(&other.specification)
+            && self.variable_locations.includes(&other.variable_locations)
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        Self::new(
+            self.specification.join(&other.specification),
+            self.variable_locations.join(&other.variable_locations),
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProgramEntityAbstractEnvironment {
     pub specification: AbstractEnvironmentSpecification,
     pub current_nodes: LatticeMap<ConstraintNode, Guard>,
     pub variable_locations: LatticeMap<VariableName, LatticeSet<Location>>,
     pub constraint_graph: ConstraintGraph,
     pub imports: LatticeSet<ModuleName>,
-    pub sub_program_entities: LatticeSet<(
-        Location,
-        ProgramPoint,
-        ProgramEntityKind,
-        AbstractEnvironmentSpecification,
-    )>,
+    pub sub_program_entities: LatticeMap<SubProgramEntity, SubProgramEntityContext>,
 }
 
 impl Default for ProgramEntityAbstractEnvironment {
@@ -934,7 +978,7 @@ impl Default for ProgramEntityAbstractEnvironment {
             variable_locations: LatticeMap::default(),
             constraint_graph: ConstraintGraph::default(),
             imports: LatticeSet::default(),
-            sub_program_entities: LatticeSet::default(),
+            sub_program_entities: LatticeMap::default(),
         }
     }
 }
@@ -1087,17 +1131,17 @@ pub enum ProgramEntityKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProgramEntityAnalysisParentState<'a> {
-    pub state: &'a ProgramEntityAnalysisState,
+pub struct ProgramEntityAbstractParentState<'a> {
+    pub state: &'a ProgramEntityAbstractEnvironment,
     pub kind: ProgramEntityKind,
-    pub parent: Option<&'a ProgramEntityAnalysisParentState<'a>>,
+    pub parent: Option<&'a ProgramEntityAbstractParentState<'a>>,
 }
 
-impl<'a> ProgramEntityAnalysisParentState<'a> {
+impl<'a> ProgramEntityAbstractParentState<'a> {
     pub fn new(
-        state: &'a ProgramEntityAnalysisState,
+        state: &'a ProgramEntityAbstractEnvironment,
         kind: ProgramEntityKind,
-        parent: Option<&'a ProgramEntityAnalysisParentState<'a>>,
+        parent: Option<&'a ProgramEntityAbstractParentState<'a>>,
     ) -> Self {
         Self {
             state,
@@ -1111,19 +1155,19 @@ impl<'a> ProgramEntityAnalysisParentState<'a> {
 pub struct ConstraintsBuilder<'a> {
     pub cfg: &'a Cfg,
     pub specification: &'a AbstractEnvironmentSpecification,
-    pub analysis_parent_state: Option<&'a ProgramEntityAnalysisParentState<'a>>,
+    pub abstract_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
 }
 
 impl<'a> ConstraintsBuilder<'a> {
     pub fn new(
         cfg: &'a Cfg,
         specification: &'a AbstractEnvironmentSpecification,
-        analysis_parent_state: Option<&'a ProgramEntityAnalysisParentState<'a>>,
+        abstract_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
     ) -> ConstraintsBuilder<'a> {
         ConstraintsBuilder {
             cfg,
             specification,
-            analysis_parent_state,
+            abstract_parent_state,
         }
     }
 
@@ -1853,16 +1897,17 @@ impl<'a> ConstraintsBuilder<'a> {
             ))),
         );
 
-        target_abstract_environment.sub_program_entities.insert((
-            location,
-            program_point,
-            ProgramEntityKind::Function,
-            AbstractEnvironmentSpecification {
-                arguments: parameters.value,
-                return_type: LatticeSet::default(),
-                exceptions: LatticeSet::default(),
-            },
-        ));
+        target_abstract_environment.sub_program_entities.insert(
+            SubProgramEntity::new(location, program_point, ProgramEntityKind::Function),
+            SubProgramEntityContext::new(
+                AbstractEnvironmentSpecification {
+                    arguments: parameters.value,
+                    return_type: LatticeSet::default(),
+                    exceptions: LatticeSet::default(),
+                },
+                target_abstract_environment.variable_locations.clone(),
+            ),
+        );
 
         Ok(target_abstract_environment)
     }
@@ -2523,7 +2568,7 @@ pub fn analyse_cfg<'a>(
     cfg: &'a Cfg,
     specification: &'a AbstractEnvironmentSpecification,
     program_entity_kind: ProgramEntityKind,
-    program_entity_analysis_parent_state: Option<&'a ProgramEntityAnalysisParentState<'a>>,
+    program_entity_analysis_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
 ) -> ProgramAnalysisState {
     let constraint_builder =
         ConstraintsBuilder::new(cfg, specification, program_entity_analysis_parent_state);
@@ -2531,27 +2576,30 @@ pub fn analyse_cfg<'a>(
     let program_entity_analysis_state =
         analysis(&constraint_builder).expect("constraint builder should work");
     let program_entity_analysis_node = ProgramEntityNode::Location(location.clone());
+    let program_entity_exit_abstract_state =
+        &program_entity_analysis_state.abstract_states[&ProgramPoint::Exit];
 
     let mut program_analysis_state = ProgramAnalysisState::default();
 
-    let sub_program_entity_analysis_parent_state = ProgramEntityAnalysisParentState::new(
-        &program_entity_analysis_state,
+    let sub_program_entity_analysis_parent_state = ProgramEntityAbstractParentState::new(
+        &program_entity_exit_abstract_state,
         program_entity_kind,
         program_entity_analysis_parent_state,
     );
-    for (sub_location, sub_program_point, sub_program_entity_kind, sub_specification) in
-        program_entity_analysis_state.abstract_states[&ProgramPoint::Exit]
-            .sub_program_entities
-            .as_ref()
+    for (sub_program_entity, sub_program_entity_context) in program_entity_exit_abstract_state
+        .sub_program_entities
+        .as_ref()
     {
-        let sub_program_entity_location =
-            ProgramEntityLocation::new(location.module_name.clone(), Some(sub_location.clone()));
+        let sub_program_entity_location = ProgramEntityLocation::new(
+            location.module_name.clone(),
+            Some(sub_program_entity.location.clone()),
+        );
 
         let sub_program_analysis_state = analyse_cfg(
             sub_program_entity_location.clone(),
-            cfg.cfgs().get(sub_program_point).unwrap(),
-            sub_specification,
-            *sub_program_entity_kind,
+            cfg.cfgs().get(&sub_program_entity.program_point).unwrap(),
+            &sub_program_entity_context.specification,
+            sub_program_entity.kind,
             Some(&sub_program_entity_analysis_parent_state),
         );
 
@@ -2565,7 +2613,7 @@ pub fn analyse_cfg<'a>(
 
     program_analysis_state.insert(
         program_entity_analysis_node,
-        program_entity_analysis_state.abstract_states[&ProgramPoint::Exit].clone(),
+        program_entity_exit_abstract_state.clone(),
     );
 
     program_analysis_state
