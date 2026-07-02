@@ -3637,6 +3637,34 @@ mod tests {
             "Location(module[1:4])";
             "Location(module[1:4])" -> "Location(module)";
         }
+        digraph "Location(module)" {
+            "#entry";
+            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}";
+            "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}";
+            "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}";
+            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()";
+            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()";
+            "#type_exit";
+            "#exception_exit";
+            "#exit";
+            "#entry" -> "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" [label="#succeed(#function(location=module[1:4], async=false))"];
+            "#entry" -> "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()" [label="#raise(#function(location=module[1:4], async=false))"];
+            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
+            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()" [label="#raise((add_two@{module[4:9]})(42, 67))"];
+            "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" -> "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" [label="{}"];
+            "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" -> "#type_exit" [label="{}"];
+            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#type_exit" -> "#exit" [label="{}"];
+            "#exception_exit" -> "#exit" [label="{}"];
+        }
+        digraph "Location(module[1:4])" {
+            "#entry";
+            "#type_exit";
+            "#exit";
+            "#entry" -> "#type_exit" [label="{}"];
+            "#type_exit" -> "#exit" [label="{}"];
+        }
         "##},
     )]
     fn test_cfg_analysis(#[case] source: &str, #[case] expected_dot: &str) {
@@ -3653,7 +3681,11 @@ mod tests {
             None,
         );
 
-        let actual_dot = program_analysis_state.dot("Dependency");
+        let mut actual_dot = program_analysis_state.dot("Dependency");
+
+        for (node, state) in program_analysis_state.nodes.as_ref() {
+            actual_dot.push_str(&state.constraint_graph.dot(&node.to_string()));
+        }
 
         assert_eq!(expected_dot, actual_dot, "{actual_dot}");
     }
