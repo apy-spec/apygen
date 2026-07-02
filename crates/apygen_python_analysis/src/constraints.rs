@@ -2622,26 +2622,68 @@ pub fn analyse_cfg<'a>(
 pub fn analyse_program<F: Filesystem>(
     specs: HashMap<Identifier, FinderSpec<Identifier, F>>,
     initial_modules: HashSet<ModuleName>,
+    builtin_module: Option<ModuleName>,
 ) -> ProgramAnalysisState {
     let mut program_analysis: ProgramAnalysisState = ProgramAnalysisState::default();
+
+    let builtin_location = if let Some(builtin_module_name) = &builtin_module {
+        let cfg = import_cfg(&specs, builtin_module_name).expect("Should build CFG");
+
+        let program_entity_location = ProgramEntityLocation::module(builtin_module_name.clone());
+
+        let analysis = analyse_cfg(
+            program_entity_location.clone(),
+            &cfg,
+            &AbstractEnvironmentSpecification::default(),
+            ProgramEntityKind::Module,
+            None,
+        );
+
+        program_analysis = program_analysis.join(&analysis);
+
+        program_analysis.add_dependency(
+            ProgramEntityNode::Entry,
+            ProgramEntityNode::Location(program_entity_location.clone()),
+        );
+
+        Some(program_entity_location)
+    } else {
+        None
+    };
 
     let specs_ref = &specs;
 
     let mut worklist = initial_modules;
 
     while !worklist.is_empty() {
+        let parent_state = if let Some(builtin_location) = &builtin_location {
+            Some(&ProgramEntityAbstractParentState::new(
+                &program_analysis.nodes[&ProgramEntityNode::Location(builtin_location.clone())],
+                ProgramEntityKind::Module,
+                None,
+            ))
+        } else {
+            None
+        };
+
         let new_program_analysis = worklist
             .drain()
             .par_bridge()
             .map(|module_name| {
                 let cfg = import_cfg(specs_ref, &module_name).expect("Should build CFG");
 
+                let parent_state = if Some(&module_name) != builtin_module.as_ref() {
+                    parent_state
+                } else {
+                    None
+                };
+
                 analyse_cfg(
                     ProgramEntityLocation::module(module_name),
                     &cfg,
                     &AbstractEnvironmentSpecification::default(),
                     ProgramEntityKind::Module,
-                    None,
+                    parent_state,
                 )
             })
             .reduce(
@@ -2650,7 +2692,11 @@ pub fn analyse_program<F: Filesystem>(
             );
 
         for (node, analysis_state) in new_program_analysis.nodes.as_ref() {
-            let imports = analysis_state.imports.values.clone();
+            let mut imports = analysis_state.imports.values.clone();
+
+            if let Some(builtin_module_name) = &builtin_module {
+                imports.insert(builtin_module_name.clone());
+            }
 
             if imports.is_empty() {
                 program_analysis.add_dependency(ProgramEntityNode::Entry, node.clone());
