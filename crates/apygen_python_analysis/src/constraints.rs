@@ -883,7 +883,7 @@ impl ConstraintGraph {
         self.edges.get(from).and_then(|tos| tos.get(to)).is_some()
     }
 
-    pub fn dot(&self) -> String {
+    pub fn dot(&self, graph_name: &str) -> String {
         let mut nodes: imbl::OrdSet<ConstraintNode> = imbl::OrdSet::new();
         let mut edges: imbl::OrdMap<(ConstraintNode, ConstraintNode), Guard> = imbl::OrdMap::new();
         for (from, tos) in &self.edges.values {
@@ -894,7 +894,9 @@ impl ConstraintGraph {
             }
         }
 
-        let mut dot_representation = String::from("digraph \"Constraints\" {\n");
+        let mut dot_representation = String::from("digraph \"");
+        dot_representation.push_str(graph_name);
+        dot_representation.push_str("\" {\n");
         for node in &nodes {
             dot_representation.push_str("    \"");
             dot_representation.push_str(&node.to_string());
@@ -2529,7 +2531,7 @@ impl ProgramAnalysisState {
         }
     }
 
-    pub fn dot(&self) -> String {
+    pub fn dot(&self, graph_name: &str) -> String {
         let mut edges: imbl::OrdSet<(ProgramEntityNode, ProgramEntityNode)> = imbl::OrdSet::new();
         for (from, tos) in &self.dependencies.values {
             for to in &tos.values {
@@ -2537,7 +2539,9 @@ impl ProgramAnalysisState {
             }
         }
 
-        let mut dot_representation = String::from("digraph \"Dependency\" {\n");
+        let mut dot_representation = String::from("digraph \"");
+        dot_representation.push_str(graph_name);
+        dot_representation.push_str("\" {\n");
         for node in self.nodes.values.keys() {
             dot_representation.push_str("    \"");
             dot_representation.push_str(&node.to_string());
@@ -3606,7 +3610,7 @@ mod tests {
             .get(&ProgramPoint::Exit)
             .expect("exit should exist");
 
-        let actual_dot = exit_state.constraint_graph.dot();
+        let actual_dot = exit_state.constraint_graph.dot("Constraints");
         let actual_imports = &exit_state.imports.values;
 
         assert_eq!(expected_dot, actual_dot, "{actual_dot}");
@@ -3649,7 +3653,7 @@ mod tests {
             None,
         );
 
-        let actual_dot = program_analysis_state.dot();
+        let actual_dot = program_analysis_state.dot("Dependency");
 
         assert_eq!(expected_dot, actual_dot, "{actual_dot}");
     }
