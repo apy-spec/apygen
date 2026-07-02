@@ -254,8 +254,10 @@ impl GraphAnalyser for ConstraintSolver<'_> {
 mod tests {
     use super::*;
     use crate::constraints::{
-        AbstractEnvironmentSpecification, ConstraintsBuilder, ExpressionVariable,
+        AbstractEnvironmentSpecification, ConstraintsBuilder, ExpressionVariable, ProgramEntity,
+        ProgramEntityKind, QualifiedLocation,
     };
+    use apy::v1::QualifiedName;
     use apygen_analysis::analysis;
     use apygen_analysis::cfg::{Cfg, ProgramPoint};
     use indoc::indoc;
@@ -274,12 +276,12 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        a@(4:4) = builtins.Literal[42]
-        a@(6:4) = builtins.Literal[67]
-        a@(8:4) = Union[builtins.Literal[42], builtins.Literal[67]]
-        b@(8:0) = Union[builtins.Literal[42], builtins.Literal[67]]
-        x@(1:0) = builtins.Literal[true]
-        x@(3:3) = builtins.Literal[true]
+        a@{module[4:4]} = builtins.Literal[42]
+        a@{module[6:4]} = builtins.Literal[67]
+        a@{module[8:4]} = Union[builtins.Literal[42], builtins.Literal[67]]
+        b@{module[8:0]} = Union[builtins.Literal[42], builtins.Literal[67]]
+        x@{module[1:0]} = builtins.Literal[true]
+        x@{module[3:3]} = builtins.Literal[true]
         "##},
     )]
     #[case::simple_while_statement(
@@ -292,11 +294,11 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        a@(1:0) = builtins.Literal[0]
-        a@(3:6) = Any
-        a@(4:4) = Any
-        a@(6:4) = Any
-        b@(6:0) = Any
+        a@{module[1:0]} = builtins.Literal[0]
+        a@{module[3:6]} = Any
+        a@{module[4:4]} = Any
+        a@{module[6:4]} = Any
+        b@{module[6:0]} = Any
         "##},  // TODO: fix this when operations are implemented
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
@@ -304,7 +306,13 @@ mod tests {
 
         let specification = AbstractEnvironmentSpecification::default();
 
-        let constraints_builder = ConstraintsBuilder::new(&cfg, &specification, None);
+        let entity = ProgramEntity::new(
+            QualifiedLocation::from(Arc::new(QualifiedName::parse("module"))),
+            ProgramPoint::Entry,
+            ProgramEntityKind::Module,
+        );
+
+        let constraints_builder = ConstraintsBuilder::new(&cfg, &entity, &specification, None);
 
         let analysis_state = analysis(&constraints_builder).expect("Should build constraints");
 

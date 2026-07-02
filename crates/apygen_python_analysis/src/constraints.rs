@@ -296,20 +296,59 @@ impl Display for Location {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct QualifiedLocation {
+    pub module_name: ModuleName,
+    pub locations: imbl::Vector<Location>,
+}
+
+impl QualifiedLocation {
+    pub fn new(module_name: ModuleName, locations: imbl::Vector<Location>) -> Self {
+        Self {
+            module_name,
+            locations,
+        }
+    }
+
+    pub fn at_sublocation(&self, location: Location) -> Self {
+        let mut locations = self.locations.clone();
+        locations.push_back(location);
+        Self::new(self.module_name.clone(), locations)
+    }
+}
+
+impl Display for QualifiedLocation {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.module_name)?;
+        if !self.locations.is_empty() {
+            for location in &self.locations {
+                write!(f, "[{}]", location)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl From<ModuleName> for QualifiedLocation {
+    fn from(module_name: ModuleName) -> Self {
+        Self::new(module_name, imbl::Vector::new())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionVariable {
     pub name: VariableName,
-    pub location: Location,
+    pub location: QualifiedLocation,
 }
 
 impl ExpressionVariable {
-    pub fn new(name: VariableName, location: Location) -> Self {
+    pub fn new(name: VariableName, location: QualifiedLocation) -> Self {
         Self { name, location }
     }
 }
 
 impl Display for ExpressionVariable {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}@({})", self.name, self.location)
+        write!(f, "{}@{{{}}}", self.name, self.location)
     }
 }
 
@@ -333,13 +372,13 @@ impl Display for ExpressionOverride {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionFunction {
-    pub location: Location,
+    pub location: QualifiedLocation,
 
     pub is_async: bool,
 }
 
 impl ExpressionFunction {
-    pub fn new(location: Location, is_async: bool) -> Self {
+    pub fn new(location: QualifiedLocation, is_async: bool) -> Self {
         Self { location, is_async }
     }
 }
@@ -801,7 +840,7 @@ impl Display for IncludeConstraint {
 pub enum ConstraintNode {
     Entry,
     Constraint(Arc<IncludeConstraint>),
-    Empty(Location),
+    Empty(QualifiedLocation),
     TypeExit,
     ExceptionExit,
     Exit,
@@ -910,14 +949,18 @@ impl Lattice for AbstractEnvironmentSpecification {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SubProgramEntity {
-    pub location: Location,
+pub struct ProgramEntity {
+    pub location: QualifiedLocation,
     pub program_point: ProgramPoint,
     pub kind: ProgramEntityKind,
 }
 
-impl SubProgramEntity {
-    pub fn new(location: Location, program_point: ProgramPoint, kind: ProgramEntityKind) -> Self {
+impl ProgramEntity {
+    pub fn new(
+        location: QualifiedLocation,
+        program_point: ProgramPoint,
+        kind: ProgramEntityKind,
+    ) -> Self {
         Self {
             location,
             program_point,
@@ -929,13 +972,13 @@ impl SubProgramEntity {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SubProgramEntityContext {
     pub specification: AbstractEnvironmentSpecification,
-    pub variable_locations: LatticeMap<VariableName, LatticeSet<Location>>,
+    pub variable_locations: LatticeMap<VariableName, LatticeSet<QualifiedLocation>>,
 }
 
 impl SubProgramEntityContext {
     pub fn new(
         specification: AbstractEnvironmentSpecification,
-        variable_locations: LatticeMap<VariableName, LatticeSet<Location>>,
+        variable_locations: LatticeMap<VariableName, LatticeSet<QualifiedLocation>>,
     ) -> Self {
         Self {
             specification,
@@ -962,10 +1005,10 @@ impl Lattice for SubProgramEntityContext {
 pub struct ProgramEntityAbstractEnvironment {
     pub specification: AbstractEnvironmentSpecification,
     pub current_nodes: LatticeMap<ConstraintNode, Guard>,
-    pub variable_locations: LatticeMap<VariableName, LatticeSet<Location>>,
+    pub variable_locations: LatticeMap<VariableName, LatticeSet<QualifiedLocation>>,
     pub constraint_graph: ConstraintGraph,
     pub imports: LatticeSet<ModuleName>,
-    pub sub_program_entities: LatticeMap<SubProgramEntity, SubProgramEntityContext>,
+    pub sub_program_entities: LatticeMap<ProgramEntity, SubProgramEntityContext>,
 }
 
 impl Default for ProgramEntityAbstractEnvironment {
@@ -1053,11 +1096,11 @@ impl Display for ProgramEntityAnalysisState {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UsedVariables {
-    pub names: LatticeMap<VariableName, LatticeSet<Location>>,
+    pub names: LatticeMap<VariableName, LatticeSet<QualifiedLocation>>,
 }
 
 impl UsedVariables {
-    pub fn new(names: LatticeMap<VariableName, LatticeSet<Location>>) -> Self {
+    pub fn new(names: LatticeMap<VariableName, LatticeSet<QualifiedLocation>>) -> Self {
         Self { names }
     }
 
@@ -1155,6 +1198,7 @@ impl<'a> ProgramEntityAbstractParentState<'a> {
 #[derive(Debug, Clone)]
 pub struct ConstraintsBuilder<'a> {
     pub cfg: &'a Cfg,
+    pub entity: &'a ProgramEntity,
     pub specification: &'a AbstractEnvironmentSpecification,
     pub abstract_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
 }
@@ -1162,11 +1206,13 @@ pub struct ConstraintsBuilder<'a> {
 impl<'a> ConstraintsBuilder<'a> {
     pub fn new(
         cfg: &'a Cfg,
+        entity: &'a ProgramEntity,
         specification: &'a AbstractEnvironmentSpecification,
         abstract_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
     ) -> ConstraintsBuilder<'a> {
         ConstraintsBuilder {
             cfg,
+            entity,
             specification,
             abstract_parent_state,
         }
@@ -1264,7 +1310,7 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn create_include_constraint(
         &self,
         abstract_environment: &mut ProgramEntityAbstractEnvironment,
-        location: Location,
+        location: QualifiedLocation,
         left: Arc<TypeExpression>,
         right: Arc<TypeExpression>,
     ) {
@@ -1321,7 +1367,7 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn assign_variable(
         &self,
         abstract_environment: &mut ProgramEntityAbstractEnvironment,
-        location: Location,
+        location: QualifiedLocation,
         variable: VariableName,
         type_expression: Arc<TypeExpression>,
     ) {
@@ -1344,7 +1390,7 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn assign_empty_constraint(
         &self,
         abstract_environment: &mut ProgramEntityAbstractEnvironment,
-        location: Location,
+        location: QualifiedLocation,
         guards: LatticeSet<Guard>,
     ) {
         let node = ConstraintNode::Empty(location);
@@ -1388,12 +1434,18 @@ impl<'a> ConstraintsBuilder<'a> {
         }
     }
 
-    pub fn gen_variable_location(&self, range: TextRange) -> Location {
+    pub fn gen_location(&self, range: TextRange) -> Location {
         let range_offset = range.start();
         let line = self.cfg.line_index.line_index(range_offset).get();
         let line_offset = self.cfg.line_index.line_starts()[line - 1];
         let offset = range_offset - line_offset;
         Location::new(line, offset.to_usize())
+    }
+
+    pub fn gen_qualified_location(&self, range: TextRange) -> QualifiedLocation {
+        self.entity
+            .location
+            .at_sublocation(self.gen_location(range))
     }
 
     pub fn evaluate_parameter(
@@ -1788,17 +1840,14 @@ impl<'a> ConstraintsBuilder<'a> {
         expr_name: &nodes::ExprName,
     ) -> Result<ExpressionEval<TypeExpression>, ConstraintsBuilderError> {
         let variable_name = self.gen_variable_name(program_point, &expr_name.id)?;
-        let variable_location = self.gen_variable_location(expr_name.range);
+        let location = self.gen_qualified_location(expr_name.range);
 
         Ok(ExpressionEval::new(
             TypeExpression::Variable(ExpressionVariable::new(
                 variable_name.clone(),
-                variable_location.clone(),
+                location.clone(),
             )),
-            UsedVariables::new(LatticeMap::unit(
-                variable_name,
-                LatticeSet::unit(variable_location),
-            )),
+            UsedVariables::new(LatticeMap::unit(variable_name, LatticeSet::unit(location))),
         ))
     }
 
@@ -1886,7 +1935,7 @@ impl<'a> ConstraintsBuilder<'a> {
             parameters.variables,
         );
 
-        let location = self.gen_variable_location(stmt_function_def.name.range);
+        let location = self.gen_qualified_location(stmt_function_def.name.range);
 
         self.assign_variable(
             &mut target_abstract_environment,
@@ -1899,7 +1948,7 @@ impl<'a> ConstraintsBuilder<'a> {
         );
 
         target_abstract_environment.sub_program_entities.insert(
-            SubProgramEntity::new(location, program_point, ProgramEntityKind::Function),
+            ProgramEntity::new(location, program_point, ProgramEntityKind::Function),
             SubProgramEntityContext::new(
                 AbstractEnvironmentSpecification {
                     arguments: parameters.value,
@@ -1929,7 +1978,7 @@ impl<'a> ConstraintsBuilder<'a> {
             if let Some(as_name) = &alias.asname {
                 self.assign_variable(
                     &mut target_abstract_environment,
-                    self.gen_variable_location(as_name.range),
+                    self.gen_qualified_location(as_name.range),
                     self.gen_variable_name(program_point, &as_name)?,
                     Arc::new(TypeExpression::Import(ExpressionImport::new(
                         module_name.clone(),
@@ -1937,7 +1986,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 );
             } else {
                 let identifier = Arc::new(module_name.identifiers.first().clone());
-                let location = self.gen_variable_location(alias.name.range);
+                let location = self.gen_qualified_location(alias.name.range);
 
                 target_abstract_environment
                     .variable_locations
@@ -1948,13 +1997,12 @@ impl<'a> ConstraintsBuilder<'a> {
                     ExpressionVariable::new(identifier, location),
                 )));
 
-                let mut variable_location = self.gen_variable_location(alias.name.range);
+                let variable_location = self.gen_qualified_location(alias.name.range);
                 let mut i = 1;
                 while let Some(expression) = expression_option {
                     let (module_identifiers, attribute_identifiers) =
                         module_name.identifiers.split_at(i);
                     let attribute_option = attribute_identifiers.first().cloned();
-                    variable_location.offset += 1;
                     self.create_include_constraint(
                         &mut target_abstract_environment,
                         variable_location.clone(),
@@ -2035,7 +2083,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 AssignmentTarget::Name(target_name) => {
                     self.assign_variable(
                         &mut target_abstract_environment,
-                        self.gen_variable_location(target_expr.range()),
+                        self.gen_qualified_location(target_expr.range()),
                         Arc::new(target_name),
                         type_expression.clone(),
                     );
@@ -2092,7 +2140,7 @@ impl<'a> ConstraintsBuilder<'a> {
             AssignmentTarget::Name(target_name) => {
                 self.assign_variable(
                     &mut target_abstract_environment,
-                    self.gen_variable_location(stmt_ann_assign.target.range()),
+                    self.gen_qualified_location(stmt_ann_assign.target.range()),
                     Arc::new(target_name),
                     type_expression.clone(),
                 );
@@ -2127,7 +2175,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         self.assign_empty_constraint(
             &mut target_abstract_environment,
-            self.gen_variable_location(stmt_while.range),
+            self.gen_qualified_location(stmt_while.range),
             LatticeSet::from_iter([
                 Guard::IsTrue(condition_expression.clone()),
                 Guard::IsFalse(condition_expression.clone()),
@@ -2161,7 +2209,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         self.assign_empty_constraint(
             &mut target_abstract_environment,
-            self.gen_variable_location(stmt_if.range),
+            self.gen_qualified_location(stmt_if.range),
             LatticeSet::from_iter([
                 Guard::IsTrue(condition_expression.clone()),
                 Guard::IsFalse(condition_expression.clone()),
@@ -2421,38 +2469,9 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProgramEntityLocation {
-    pub module_name: ModuleName,
-    pub location: Option<Location>,
-}
-
-impl ProgramEntityLocation {
-    pub fn new(module_name: ModuleName, location: Option<Location>) -> Self {
-        Self {
-            module_name,
-            location,
-        }
-    }
-
-    pub fn module(module_name: ModuleName) -> Self {
-        Self::new(module_name, None)
-    }
-}
-
-impl Display for ProgramEntityLocation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.module_name)?;
-        if let Some(location) = &self.location {
-            write!(f, "@({})", location)?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ProgramEntityNode {
     Entry,
-    Location(ProgramEntityLocation),
+    Location(QualifiedLocation),
     Exit,
 }
 
@@ -2565,18 +2584,22 @@ pub enum ConstraintsError {
 }
 
 pub fn analyse_cfg<'a>(
-    location: ProgramEntityLocation,
+    entity: &'a ProgramEntity,
     cfg: &'a Cfg,
     specification: &'a AbstractEnvironmentSpecification,
     program_entity_kind: ProgramEntityKind,
     program_entity_analysis_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
 ) -> ProgramAnalysisState {
-    let constraint_builder =
-        ConstraintsBuilder::new(cfg, specification, program_entity_analysis_parent_state);
+    let constraint_builder = ConstraintsBuilder::new(
+        cfg,
+        entity,
+        specification,
+        program_entity_analysis_parent_state,
+    );
 
     let program_entity_analysis_state =
         analysis(&constraint_builder).expect("constraint builder should work");
-    let program_entity_analysis_node = ProgramEntityNode::Location(location.clone());
+    let program_entity_node = ProgramEntityNode::Location(entity.location.clone());
     let program_entity_exit_abstract_state =
         &program_entity_analysis_state.abstract_states[&ProgramPoint::Exit];
 
@@ -2591,13 +2614,8 @@ pub fn analyse_cfg<'a>(
         .sub_program_entities
         .as_ref()
     {
-        let sub_program_entity_location = ProgramEntityLocation::new(
-            location.module_name.clone(),
-            Some(sub_program_entity.location.clone()),
-        );
-
         let sub_program_analysis_state = analyse_cfg(
-            sub_program_entity_location.clone(),
+            &sub_program_entity,
             cfg.cfgs().get(&sub_program_entity.program_point).unwrap(),
             &sub_program_entity_context.specification,
             sub_program_entity.kind,
@@ -2607,13 +2625,13 @@ pub fn analyse_cfg<'a>(
         program_analysis_state = program_analysis_state.join(&sub_program_analysis_state);
 
         program_analysis_state.add_dependency(
-            ProgramEntityNode::Location(sub_program_entity_location),
-            program_entity_analysis_node.clone(),
+            ProgramEntityNode::Location(sub_program_entity.location.clone()),
+            program_entity_node.clone(),
         );
     }
 
     program_analysis_state.insert(
-        program_entity_analysis_node,
+        program_entity_node,
         program_entity_exit_abstract_state.clone(),
     );
 
@@ -2628,11 +2646,15 @@ pub fn analyse_program<F: Filesystem>(
 
     let cfg = import_cfg(&specs, &builtin_module_name).expect("Should build CFG");
 
-    let builtin_location = ProgramEntityLocation::module(builtin_module_name.clone());
+    let builtin_location = QualifiedLocation::from(builtin_module_name.clone());
     let builtin_node = ProgramEntityNode::Location(builtin_location.clone());
 
     let mut program_analysis = analyse_cfg(
-        builtin_location.clone(),
+        &ProgramEntity::new(
+            builtin_location.clone(),
+            ProgramPoint::Entry,
+            ProgramEntityKind::Module,
+        ),
         &cfg,
         &AbstractEnvironmentSpecification::default(),
         ProgramEntityKind::Module,
@@ -2666,7 +2688,11 @@ pub fn analyse_program<F: Filesystem>(
                 };
 
                 analyse_cfg(
-                    ProgramEntityLocation::module(module_name),
+                    &ProgramEntity::new(
+                        QualifiedLocation::from(module_name),
+                        ProgramPoint::Entry,
+                        ProgramEntityKind::Module,
+                    ),
                     &cfg,
                     &AbstractEnvironmentSpecification::default(),
                     ProgramEntityKind::Module,
@@ -2688,7 +2714,7 @@ pub fn analyse_program<F: Filesystem>(
 
             for import in imports {
                 let import_node =
-                    ProgramEntityNode::Location(ProgramEntityLocation::module(import.clone()));
+                    ProgramEntityNode::Location(QualifiedLocation::from(import.clone()));
 
                 program_analysis.add_dependency(node.clone(), import_node.clone());
                 program_analysis.add_dependency(ProgramEntityNode::Exit, node.clone());
@@ -2718,14 +2744,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "#import(some_module) ⊑ some_module@(1:7)";
+            "#import(some_module) ⊑ some_module@{module[1:7]}";
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "#import(some_module) ⊑ some_module@(1:7)" [label="#succeed(#import(some_module))"];
+            "#entry" -> "#import(some_module) ⊑ some_module@{module[1:7]}" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
-            "#import(some_module) ⊑ some_module@(1:7)" -> "#type_exit" [label="{}"];
+            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#type_exit" [label="{}"];
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -2738,14 +2764,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "#import(some_module) ⊑ mod@(1:22)";
+            "#import(some_module) ⊑ mod@{module[1:22]}";
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "#import(some_module) ⊑ mod@(1:22)" [label="#succeed(#import(some_module))"];
+            "#entry" -> "#import(some_module) ⊑ mod@{module[1:22]}" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
-            "#import(some_module) ⊑ mod@(1:22)" -> "#type_exit" [label="{}"];
+            "#import(some_module) ⊑ mod@{module[1:22]}" -> "#type_exit" [label="{}"];
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -2758,18 +2784,18 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "#import(some_module) ⊑ some_module@(1:7)";
-            "#import(some_module.submodule) ⊑ (some_module@(1:7)).submodule";
+            "#import(some_module) ⊑ some_module@{module[1:7]}";
+            "#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule";
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
             "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "#import(some_module) ⊑ some_module@(1:7)" [label="#succeed(#import(some_module))"];
+            "#entry" -> "#import(some_module) ⊑ some_module@{module[1:7]}" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
-            "#import(some_module) ⊑ some_module@(1:7)" -> "#import(some_module.submodule) ⊑ (some_module@(1:7)).submodule" [label="#succeed(#import(some_module.submodule))"];
-            "#import(some_module) ⊑ some_module@(1:7)" -> "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module.submodule))"];
-            "#import(some_module.submodule) ⊑ (some_module@(1:7)).submodule" -> "#type_exit" [label="{}"];
+            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule" [label="#succeed(#import(some_module.submodule))"];
+            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module.submodule))"];
+            "#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule" -> "#type_exit" [label="{}"];
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
@@ -2783,21 +2809,21 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "#import(some_module) ⊑ some_module@(1:7)";
-            "#import(some_module) ⊑ some_module@(1:20)";
-            "#import(some_module.submodule) ⊑ (some_module@(1:20)).submodule";
+            "#import(some_module) ⊑ some_module@{module[1:7]}";
+            "#import(some_module) ⊑ some_module@{module[1:20]}";
+            "#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule";
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
             "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "#import(some_module) ⊑ some_module@(1:7)" [label="#succeed(#import(some_module))"];
+            "#entry" -> "#import(some_module) ⊑ some_module@{module[1:7]}" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
-            "#import(some_module) ⊑ some_module@(1:7)" -> "#import(some_module) ⊑ some_module@(1:20)" [label="#succeed(#import(some_module))"];
-            "#import(some_module) ⊑ some_module@(1:7)" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
-            "#import(some_module) ⊑ some_module@(1:20)" -> "#import(some_module.submodule) ⊑ (some_module@(1:20)).submodule" [label="#succeed(#import(some_module.submodule))"];
-            "#import(some_module) ⊑ some_module@(1:20)" -> "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module.submodule))"];
-            "#import(some_module.submodule) ⊑ (some_module@(1:20)).submodule" -> "#type_exit" [label="{}"];
+            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#import(some_module) ⊑ some_module@{module[1:20]}" [label="#succeed(#import(some_module))"];
+            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
+            "#import(some_module) ⊑ some_module@{module[1:20]}" -> "#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule" [label="#succeed(#import(some_module.submodule))"];
+            "#import(some_module) ⊑ some_module@{module[1:20]}" -> "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module.submodule))"];
+            "#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule" -> "#type_exit" [label="{}"];
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
@@ -2811,18 +2837,18 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "#import(another_module) ⊑ another_module@(1:20)";
-            "#import(some_module) ⊑ some_module@(1:7)";
+            "#import(another_module) ⊑ another_module@{module[1:20]}";
+            "#import(some_module) ⊑ some_module@{module[1:7]}";
             "#exceptions(#import(another_module)) ⊑ #raised_exceptions()";
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "#import(some_module) ⊑ some_module@(1:7)" [label="#succeed(#import(some_module))"];
+            "#entry" -> "#import(some_module) ⊑ some_module@{module[1:7]}" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
-            "#import(another_module) ⊑ another_module@(1:20)" -> "#type_exit" [label="{}"];
-            "#import(some_module) ⊑ some_module@(1:7)" -> "#import(another_module) ⊑ another_module@(1:20)" [label="#succeed(#import(another_module))"];
-            "#import(some_module) ⊑ some_module@(1:7)" -> "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" [label="#raise(#import(another_module))"];
+            "#import(another_module) ⊑ another_module@{module[1:20]}" -> "#type_exit" [label="{}"];
+            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#import(another_module) ⊑ another_module@{module[1:20]}" [label="#succeed(#import(another_module))"];
+            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" [label="#raise(#import(another_module))"];
             "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
@@ -2836,18 +2862,18 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "#import(another_module) ⊑ mod@(1:45)";
-            "#import(some_module) ⊑ mod@(1:22)";
+            "#import(another_module) ⊑ mod@{module[1:45]}";
+            "#import(some_module) ⊑ mod@{module[1:22]}";
             "#exceptions(#import(another_module)) ⊑ #raised_exceptions()";
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "#import(some_module) ⊑ mod@(1:22)" [label="#succeed(#import(some_module))"];
+            "#entry" -> "#import(some_module) ⊑ mod@{module[1:22]}" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
-            "#import(another_module) ⊑ mod@(1:45)" -> "#type_exit" [label="{}"];
-            "#import(some_module) ⊑ mod@(1:22)" -> "#import(another_module) ⊑ mod@(1:45)" [label="#succeed(#import(another_module))"];
-            "#import(some_module) ⊑ mod@(1:22)" -> "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" [label="#raise(#import(another_module))"];
+            "#import(another_module) ⊑ mod@{module[1:45]}" -> "#type_exit" [label="{}"];
+            "#import(some_module) ⊑ mod@{module[1:22]}" -> "#import(another_module) ⊑ mod@{module[1:45]}" [label="#succeed(#import(another_module))"];
+            "#import(some_module) ⊑ mod@{module[1:22]}" -> "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" [label="#raise(#import(another_module))"];
             "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
@@ -2861,11 +2887,11 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "42 ⊑ a@(1:0)";
+            "42 ⊑ a@{module[1:0]}";
             "#type_exit";
             "#exit";
-            "#entry" -> "42 ⊑ a@(1:0)" [label="{}"];
-            "42 ⊑ a@(1:0)" -> "#type_exit" [label="{}"];
+            "#entry" -> "42 ⊑ a@{module[1:0]}" [label="{}"];
+            "42 ⊑ a@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
         }
         "##},
@@ -2876,11 +2902,11 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "4200000000000000000000000000 ⊑ a@(1:0)";
+            "4200000000000000000000000000 ⊑ a@{module[1:0]}";
             "#type_exit";
             "#exit";
-            "#entry" -> "4200000000000000000000000000 ⊑ a@(1:0)" [label="{}"];
-            "4200000000000000000000000000 ⊑ a@(1:0)" -> "#type_exit" [label="{}"];
+            "#entry" -> "4200000000000000000000000000 ⊑ a@{module[1:0]}" [label="{}"];
+            "4200000000000000000000000000 ⊑ a@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
         }
         "##},
@@ -2891,14 +2917,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) + (67) ⊑ add@(1:0)";
+            "(42) + (67) ⊑ add@{module[1:0]}";
             "#exceptions((42) + (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) + (67) ⊑ add@(1:0)" [label="#succeed((42) + (67))"];
+            "#entry" -> "(42) + (67) ⊑ add@{module[1:0]}" [label="#succeed((42) + (67))"];
             "#entry" -> "#exceptions((42) + (67)) ⊑ #raised_exceptions()" [label="#raise((42) + (67))"];
-            "(42) + (67) ⊑ add@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) + (67) ⊑ add@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) + (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -2911,14 +2937,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) - (67) ⊑ sub@(1:0)";
+            "(42) - (67) ⊑ sub@{module[1:0]}";
             "#exceptions((42) - (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) - (67) ⊑ sub@(1:0)" [label="#succeed((42) - (67))"];
+            "#entry" -> "(42) - (67) ⊑ sub@{module[1:0]}" [label="#succeed((42) - (67))"];
             "#entry" -> "#exceptions((42) - (67)) ⊑ #raised_exceptions()" [label="#raise((42) - (67))"];
-            "(42) - (67) ⊑ sub@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) - (67) ⊑ sub@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) - (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -2931,14 +2957,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) * (67) ⊑ mult@(1:0)";
+            "(42) * (67) ⊑ mult@{module[1:0]}";
             "#exceptions((42) * (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) * (67) ⊑ mult@(1:0)" [label="#succeed((42) * (67))"];
+            "#entry" -> "(42) * (67) ⊑ mult@{module[1:0]}" [label="#succeed((42) * (67))"];
             "#entry" -> "#exceptions((42) * (67)) ⊑ #raised_exceptions()" [label="#raise((42) * (67))"];
-            "(42) * (67) ⊑ mult@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) * (67) ⊑ mult@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) * (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -2951,14 +2977,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) @ (67) ⊑ mat_mult@(1:0)";
+            "(42) @ (67) ⊑ mat_mult@{module[1:0]}";
             "#exceptions((42) @ (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) @ (67) ⊑ mat_mult@(1:0)" [label="#succeed((42) @ (67))"];
+            "#entry" -> "(42) @ (67) ⊑ mat_mult@{module[1:0]}" [label="#succeed((42) @ (67))"];
             "#entry" -> "#exceptions((42) @ (67)) ⊑ #raised_exceptions()" [label="#raise((42) @ (67))"];
-            "(42) @ (67) ⊑ mat_mult@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) @ (67) ⊑ mat_mult@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) @ (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -2971,14 +2997,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) / (67) ⊑ div@(1:0)";
+            "(42) / (67) ⊑ div@{module[1:0]}";
             "#exceptions((42) / (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) / (67) ⊑ div@(1:0)" [label="#succeed((42) / (67))"];
+            "#entry" -> "(42) / (67) ⊑ div@{module[1:0]}" [label="#succeed((42) / (67))"];
             "#entry" -> "#exceptions((42) / (67)) ⊑ #raised_exceptions()" [label="#raise((42) / (67))"];
-            "(42) / (67) ⊑ div@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) / (67) ⊑ div@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) / (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -2991,14 +3017,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) // (67) ⊑ floor_div@(1:0)";
+            "(42) // (67) ⊑ floor_div@{module[1:0]}";
             "#exceptions((42) // (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) // (67) ⊑ floor_div@(1:0)" [label="#succeed((42) // (67))"];
+            "#entry" -> "(42) // (67) ⊑ floor_div@{module[1:0]}" [label="#succeed((42) // (67))"];
             "#entry" -> "#exceptions((42) // (67)) ⊑ #raised_exceptions()" [label="#raise((42) // (67))"];
-            "(42) // (67) ⊑ floor_div@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) // (67) ⊑ floor_div@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) // (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3011,14 +3037,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) % (67) ⊑ mod@(1:0)";
+            "(42) % (67) ⊑ mod@{module[1:0]}";
             "#exceptions((42) % (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) % (67) ⊑ mod@(1:0)" [label="#succeed((42) % (67))"];
+            "#entry" -> "(42) % (67) ⊑ mod@{module[1:0]}" [label="#succeed((42) % (67))"];
             "#entry" -> "#exceptions((42) % (67)) ⊑ #raised_exceptions()" [label="#raise((42) % (67))"];
-            "(42) % (67) ⊑ mod@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) % (67) ⊑ mod@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) % (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3031,14 +3057,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) ** (67) ⊑ pow@(1:0)";
+            "(42) ** (67) ⊑ pow@{module[1:0]}";
             "#exceptions((42) ** (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) ** (67) ⊑ pow@(1:0)" [label="#succeed((42) ** (67))"];
+            "#entry" -> "(42) ** (67) ⊑ pow@{module[1:0]}" [label="#succeed((42) ** (67))"];
             "#entry" -> "#exceptions((42) ** (67)) ⊑ #raised_exceptions()" [label="#raise((42) ** (67))"];
-            "(42) ** (67) ⊑ pow@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) ** (67) ⊑ pow@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) ** (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3051,14 +3077,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) << (67) ⊑ shl@(1:0)";
+            "(42) << (67) ⊑ shl@{module[1:0]}";
             "#exceptions((42) << (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) << (67) ⊑ shl@(1:0)" [label="#succeed((42) << (67))"];
+            "#entry" -> "(42) << (67) ⊑ shl@{module[1:0]}" [label="#succeed((42) << (67))"];
             "#entry" -> "#exceptions((42) << (67)) ⊑ #raised_exceptions()" [label="#raise((42) << (67))"];
-            "(42) << (67) ⊑ shl@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) << (67) ⊑ shl@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) << (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3071,14 +3097,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) >> (67) ⊑ shr@(1:0)";
+            "(42) >> (67) ⊑ shr@{module[1:0]}";
             "#exceptions((42) >> (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) >> (67) ⊑ shr@(1:0)" [label="#succeed((42) >> (67))"];
+            "#entry" -> "(42) >> (67) ⊑ shr@{module[1:0]}" [label="#succeed((42) >> (67))"];
             "#entry" -> "#exceptions((42) >> (67)) ⊑ #raised_exceptions()" [label="#raise((42) >> (67))"];
-            "(42) >> (67) ⊑ shr@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) >> (67) ⊑ shr@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) >> (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3091,14 +3117,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) | (67) ⊑ bit_or@(1:0)";
+            "(42) | (67) ⊑ bit_or@{module[1:0]}";
             "#exceptions((42) | (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) | (67) ⊑ bit_or@(1:0)" [label="#succeed((42) | (67))"];
+            "#entry" -> "(42) | (67) ⊑ bit_or@{module[1:0]}" [label="#succeed((42) | (67))"];
             "#entry" -> "#exceptions((42) | (67)) ⊑ #raised_exceptions()" [label="#raise((42) | (67))"];
-            "(42) | (67) ⊑ bit_or@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) | (67) ⊑ bit_or@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) | (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3111,14 +3137,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) ^ (67) ⊑ bit_xor@(1:0)";
+            "(42) ^ (67) ⊑ bit_xor@{module[1:0]}";
             "#exceptions((42) ^ (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) ^ (67) ⊑ bit_xor@(1:0)" [label="#succeed((42) ^ (67))"];
+            "#entry" -> "(42) ^ (67) ⊑ bit_xor@{module[1:0]}" [label="#succeed((42) ^ (67))"];
             "#entry" -> "#exceptions((42) ^ (67)) ⊑ #raised_exceptions()" [label="#raise((42) ^ (67))"];
-            "(42) ^ (67) ⊑ bit_xor@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) ^ (67) ⊑ bit_xor@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) ^ (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3131,14 +3157,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) & (67) ⊑ bit_and@(1:0)";
+            "(42) & (67) ⊑ bit_and@{module[1:0]}";
             "#exceptions((42) & (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) & (67) ⊑ bit_and@(1:0)" [label="#succeed((42) & (67))"];
+            "#entry" -> "(42) & (67) ⊑ bit_and@{module[1:0]}" [label="#succeed((42) & (67))"];
             "#entry" -> "#exceptions((42) & (67)) ⊑ #raised_exceptions()" [label="#raise((42) & (67))"];
-            "(42) & (67) ⊑ bit_and@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) & (67) ⊑ bit_and@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) & (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3151,14 +3177,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) and (67) ⊑ and_@(1:0)";
+            "(42) and (67) ⊑ and_@{module[1:0]}";
             "#exceptions((42) and (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) and (67) ⊑ and_@(1:0)" [label="#succeed((42) and (67))"];
+            "#entry" -> "(42) and (67) ⊑ and_@{module[1:0]}" [label="#succeed((42) and (67))"];
             "#entry" -> "#exceptions((42) and (67)) ⊑ #raised_exceptions()" [label="#raise((42) and (67))"];
-            "(42) and (67) ⊑ and_@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) and (67) ⊑ and_@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) and (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3171,14 +3197,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) or (67) ⊑ or_@(1:0)";
+            "(42) or (67) ⊑ or_@{module[1:0]}";
             "#exceptions((42) or (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) or (67) ⊑ or_@(1:0)" [label="#succeed((42) or (67))"];
+            "#entry" -> "(42) or (67) ⊑ or_@{module[1:0]}" [label="#succeed((42) or (67))"];
             "#entry" -> "#exceptions((42) or (67)) ⊑ #raised_exceptions()" [label="#raise((42) or (67))"];
-            "(42) or (67) ⊑ or_@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) or (67) ⊑ or_@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) or (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3191,14 +3217,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) == (67) ⊑ eq@(1:0)";
+            "(42) == (67) ⊑ eq@{module[1:0]}";
             "#exceptions((42) == (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) == (67) ⊑ eq@(1:0)" [label="#succeed((42) == (67))"];
+            "#entry" -> "(42) == (67) ⊑ eq@{module[1:0]}" [label="#succeed((42) == (67))"];
             "#entry" -> "#exceptions((42) == (67)) ⊑ #raised_exceptions()" [label="#raise((42) == (67))"];
-            "(42) == (67) ⊑ eq@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) == (67) ⊑ eq@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) == (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3211,14 +3237,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) != (67) ⊑ not_eq@(1:0)";
+            "(42) != (67) ⊑ not_eq@{module[1:0]}";
             "#exceptions((42) != (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) != (67) ⊑ not_eq@(1:0)" [label="#succeed((42) != (67))"];
+            "#entry" -> "(42) != (67) ⊑ not_eq@{module[1:0]}" [label="#succeed((42) != (67))"];
             "#entry" -> "#exceptions((42) != (67)) ⊑ #raised_exceptions()" [label="#raise((42) != (67))"];
-            "(42) != (67) ⊑ not_eq@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) != (67) ⊑ not_eq@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) != (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3231,14 +3257,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) < (67) ⊑ lt@(1:0)";
+            "(42) < (67) ⊑ lt@{module[1:0]}";
             "#exceptions((42) < (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) < (67) ⊑ lt@(1:0)" [label="#succeed((42) < (67))"];
+            "#entry" -> "(42) < (67) ⊑ lt@{module[1:0]}" [label="#succeed((42) < (67))"];
             "#entry" -> "#exceptions((42) < (67)) ⊑ #raised_exceptions()" [label="#raise((42) < (67))"];
-            "(42) < (67) ⊑ lt@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) < (67) ⊑ lt@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) < (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3251,14 +3277,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) > (67) ⊑ gt@(1:0)";
+            "(42) > (67) ⊑ gt@{module[1:0]}";
             "#exceptions((42) > (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) > (67) ⊑ gt@(1:0)" [label="#succeed((42) > (67))"];
+            "#entry" -> "(42) > (67) ⊑ gt@{module[1:0]}" [label="#succeed((42) > (67))"];
             "#entry" -> "#exceptions((42) > (67)) ⊑ #raised_exceptions()" [label="#raise((42) > (67))"];
-            "(42) > (67) ⊑ gt@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) > (67) ⊑ gt@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) > (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3271,14 +3297,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) <= (67) ⊑ lte@(1:0)";
+            "(42) <= (67) ⊑ lte@{module[1:0]}";
             "#exceptions((42) <= (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) <= (67) ⊑ lte@(1:0)" [label="#succeed((42) <= (67))"];
+            "#entry" -> "(42) <= (67) ⊑ lte@{module[1:0]}" [label="#succeed((42) <= (67))"];
             "#entry" -> "#exceptions((42) <= (67)) ⊑ #raised_exceptions()" [label="#raise((42) <= (67))"];
-            "(42) <= (67) ⊑ lte@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) <= (67) ⊑ lte@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) <= (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3291,14 +3317,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) >= (67) ⊑ gte@(1:0)";
+            "(42) >= (67) ⊑ gte@{module[1:0]}";
             "#exceptions((42) >= (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) >= (67) ⊑ gte@(1:0)" [label="#succeed((42) >= (67))"];
+            "#entry" -> "(42) >= (67) ⊑ gte@{module[1:0]}" [label="#succeed((42) >= (67))"];
             "#entry" -> "#exceptions((42) >= (67)) ⊑ #raised_exceptions()" [label="#raise((42) >= (67))"];
-            "(42) >= (67) ⊑ gte@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) >= (67) ⊑ gte@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) >= (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3311,14 +3337,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) is (67) ⊑ is_@(1:0)";
+            "(42) is (67) ⊑ is_@{module[1:0]}";
             "#exceptions((42) is (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) is (67) ⊑ is_@(1:0)" [label="#succeed((42) is (67))"];
+            "#entry" -> "(42) is (67) ⊑ is_@{module[1:0]}" [label="#succeed((42) is (67))"];
             "#entry" -> "#exceptions((42) is (67)) ⊑ #raised_exceptions()" [label="#raise((42) is (67))"];
-            "(42) is (67) ⊑ is_@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) is (67) ⊑ is_@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) is (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3331,14 +3357,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) is not (67) ⊑ is_not@(1:0)";
+            "(42) is not (67) ⊑ is_not@{module[1:0]}";
             "#exceptions((42) is not (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) is not (67) ⊑ is_not@(1:0)" [label="#succeed((42) is not (67))"];
+            "#entry" -> "(42) is not (67) ⊑ is_not@{module[1:0]}" [label="#succeed((42) is not (67))"];
             "#entry" -> "#exceptions((42) is not (67)) ⊑ #raised_exceptions()" [label="#raise((42) is not (67))"];
-            "(42) is not (67) ⊑ is_not@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) is not (67) ⊑ is_not@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) is not (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3351,14 +3377,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) in (67) ⊑ in_@(1:0)";
+            "(42) in (67) ⊑ in_@{module[1:0]}";
             "#exceptions((42) in (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) in (67) ⊑ in_@(1:0)" [label="#succeed((42) in (67))"];
+            "#entry" -> "(42) in (67) ⊑ in_@{module[1:0]}" [label="#succeed((42) in (67))"];
             "#entry" -> "#exceptions((42) in (67)) ⊑ #raised_exceptions()" [label="#raise((42) in (67))"];
-            "(42) in (67) ⊑ in_@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) in (67) ⊑ in_@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) in (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3371,14 +3397,14 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "(42) not in (67) ⊑ not_in@(1:0)";
+            "(42) not in (67) ⊑ not_in@{module[1:0]}";
             "#exceptions((42) not in (67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "(42) not in (67) ⊑ not_in@(1:0)" [label="#succeed((42) not in (67))"];
+            "#entry" -> "(42) not in (67) ⊑ not_in@{module[1:0]}" [label="#succeed((42) not in (67))"];
             "#entry" -> "#exceptions((42) not in (67)) ⊑ #raised_exceptions()" [label="#raise((42) not in (67))"];
-            "(42) not in (67) ⊑ not_in@(1:0)" -> "#type_exit" [label="{}"];
+            "(42) not in (67) ⊑ not_in@{module[1:0]}" -> "#type_exit" [label="{}"];
             "#exceptions((42) not in (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
@@ -3395,23 +3421,23 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "a@(1:0) ⊑ a@(3:4)";
-            "a@(1:0) ⊑ a@(3:8)";
-            "(a@(3:4)) + (a@(3:8)) ⊑ b@(3:0)";
-            "4 ⊑ a@(1:0)";
-            "#exceptions((a@(3:4)) + (a@(3:8))) ⊑ #raised_exceptions()";
+            "a@{module[1:0]} ⊑ a@{module[3:4]}";
+            "a@{module[1:0]} ⊑ a@{module[3:8]}";
+            "(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]}";
+            "4 ⊑ a@{module[1:0]}";
+            "#exceptions((a@{module[3:4]}) + (a@{module[3:8]})) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "4 ⊑ a@(1:0)" [label="{}"];
-            "a@(1:0) ⊑ a@(3:4)" -> "(a@(3:4)) + (a@(3:8)) ⊑ b@(3:0)" [label="#succeed((a@(3:4)) + (a@(3:8)))"];
-            "a@(1:0) ⊑ a@(3:4)" -> "#exceptions((a@(3:4)) + (a@(3:8))) ⊑ #raised_exceptions()" [label="#raise((a@(3:4)) + (a@(3:8)))"];
-            "a@(1:0) ⊑ a@(3:8)" -> "(a@(3:4)) + (a@(3:8)) ⊑ b@(3:0)" [label="#succeed((a@(3:4)) + (a@(3:8)))"];
-            "a@(1:0) ⊑ a@(3:8)" -> "#exceptions((a@(3:4)) + (a@(3:8))) ⊑ #raised_exceptions()" [label="#raise((a@(3:4)) + (a@(3:8)))"];
-            "(a@(3:4)) + (a@(3:8)) ⊑ b@(3:0)" -> "#type_exit" [label="{}"];
-            "4 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a@(3:4)" [label="{}"];
-            "4 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a@(3:8)" [label="{}"];
-            "#exceptions((a@(3:4)) + (a@(3:8))) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#entry" -> "4 ⊑ a@{module[1:0]}" [label="{}"];
+            "a@{module[1:0]} ⊑ a@{module[3:4]}" -> "(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]}" [label="#succeed((a@{module[3:4]}) + (a@{module[3:8]}))"];
+            "a@{module[1:0]} ⊑ a@{module[3:4]}" -> "#exceptions((a@{module[3:4]}) + (a@{module[3:8]})) ⊑ #raised_exceptions()" [label="#raise((a@{module[3:4]}) + (a@{module[3:8]}))"];
+            "a@{module[1:0]} ⊑ a@{module[3:8]}" -> "(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]}" [label="#succeed((a@{module[3:4]}) + (a@{module[3:8]}))"];
+            "a@{module[1:0]} ⊑ a@{module[3:8]}" -> "#exceptions((a@{module[3:4]}) + (a@{module[3:8]})) ⊑ #raised_exceptions()" [label="#raise((a@{module[3:4]}) + (a@{module[3:8]}))"];
+            "(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]}" -> "#type_exit" [label="{}"];
+            "4 ⊑ a@{module[1:0]}" -> "a@{module[1:0]} ⊑ a@{module[3:4]}" [label="{}"];
+            "4 ⊑ a@{module[1:0]}" -> "a@{module[1:0]} ⊑ a@{module[3:8]}" [label="{}"];
+            "#exceptions((a@{module[3:4]}) + (a@{module[3:8]})) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3432,36 +3458,36 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "a@(4:4) ⊑ a@(8:4)";
-            "a@(6:4) ⊑ a@(8:4)";
-            "a@(8:4) ⊑ b@(8:0)";
-            "x@(1:0) ⊑ x@(3:3)";
-            "42 ⊑ a@(4:4)";
-            "67 ⊑ a@(6:4)";
-            "True ⊑ x@(1:0)";
-            "#exceptions(a@(8:4)) ⊑ #raised_exceptions()";
-            "#exceptions(x@(3:3)) ⊑ #raised_exceptions()";
-            "#empty(3:0)";
+            "a@{module[4:4]} ⊑ a@{module[8:4]}";
+            "a@{module[6:4]} ⊑ a@{module[8:4]}";
+            "a@{module[8:4]} ⊑ b@{module[8:0]}";
+            "x@{module[1:0]} ⊑ x@{module[3:3]}";
+            "42 ⊑ a@{module[4:4]}";
+            "67 ⊑ a@{module[6:4]}";
+            "True ⊑ x@{module[1:0]}";
+            "#exceptions(a@{module[8:4]}) ⊑ #raised_exceptions()";
+            "#exceptions(x@{module[3:3]}) ⊑ #raised_exceptions()";
+            "#empty(module[3:0])";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "True ⊑ x@(1:0)" [label="{}"];
-            "a@(4:4) ⊑ a@(8:4)" -> "a@(8:4) ⊑ b@(8:0)" [label="#succeed(a@(8:4))"];
-            "a@(4:4) ⊑ a@(8:4)" -> "#exceptions(a@(8:4)) ⊑ #raised_exceptions()" [label="#raise(a@(8:4))"];
-            "a@(6:4) ⊑ a@(8:4)" -> "a@(8:4) ⊑ b@(8:0)" [label="#succeed(a@(8:4))"];
-            "a@(6:4) ⊑ a@(8:4)" -> "#exceptions(a@(8:4)) ⊑ #raised_exceptions()" [label="#raise(a@(8:4))"];
-            "a@(8:4) ⊑ b@(8:0)" -> "#type_exit" [label="{}"];
-            "x@(1:0) ⊑ x@(3:3)" -> "#empty(3:0)" [label="{}"];
-            "42 ⊑ a@(4:4)" -> "a@(4:4) ⊑ a@(8:4)" [label="{}"];
-            "42 ⊑ a@(4:4)" -> "a@(6:4) ⊑ a@(8:4)" [label="{}"];
-            "67 ⊑ a@(6:4)" -> "a@(4:4) ⊑ a@(8:4)" [label="{}"];
-            "67 ⊑ a@(6:4)" -> "a@(6:4) ⊑ a@(8:4)" [label="{}"];
-            "True ⊑ x@(1:0)" -> "x@(1:0) ⊑ x@(3:3)" [label="{}"];
-            "#exceptions(a@(8:4)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions(x@(3:3)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#empty(3:0)" -> "42 ⊑ a@(4:4)" [label="#is_true(x@(3:3))"];
-            "#empty(3:0)" -> "67 ⊑ a@(6:4)" [label="#is_false(x@(3:3))"];
-            "#empty(3:0)" -> "#exceptions(x@(3:3)) ⊑ #raised_exceptions()" [label="#raise(x@(3:3))"];
+            "#entry" -> "True ⊑ x@{module[1:0]}" [label="{}"];
+            "a@{module[4:4]} ⊑ a@{module[8:4]}" -> "a@{module[8:4]} ⊑ b@{module[8:0]}" [label="#succeed(a@{module[8:4]})"];
+            "a@{module[4:4]} ⊑ a@{module[8:4]}" -> "#exceptions(a@{module[8:4]}) ⊑ #raised_exceptions()" [label="#raise(a@{module[8:4]})"];
+            "a@{module[6:4]} ⊑ a@{module[8:4]}" -> "a@{module[8:4]} ⊑ b@{module[8:0]}" [label="#succeed(a@{module[8:4]})"];
+            "a@{module[6:4]} ⊑ a@{module[8:4]}" -> "#exceptions(a@{module[8:4]}) ⊑ #raised_exceptions()" [label="#raise(a@{module[8:4]})"];
+            "a@{module[8:4]} ⊑ b@{module[8:0]}" -> "#type_exit" [label="{}"];
+            "x@{module[1:0]} ⊑ x@{module[3:3]}" -> "#empty(module[3:0])" [label="{}"];
+            "42 ⊑ a@{module[4:4]}" -> "a@{module[4:4]} ⊑ a@{module[8:4]}" [label="{}"];
+            "42 ⊑ a@{module[4:4]}" -> "a@{module[6:4]} ⊑ a@{module[8:4]}" [label="{}"];
+            "67 ⊑ a@{module[6:4]}" -> "a@{module[4:4]} ⊑ a@{module[8:4]}" [label="{}"];
+            "67 ⊑ a@{module[6:4]}" -> "a@{module[6:4]} ⊑ a@{module[8:4]}" [label="{}"];
+            "True ⊑ x@{module[1:0]}" -> "x@{module[1:0]} ⊑ x@{module[3:3]}" [label="{}"];
+            "#exceptions(a@{module[8:4]}) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions(x@{module[3:3]}) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#empty(module[3:0])" -> "42 ⊑ a@{module[4:4]}" [label="#is_true(x@{module[3:3]})"];
+            "#empty(module[3:0])" -> "67 ⊑ a@{module[6:4]}" [label="#is_false(x@{module[3:3]})"];
+            "#empty(module[3:0])" -> "#exceptions(x@{module[3:3]}) ⊑ #raised_exceptions()" [label="#raise(x@{module[3:3]})"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3480,38 +3506,38 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "a@(1:0) ⊑ a@(3:6)";
-            "a@(3:6) ⊑ a@(4:8)";
-            "a@(3:6) ⊑ a@(6:4)";
-            "a@(4:4) ⊑ a@(3:6)";
-            "a@(6:4) ⊑ b@(6:0)";
-            "(a@(4:8)) + (1) ⊑ a@(4:4)";
-            "0 ⊑ a@(1:0)";
-            "#exceptions(a@(6:4)) ⊑ #raised_exceptions()";
-            "#exceptions((a@(3:6)) < (5)) ⊑ #raised_exceptions()";
-            "#exceptions((a@(4:8)) + (1)) ⊑ #raised_exceptions()";
-            "#empty(3:0)";
+            "a@{module[1:0]} ⊑ a@{module[3:6]}";
+            "a@{module[3:6]} ⊑ a@{module[4:8]}";
+            "a@{module[3:6]} ⊑ a@{module[6:4]}";
+            "a@{module[4:4]} ⊑ a@{module[3:6]}";
+            "a@{module[6:4]} ⊑ b@{module[6:0]}";
+            "(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]}";
+            "0 ⊑ a@{module[1:0]}";
+            "#exceptions(a@{module[6:4]}) ⊑ #raised_exceptions()";
+            "#exceptions((a@{module[3:6]}) < (5)) ⊑ #raised_exceptions()";
+            "#exceptions((a@{module[4:8]}) + (1)) ⊑ #raised_exceptions()";
+            "#empty(module[3:0])";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "0 ⊑ a@(1:0)" [label="{}"];
-            "a@(1:0) ⊑ a@(3:6)" -> "#empty(3:0)" [label="{}"];
-            "a@(3:6) ⊑ a@(4:8)" -> "(a@(4:8)) + (1) ⊑ a@(4:4)" [label="#succeed((a@(4:8)) + (1))"];
-            "a@(3:6) ⊑ a@(4:8)" -> "#exceptions((a@(4:8)) + (1)) ⊑ #raised_exceptions()" [label="#raise((a@(4:8)) + (1))"];
-            "a@(3:6) ⊑ a@(6:4)" -> "a@(6:4) ⊑ b@(6:0)" [label="#succeed(a@(6:4))"];
-            "a@(3:6) ⊑ a@(6:4)" -> "#exceptions(a@(6:4)) ⊑ #raised_exceptions()" [label="#raise(a@(6:4))"];
-            "a@(4:4) ⊑ a@(3:6)" -> "#empty(3:0)" [label="{}"];
-            "a@(6:4) ⊑ b@(6:0)" -> "#type_exit" [label="{}"];
-            "(a@(4:8)) + (1) ⊑ a@(4:4)" -> "a@(1:0) ⊑ a@(3:6)" [label="{}"];
-            "(a@(4:8)) + (1) ⊑ a@(4:4)" -> "a@(4:4) ⊑ a@(3:6)" [label="{}"];
-            "0 ⊑ a@(1:0)" -> "a@(1:0) ⊑ a@(3:6)" [label="{}"];
-            "0 ⊑ a@(1:0)" -> "a@(4:4) ⊑ a@(3:6)" [label="{}"];
-            "#exceptions(a@(6:4)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions((a@(3:6)) < (5)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions((a@(4:8)) + (1)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#empty(3:0)" -> "a@(3:6) ⊑ a@(4:8)" [label="#is_true((a@(3:6)) < (5))"];
-            "#empty(3:0)" -> "a@(3:6) ⊑ a@(6:4)" [label="#is_false((a@(3:6)) < (5))"];
-            "#empty(3:0)" -> "#exceptions((a@(3:6)) < (5)) ⊑ #raised_exceptions()" [label="#raise((a@(3:6)) < (5))"];
+            "#entry" -> "0 ⊑ a@{module[1:0]}" [label="{}"];
+            "a@{module[1:0]} ⊑ a@{module[3:6]}" -> "#empty(module[3:0])" [label="{}"];
+            "a@{module[3:6]} ⊑ a@{module[4:8]}" -> "(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]}" [label="#succeed((a@{module[4:8]}) + (1))"];
+            "a@{module[3:6]} ⊑ a@{module[4:8]}" -> "#exceptions((a@{module[4:8]}) + (1)) ⊑ #raised_exceptions()" [label="#raise((a@{module[4:8]}) + (1))"];
+            "a@{module[3:6]} ⊑ a@{module[6:4]}" -> "a@{module[6:4]} ⊑ b@{module[6:0]}" [label="#succeed(a@{module[6:4]})"];
+            "a@{module[3:6]} ⊑ a@{module[6:4]}" -> "#exceptions(a@{module[6:4]}) ⊑ #raised_exceptions()" [label="#raise(a@{module[6:4]})"];
+            "a@{module[4:4]} ⊑ a@{module[3:6]}" -> "#empty(module[3:0])" [label="{}"];
+            "a@{module[6:4]} ⊑ b@{module[6:0]}" -> "#type_exit" [label="{}"];
+            "(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]}" -> "a@{module[1:0]} ⊑ a@{module[3:6]}" [label="{}"];
+            "(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]}" -> "a@{module[4:4]} ⊑ a@{module[3:6]}" [label="{}"];
+            "0 ⊑ a@{module[1:0]}" -> "a@{module[1:0]} ⊑ a@{module[3:6]}" [label="{}"];
+            "0 ⊑ a@{module[1:0]}" -> "a@{module[4:4]} ⊑ a@{module[3:6]}" [label="{}"];
+            "#exceptions(a@{module[6:4]}) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((a@{module[3:6]}) < (5)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((a@{module[4:8]}) + (1)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#empty(module[3:0])" -> "a@{module[3:6]} ⊑ a@{module[4:8]}" [label="#is_true((a@{module[3:6]}) < (5))"];
+            "#empty(module[3:0])" -> "a@{module[3:6]} ⊑ a@{module[6:4]}" [label="#is_false((a@{module[3:6]}) < (5))"];
+            "#empty(module[3:0])" -> "#exceptions((a@{module[3:6]}) < (5)) ⊑ #raised_exceptions()" [label="#raise((a@{module[3:6]}) < (5))"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3528,22 +3554,22 @@ mod tests {
         indoc! {r##"
         digraph "Constraints" {
             "#entry";
-            "add_two@(1:4) ⊑ add_two@(4:9)";
-            "#function(location=1:4, async=false) ⊑ add_two@(1:4)";
-            "(add_two@(4:9))(42, 67) ⊑ result@(4:0)";
-            "#exceptions(#function(location=1:4, async=false)) ⊑ #raised_exceptions()";
-            "#exceptions((add_two@(4:9))(42, 67)) ⊑ #raised_exceptions()";
+            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}";
+            "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}";
+            "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}";
+            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()";
+            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()";
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "#function(location=1:4, async=false) ⊑ add_two@(1:4)" [label="#succeed(#function(location=1:4, async=false))"];
-            "#entry" -> "#exceptions(#function(location=1:4, async=false)) ⊑ #raised_exceptions()" [label="#raise(#function(location=1:4, async=false))"];
-            "add_two@(1:4) ⊑ add_two@(4:9)" -> "(add_two@(4:9))(42, 67) ⊑ result@(4:0)" [label="#succeed((add_two@(4:9))(42, 67))"];
-            "add_two@(1:4) ⊑ add_two@(4:9)" -> "#exceptions((add_two@(4:9))(42, 67)) ⊑ #raised_exceptions()" [label="#raise((add_two@(4:9))(42, 67))"];
-            "#function(location=1:4, async=false) ⊑ add_two@(1:4)" -> "add_two@(1:4) ⊑ add_two@(4:9)" [label="{}"];
-            "(add_two@(4:9))(42, 67) ⊑ result@(4:0)" -> "#type_exit" [label="{}"];
-            "#exceptions(#function(location=1:4, async=false)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions((add_two@(4:9))(42, 67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#entry" -> "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" [label="#succeed(#function(location=module[1:4], async=false))"];
+            "#entry" -> "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()" [label="#raise(#function(location=module[1:4], async=false))"];
+            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
+            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()" [label="#raise((add_two@{module[4:9]})(42, 67))"];
+            "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" -> "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" [label="{}"];
+            "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" -> "#type_exit" [label="{}"];
+            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3559,7 +3585,13 @@ mod tests {
 
         let specification = AbstractEnvironmentSpecification::default();
 
-        let constraints_builder = ConstraintsBuilder::new(&cfg, &specification, None);
+        let entity = ProgramEntity::new(
+            QualifiedLocation::from(Arc::new(QualifiedName::parse("module"))),
+            ProgramPoint::Entry,
+            ProgramEntityKind::Module,
+        );
+
+        let constraints_builder = ConstraintsBuilder::new(&cfg, &entity, &specification, None);
 
         let analysis_state =
             analysis(&constraints_builder).expect("constraint builder should work");
@@ -3592,9 +3624,9 @@ mod tests {
         "##},
         indoc! {r##"
         digraph "Dependency" {
-            "Location(test)";
-            "Location(test@(1:4))";
-            "Location(test@(1:4))" -> "Location(test)";
+            "Location(module)";
+            "Location(module[1:4])";
+            "Location(module[1:4])" -> "Location(module)";
         }
         "##},
     )]
@@ -3602,7 +3634,11 @@ mod tests {
         let cfg = Cfg::parse(source).expect("Should build CFG");
 
         let program_analysis_state = analyse_cfg(
-            ProgramEntityLocation::module(Arc::new(QualifiedName::parse("test"))),
+            &ProgramEntity::new(
+                QualifiedLocation::from(Arc::new(QualifiedName::parse("module"))),
+                ProgramPoint::Entry,
+                ProgramEntityKind::Module,
+            ),
             &cfg,
             &AbstractEnvironmentSpecification::default(),
             ProgramEntityKind::Module,
