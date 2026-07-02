@@ -2647,7 +2647,7 @@ pub fn analyse_program<F: Filesystem>(
     let mut worklist = initial_modules;
 
     while !worklist.is_empty() {
-        let parent_state = &ProgramEntityAbstractParentState::new(
+        let builtin_parent_state = &ProgramEntityAbstractParentState::new(
             &program_analysis.nodes[&builtin_node],
             ProgramEntityKind::Module,
             None,
@@ -2660,7 +2660,7 @@ pub fn analyse_program<F: Filesystem>(
                 let cfg = import_cfg(specs_ref, &module_name).expect("Should build CFG");
 
                 let parent_state = if module_name != builtin_module_name {
-                    Some(parent_state)
+                    Some(builtin_parent_state)
                 } else {
                     None
                 };
