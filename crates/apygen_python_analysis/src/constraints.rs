@@ -1,5 +1,6 @@
 use crate::abstract_environment::{
-    LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger, LiteralString,
+    BUILTINS_MODULE, LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger,
+    LiteralString,
 };
 use crate::genkill::assignment::AssignmentTarget;
 use crate::worklist::load_cfg;
@@ -2622,49 +2623,35 @@ pub fn analyse_cfg<'a>(
 pub fn analyse_program<F: Filesystem>(
     specs: HashMap<Identifier, FinderSpec<Identifier, F>>,
     initial_modules: HashSet<ModuleName>,
-    builtin_module: Option<ModuleName>,
 ) -> ProgramAnalysisState {
-    let mut program_analysis: ProgramAnalysisState = ProgramAnalysisState::default();
+    let builtin_module_name = Arc::new(QualifiedName::parse(BUILTINS_MODULE));
 
-    let builtin_location = if let Some(builtin_module_name) = &builtin_module {
-        let cfg = import_cfg(&specs, builtin_module_name).expect("Should build CFG");
+    let cfg = import_cfg(&specs, &builtin_module_name).expect("Should build CFG");
 
-        let program_entity_location = ProgramEntityLocation::module(builtin_module_name.clone());
+    let builtin_location = ProgramEntityLocation::module(builtin_module_name.clone());
+    let builtin_node = ProgramEntityNode::Location(builtin_location.clone());
 
-        let analysis = analyse_cfg(
-            program_entity_location.clone(),
-            &cfg,
-            &AbstractEnvironmentSpecification::default(),
-            ProgramEntityKind::Module,
-            None,
-        );
+    let mut program_analysis = analyse_cfg(
+        builtin_location.clone(),
+        &cfg,
+        &AbstractEnvironmentSpecification::default(),
+        ProgramEntityKind::Module,
+        None,
+    );
 
-        program_analysis = program_analysis.join(&analysis);
-
-        program_analysis.add_dependency(
-            ProgramEntityNode::Entry,
-            ProgramEntityNode::Location(program_entity_location.clone()),
-        );
-
-        Some(program_entity_location)
-    } else {
-        None
-    };
+    program_analysis.add_dependency(ProgramEntityNode::Entry, builtin_node.clone());
+    program_analysis.add_dependency(builtin_node.clone(), ProgramEntityNode::Exit);
 
     let specs_ref = &specs;
 
     let mut worklist = initial_modules;
 
     while !worklist.is_empty() {
-        let parent_state = if let Some(builtin_location) = &builtin_location {
-            Some(&ProgramEntityAbstractParentState::new(
-                &program_analysis.nodes[&ProgramEntityNode::Location(builtin_location.clone())],
-                ProgramEntityKind::Module,
-                None,
-            ))
-        } else {
-            None
-        };
+        let parent_state = &ProgramEntityAbstractParentState::new(
+            &program_analysis.nodes[&builtin_node],
+            ProgramEntityKind::Module,
+            None,
+        );
 
         let new_program_analysis = worklist
             .drain()
@@ -2672,8 +2659,8 @@ pub fn analyse_program<F: Filesystem>(
             .map(|module_name| {
                 let cfg = import_cfg(specs_ref, &module_name).expect("Should build CFG");
 
-                let parent_state = if Some(&module_name) != builtin_module.as_ref() {
-                    parent_state
+                let parent_state = if module_name != builtin_module_name {
+                    Some(parent_state)
                 } else {
                     None
                 };
@@ -2691,32 +2678,26 @@ pub fn analyse_program<F: Filesystem>(
                 |left, right| left.join(&right),
             );
 
+        program_analysis = program_analysis.join(&new_program_analysis);
+
         for (node, analysis_state) in new_program_analysis.nodes.as_ref() {
-            let mut imports = analysis_state.imports.values.clone();
+            let imports = analysis_state
+                .imports
+                .values
+                .update(builtin_module_name.clone());
 
-            if let Some(builtin_module_name) = &builtin_module {
-                imports.insert(builtin_module_name.clone());
-            }
+            for import in imports {
+                let import_node =
+                    ProgramEntityNode::Location(ProgramEntityLocation::module(import.clone()));
 
-            if imports.is_empty() {
-                program_analysis.add_dependency(ProgramEntityNode::Entry, node.clone());
-            } else {
-                for import in imports {
-                    let import_node =
-                        ProgramEntityNode::Location(ProgramEntityLocation::module(import.clone()));
+                program_analysis.add_dependency(node.clone(), import_node.clone());
+                program_analysis.add_dependency(ProgramEntityNode::Exit, node.clone());
+                program_analysis.remove_dependency(ProgramEntityNode::Exit, import_node.clone());
 
-                    program_analysis.add_dependency(node.clone(), import_node.clone());
-                    program_analysis.add_dependency(ProgramEntityNode::Exit, node.clone());
-                    program_analysis
-                        .remove_dependency(ProgramEntityNode::Exit, import_node.clone());
-
-                    if !program_analysis.nodes.contains_key(&import_node) {
-                        worklist.insert(import.clone());
-                    }
+                if !program_analysis.nodes.contains_key(&import_node) {
+                    worklist.insert(import.clone());
                 }
             }
-
-            program_analysis = program_analysis.join(&new_program_analysis);
         }
     }
 
