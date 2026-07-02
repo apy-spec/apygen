@@ -254,8 +254,7 @@ impl GraphAnalyser for ConstraintSolver<'_> {
 mod tests {
     use super::*;
     use crate::constraints::{
-        AbstractEnvironmentSpecification, ConstraintsBuilder, ExpressionVariable, ProgramEntity,
-        ProgramEntityKind, QualifiedLocation,
+        ConstraintsBuilder, ExpressionVariable, ProgramEntity, ProgramEntityKind, QualifiedLocation,
     };
     use apy::v1::QualifiedName;
     use apygen_analysis::analysis;
@@ -304,15 +303,13 @@ mod tests {
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
         let cfg = Cfg::parse(source).expect("Should build CFG");
 
-        let specification = AbstractEnvironmentSpecification::default();
-
         let entity = ProgramEntity::new(
             QualifiedLocation::from(Arc::new(QualifiedName::parse("module"))),
             ProgramPoint::Entry,
             ProgramEntityKind::Module,
         );
 
-        let constraints_builder = ConstraintsBuilder::new(&cfg, &entity, &specification, None);
+        let constraints_builder = ConstraintsBuilder::new(&cfg, &entity, None);
 
         let analysis_state = analysis(&constraints_builder).expect("Should build constraints");
 

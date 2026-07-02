@@ -927,7 +927,7 @@ impl Lattice for ConstraintGraph {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AbstractEnvironmentSpecification {
-    pub arguments: LatticeMap<VariableName, LatticeSet<TypeExpression>>,
+    pub arguments: LatticeMap<ExpressionVariable, LatticeSet<TypeExpression>>,
     pub return_type: LatticeSet<TypeExpression>,
     pub exceptions: LatticeSet<ExceptionExpression>,
 }
@@ -1199,7 +1199,6 @@ impl<'a> ProgramEntityAbstractParentState<'a> {
 pub struct ConstraintsBuilder<'a> {
     pub cfg: &'a Cfg,
     pub entity: &'a ProgramEntity,
-    pub specification: &'a AbstractEnvironmentSpecification,
     pub abstract_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
 }
 
@@ -1207,13 +1206,11 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn new(
         cfg: &'a Cfg,
         entity: &'a ProgramEntity,
-        specification: &'a AbstractEnvironmentSpecification,
         abstract_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
     ) -> ConstraintsBuilder<'a> {
         ConstraintsBuilder {
             cfg,
             entity,
-            specification,
             abstract_parent_state,
         }
     }
@@ -1452,7 +1449,7 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         program_point: ProgramPoint,
         parameter: &nodes::Parameter,
-    ) -> Result<(VariableName, Option<ExpressionEval<TypeExpression>>), ConstraintsBuilderError>
+    ) -> Result<(ExpressionVariable, Option<ExpressionEval<TypeExpression>>), ConstraintsBuilderError>
     {
         let parameter_name = self.gen_variable_name(program_point, &parameter.name)?;
 
@@ -1460,14 +1457,17 @@ impl<'a> ConstraintsBuilder<'a> {
             // TODO: add support for annotations
         }
 
-        Ok((parameter_name, None))
+        Ok((
+            ExpressionVariable::new(parameter_name, self.gen_qualified_location(parameter.range)),
+            None,
+        ))
     }
 
     pub fn evaluate_parameter_with_default(
         &self,
         program_point: ProgramPoint,
         parameter_with_default: &nodes::ParameterWithDefault,
-    ) -> Result<(VariableName, Option<ExpressionEval<TypeExpression>>), ConstraintsBuilderError>
+    ) -> Result<(ExpressionVariable, Option<ExpressionEval<TypeExpression>>), ConstraintsBuilderError>
     {
         let (parameter_name, annotation_eval_option) =
             self.evaluate_parameter(program_point, &parameter_with_default.parameter)?;
@@ -1501,7 +1501,7 @@ impl<'a> ConstraintsBuilder<'a> {
         program_point: ProgramPoint,
         parameters: &nodes::Parameters,
     ) -> Result<
-        ExpressionEval<LatticeMap<VariableName, LatticeSet<TypeExpression>>>,
+        ExpressionEval<LatticeMap<ExpressionVariable, LatticeSet<TypeExpression>>>,
         ConstraintsBuilderError,
     > {
         let positional_only_parameters = parameters
@@ -1530,7 +1530,7 @@ impl<'a> ConstraintsBuilder<'a> {
             .chain(var_positional_parameters)
             .chain(keyword_only_parameters)
             .chain(var_keyword_parameters)
-            .collect::<Result<Vec<(VariableName, Option<ExpressionEval<TypeExpression>>)>, _>>()?;
+            .collect::<Result<Vec<(ExpressionVariable, Option<ExpressionEval<TypeExpression>>)>, _>>()?;
 
         let mut used_variables = UsedVariables::default();
 
@@ -2335,7 +2335,22 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 
         let mut entry_state = ProgramEntityAbstractEnvironment::default();
 
-        entry_state.specification = self.specification.clone();
+        if let Some(abstract_parent_state) = self.abstract_parent_state {
+            if let Some(context) = abstract_parent_state
+                .state
+                .sub_program_entities
+                .get(self.entity)
+            {
+                entry_state.specification = context.specification.clone();
+
+                for argument in entry_state.specification.arguments.keys() {
+                    entry_state.variable_locations.insert(
+                        argument.name.clone(),
+                        LatticeSet::unit(argument.location.clone()),
+                    );
+                }
+            }
+        }
 
         analysis_state
             .abstract_states
@@ -2586,16 +2601,11 @@ pub enum ConstraintsError {
 pub fn analyse_cfg<'a>(
     entity: &'a ProgramEntity,
     cfg: &'a Cfg,
-    specification: &'a AbstractEnvironmentSpecification,
     program_entity_kind: ProgramEntityKind,
     program_entity_analysis_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
 ) -> ProgramAnalysisState {
-    let constraint_builder = ConstraintsBuilder::new(
-        cfg,
-        entity,
-        specification,
-        program_entity_analysis_parent_state,
-    );
+    let constraint_builder =
+        ConstraintsBuilder::new(cfg, entity, program_entity_analysis_parent_state);
 
     let program_entity_analysis_state =
         analysis(&constraint_builder).expect("constraint builder should work");
@@ -2610,14 +2620,13 @@ pub fn analyse_cfg<'a>(
         program_entity_kind,
         program_entity_analysis_parent_state,
     );
-    for (sub_program_entity, sub_program_entity_context) in program_entity_exit_abstract_state
+    for sub_program_entity in program_entity_exit_abstract_state
         .sub_program_entities
-        .as_ref()
+        .keys()
     {
         let sub_program_analysis_state = analyse_cfg(
             &sub_program_entity,
             cfg.cfgs().get(&sub_program_entity.program_point).unwrap(),
-            &sub_program_entity_context.specification,
             sub_program_entity.kind,
             Some(&sub_program_entity_analysis_parent_state),
         );
@@ -2656,7 +2665,6 @@ pub fn analyse_program<F: Filesystem>(
             ProgramEntityKind::Module,
         ),
         &cfg,
-        &AbstractEnvironmentSpecification::default(),
         ProgramEntityKind::Module,
         None,
     );
@@ -2694,7 +2702,6 @@ pub fn analyse_program<F: Filesystem>(
                         ProgramEntityKind::Module,
                     ),
                     &cfg,
-                    &AbstractEnvironmentSpecification::default(),
                     ProgramEntityKind::Module,
                     parent_state,
                 )
@@ -3583,15 +3590,13 @@ mod tests {
     ) {
         let cfg = Cfg::parse(source).expect("Should build CFG");
 
-        let specification = AbstractEnvironmentSpecification::default();
-
         let entity = ProgramEntity::new(
             QualifiedLocation::from(Arc::new(QualifiedName::parse("module"))),
             ProgramPoint::Entry,
             ProgramEntityKind::Module,
         );
 
-        let constraints_builder = ConstraintsBuilder::new(&cfg, &entity, &specification, None);
+        let constraints_builder = ConstraintsBuilder::new(&cfg, &entity, None);
 
         let analysis_state =
             analysis(&constraints_builder).expect("constraint builder should work");
@@ -3640,7 +3645,6 @@ mod tests {
                 ProgramEntityKind::Module,
             ),
             &cfg,
-            &AbstractEnvironmentSpecification::default(),
             ProgramEntityKind::Module,
             None,
         );
