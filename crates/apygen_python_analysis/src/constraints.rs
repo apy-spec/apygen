@@ -1005,7 +1005,6 @@ impl Lattice for SubProgramEntityContext {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProgramEntityAbstractEnvironment {
-    pub specification: AbstractEnvironmentSpecification,
     pub current_nodes: LatticeMap<ConstraintNode, Guard>,
     pub variable_locations: LatticeMap<VariableName, LatticeSet<QualifiedLocation>>,
     pub constraint_graph: ConstraintGraph,
@@ -1016,7 +1015,6 @@ pub struct ProgramEntityAbstractEnvironment {
 impl Default for ProgramEntityAbstractEnvironment {
     fn default() -> Self {
         Self {
-            specification: AbstractEnvironmentSpecification::default(),
             current_nodes: LatticeMap::unit(
                 ConstraintNode::Entry,
                 Guard::Multiple(LatticeSet::default()),
@@ -1031,8 +1029,7 @@ impl Default for ProgramEntityAbstractEnvironment {
 
 impl Lattice for ProgramEntityAbstractEnvironment {
     fn includes(&self, other: &Self) -> bool {
-        self.specification.includes(&other.specification)
-            && self.current_nodes.includes(&other.current_nodes)
+        self.current_nodes.includes(&other.current_nodes)
             && self.variable_locations.includes(&other.variable_locations)
             && self.constraint_graph.includes(&other.constraint_graph)
             && self.imports.includes(&other.imports)
@@ -1043,7 +1040,6 @@ impl Lattice for ProgramEntityAbstractEnvironment {
 
     fn join(&self, other: &Self) -> Self {
         Self {
-            specification: self.specification.join(&other.specification),
             current_nodes: self.current_nodes.join(&other.current_nodes),
             variable_locations: self.variable_locations.join(&other.variable_locations),
             constraint_graph: self.constraint_graph.join(&other.constraint_graph),
@@ -2343,9 +2339,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                 .sub_program_entities
                 .get(self.entity)
             {
-                entry_state.specification = context.specification.clone();
-
-                for argument in entry_state.specification.arguments.keys() {
+                for argument in context.specification.arguments.keys() {
                     entry_state.variable_locations.insert(
                         argument.name.clone(),
                         LatticeSet::unit(argument.location.clone()),
