@@ -2533,9 +2533,9 @@ impl ProgramAnalysisState {
 
     pub fn dot(&self, graph_name: &str) -> String {
         let mut edges: imbl::OrdSet<(ProgramEntityNode, ProgramEntityNode)> = imbl::OrdSet::new();
-        for (from, tos) in &self.dependencies.values {
-            for to in &tos.values {
-                edges.insert((from.clone(), to.clone()));
+        for (dependent, dependencies) in &self.dependencies.values {
+            for dependency in &dependencies.values {
+                edges.insert((dependent.clone(), dependency.clone()));
             }
         }
 
@@ -2547,11 +2547,11 @@ impl ProgramAnalysisState {
             dot_representation.push_str(&node.to_string());
             dot_representation.push_str("\";\n");
         }
-        for (from, to) in &edges {
+        for (dependent, dependency) in &edges {
             dot_representation.push_str("    \"");
-            dot_representation.push_str(&from.to_string());
+            dot_representation.push_str(&dependency.to_string());
             dot_representation.push_str("\" -> \"");
-            dot_representation.push_str(&to.to_string());
+            dot_representation.push_str(&dependent.to_string());
             dot_representation.push_str("\";\n");
         }
         dot_representation.push_str("}\n");
@@ -2583,17 +2583,24 @@ impl Display for ProgramAnalysisState {
     }
 }
 
-pub fn import_cfg<F: Filesystem>(
-    specs: &HashMap<Identifier, FinderSpec<Identifier, F>>,
-    module_name: &ModuleName,
-) -> Option<Cfg> {
-    let mut finder_spec = specs.get(module_name.identifiers.first())?;
+pub trait CfgImporter {
+    fn import_cfg(&self, module_name: &ModuleName) -> Option<Cfg>;
+}
 
-    for identifier in module_name.identifiers.iter().skip(1) {
-        finder_spec = finder_spec.submodules.get(identifier)?;
+pub struct SpecCfgImporter<F: Filesystem> {
+    pub specs: HashMap<Identifier, FinderSpec<Identifier, F>>,
+}
+
+impl<F: Filesystem> CfgImporter for SpecCfgImporter<F> {
+    fn import_cfg(&self, module_name: &ModuleName) -> Option<Cfg> {
+        let mut finder_spec = self.specs.get(module_name.identifiers.first())?;
+
+        for identifier in module_name.identifiers.iter().skip(1) {
+            finder_spec = finder_spec.submodules.get(identifier)?;
+        }
+
+        load_cfg(&finder_spec.spec).ok()
     }
-
-    load_cfg(&finder_spec.spec).ok()
 }
 
 #[derive(Debug, Error)]
@@ -2651,13 +2658,15 @@ pub fn analyse_cfg<'a>(
     program_analysis_state
 }
 
-pub fn analyse_program<F: Filesystem>(
-    specs: HashMap<Identifier, FinderSpec<Identifier, F>>,
+pub fn analyse_program<C: CfgImporter + Sync>(
+    cfg_importer: &C,
     initial_modules: HashSet<ModuleName>,
 ) -> ProgramAnalysisState {
     let builtin_module_name = Arc::new(QualifiedName::parse(BUILTINS_MODULE));
 
-    let cfg = import_cfg(&specs, &builtin_module_name).expect("Should build CFG");
+    let cfg = cfg_importer
+        .import_cfg(&builtin_module_name)
+        .expect("Should build CFG");
 
     let builtin_location = QualifiedLocation::from(builtin_module_name.clone());
     let builtin_node = ProgramEntityNode::Location(builtin_location.clone());
@@ -2673,10 +2682,8 @@ pub fn analyse_program<F: Filesystem>(
         None,
     );
 
-    program_analysis.add_dependency(ProgramEntityNode::Entry, builtin_node.clone());
-    program_analysis.add_dependency(builtin_node.clone(), ProgramEntityNode::Exit);
-
-    let specs_ref = &specs;
+    program_analysis.add_dependency(builtin_node.clone(), ProgramEntityNode::Entry);
+    program_analysis.add_dependency(ProgramEntityNode::Exit, builtin_node.clone());
 
     let mut worklist = initial_modules;
 
@@ -2691,7 +2698,9 @@ pub fn analyse_program<F: Filesystem>(
             .drain()
             .par_bridge()
             .map(|module_name| {
-                let cfg = import_cfg(specs_ref, &module_name).expect("Should build CFG");
+                let cfg = cfg_importer
+                    .import_cfg(&module_name)
+                    .expect("Should build CFG");
 
                 let parent_state = if module_name != builtin_module_name {
                     Some(builtin_parent_state)
@@ -3635,7 +3644,7 @@ mod tests {
         digraph "Dependency" {
             "Location(module)";
             "Location(module[1:4])";
-            "Location(module[1:4])" -> "Location(module)";
+            "Location(module)" -> "Location(module[1:4])";
         }
         digraph "Location(module)" {
             "#entry";
@@ -3680,6 +3689,98 @@ mod tests {
             ProgramEntityKind::Module,
             None,
         );
+
+        let mut actual_dot = program_analysis_state.dot("Dependency");
+
+        for (node, state) in program_analysis_state.nodes.as_ref() {
+            actual_dot.push_str(&state.constraint_graph.dot(&node.to_string()));
+        }
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    pub struct TestCfgImporter {
+        pub modules: HashMap<ModuleName, Cfg>,
+    }
+
+    impl CfgImporter for TestCfgImporter {
+        fn import_cfg(&self, module_name: &ModuleName) -> Option<Cfg> {
+            self.modules.get(module_name).cloned()
+        }
+    }
+
+    #[rstest]
+    #[case::simple_function_definition(
+        indoc! {r##"
+        def add_two(a, b):
+            return a + b
+
+        result = add_two(42, 67)
+        "##},
+        indoc! {r##"
+        digraph "Dependency" {
+            "Location(builtins)";
+            "Location(module)";
+            "Location(module[1:4])";
+            "Entry" -> "Location(builtins)";
+            "Location(builtins)" -> "Location(module)";
+            "Location(builtins)" -> "Location(module[1:4])";
+            "Location(module)" -> "Location(module[1:4])";
+            "Location(module)" -> "Exit";
+            "Location(module[1:4])" -> "Exit";
+        }
+        digraph "Location(builtins)" {
+            "#entry";
+            "#type_exit";
+            "#exit";
+            "#entry" -> "#type_exit" [label="{}"];
+            "#type_exit" -> "#exit" [label="{}"];
+        }
+        digraph "Location(module)" {
+            "#entry";
+            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}";
+            "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}";
+            "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}";
+            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()";
+            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()";
+            "#type_exit";
+            "#exception_exit";
+            "#exit";
+            "#entry" -> "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" [label="#succeed(#function(location=module[1:4], async=false))"];
+            "#entry" -> "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()" [label="#raise(#function(location=module[1:4], async=false))"];
+            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
+            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()" [label="#raise((add_two@{module[4:9]})(42, 67))"];
+            "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" -> "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" [label="{}"];
+            "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" -> "#type_exit" [label="{}"];
+            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#type_exit" -> "#exit" [label="{}"];
+            "#exception_exit" -> "#exit" [label="{}"];
+        }
+        digraph "Location(module[1:4])" {
+            "#entry";
+            "#type_exit";
+            "#exit";
+            "#entry" -> "#type_exit" [label="{}"];
+            "#type_exit" -> "#exit" [label="{}"];
+        }
+        "##},
+    )]
+    fn test_program_analysis(#[case] source: &str, #[case] expected_dot: &str) {
+        let module_name = Arc::new(QualifiedName::parse("module"));
+        let cfg = Cfg::parse(source).expect("Should build CFG");
+
+        let cfg_importer = TestCfgImporter {
+            modules: HashMap::from_iter([
+                (module_name.clone(), cfg),
+                (
+                    Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                    Cfg::parse("").expect("Should build CFG"),
+                ),
+            ]),
+        };
+        let program_analysis_state =
+            analyse_program(&cfg_importer, HashSet::from_iter([module_name]));
 
         let mut actual_dot = program_analysis_state.dot("Dependency");
 
