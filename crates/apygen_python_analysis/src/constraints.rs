@@ -2488,7 +2488,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ProgramEntityNode {
     Entry,
-    Location(QualifiedLocation),
+    Entity(QualifiedLocation),
     Exit,
 }
 
@@ -2496,43 +2496,53 @@ impl Display for ProgramEntityNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ProgramEntityNode::Entry => write!(f, "Entry"),
-            ProgramEntityNode::Location(location) => write!(f, "Location({})", location),
+            ProgramEntityNode::Entity(location) => write!(f, "Entity({})", location),
             ProgramEntityNode::Exit => write!(f, "Exit"),
         }
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProgramAnalysisState {
-    pub nodes: LatticeMap<ProgramEntityNode, ProgramEntityAbstractEnvironment>,
-    pub dependencies: LatticeMap<ProgramEntityNode, LatticeSet<ProgramEntityNode>>,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DependencyGraph<N: Ord, S> {
+    pub nodes: LatticeMap<N, S>,
+    pub dependencies: LatticeMap<N, LatticeSet<N>>,
 }
 
-impl ProgramAnalysisState {
+impl<N: Ord, S> Default for DependencyGraph<N, S> {
+    fn default() -> Self {
+        Self {
+            nodes: LatticeMap::default(),
+            dependencies: LatticeMap::default(),
+        }
+    }
+}
+
+impl<N: Ord, S> DependencyGraph<N, S> {
     pub fn new() -> Self {
         Self::default()
     }
+}
 
-    pub fn insert(
-        &mut self,
-        node: ProgramEntityNode,
-        analysis_state: ProgramEntityAbstractEnvironment,
-    ) {
+impl<N: Clone + Ord, S: Clone> DependencyGraph<N, S> {
+    pub fn insert(&mut self, node: N, analysis_state: S) {
         self.nodes.insert(node.clone(), analysis_state);
     }
 
-    pub fn add_dependency(&mut self, from: ProgramEntityNode, to: ProgramEntityNode) {
+    pub fn add_dependency(&mut self, from: N, to: N) {
         self.dependencies.values.entry(from).or_default().insert(to);
     }
 
-    pub fn remove_dependency(&mut self, from: ProgramEntityNode, to: ProgramEntityNode) {
+    pub fn remove_dependency(&mut self, from: N, to: N) {
         if let Entry::Occupied(mut tos) = self.dependencies.values.entry(from) {
             tos.get_mut().remove(&to);
         }
     }
 
-    pub fn dot(&self, graph_name: &str) -> String {
-        let mut edges: imbl::OrdSet<(ProgramEntityNode, ProgramEntityNode)> = imbl::OrdSet::new();
+    pub fn dot(&self, graph_name: &str) -> String
+    where
+        N: Display,
+    {
+        let mut edges: imbl::OrdSet<(N, N)> = imbl::OrdSet::new();
         for (dependent, dependencies) in &self.dependencies.values {
             for dependency in &dependencies.values {
                 edges.insert((dependent.clone(), dependency.clone()));
@@ -2560,7 +2570,7 @@ impl ProgramAnalysisState {
     }
 }
 
-impl Lattice for ProgramAnalysisState {
+impl<N: Clone + Ord, S: Clone + Lattice> Lattice for DependencyGraph<N, S> {
     fn includes(&self, other: &Self) -> bool {
         self.nodes.includes(&other.nodes) && self.dependencies.includes(&other.dependencies)
     }
@@ -2573,13 +2583,30 @@ impl Lattice for ProgramAnalysisState {
     }
 }
 
-impl Display for ProgramAnalysisState {
+impl<N: Debug + Ord, S: Debug> Display for DependencyGraph<N, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "ApyAnalysisState {{ nodes: {:?}, dependency_edges: {:?} }}",
             self.nodes, self.dependencies
         )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ModuleNode {
+    Entry,
+    Module(ModuleName),
+    Exit,
+}
+
+impl Display for ModuleNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ModuleNode::Entry => write!(f, "Entry"),
+            ModuleNode::Module(module_name) => write!(f, "Module({})", module_name),
+            ModuleNode::Exit => write!(f, "Exit"),
+        }
     }
 }
 
@@ -2612,23 +2639,22 @@ pub enum ConstraintsError {
 pub fn analyse_cfg<'a>(
     entity: &'a ProgramEntity,
     cfg: &'a Cfg,
-    program_entity_kind: ProgramEntityKind,
     program_entity_analysis_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
-) -> ProgramAnalysisState {
+) -> DependencyGraph<ProgramEntityNode, ProgramEntityAbstractEnvironment> {
     let constraint_builder =
         ConstraintsBuilder::new(cfg, entity, program_entity_analysis_parent_state);
 
     let program_entity_analysis_state =
         analysis(&constraint_builder).expect("constraint builder should work");
-    let program_entity_node = ProgramEntityNode::Location(entity.location.clone());
+    let program_entity_node = ProgramEntityNode::Entity(entity.location.clone());
     let program_entity_exit_abstract_state =
         &program_entity_analysis_state.abstract_states[&ProgramPoint::Exit];
 
-    let mut program_analysis_state = ProgramAnalysisState::default();
+    let mut dependency_graph = DependencyGraph::default();
 
     let sub_program_entity_analysis_parent_state = ProgramEntityAbstractParentState::new(
         &program_entity_exit_abstract_state,
-        program_entity_kind,
+        entity.kind,
         program_entity_analysis_parent_state,
     );
     for sub_program_entity in program_entity_exit_abstract_state
@@ -2638,63 +2664,68 @@ pub fn analyse_cfg<'a>(
         let sub_program_analysis_state = analyse_cfg(
             &sub_program_entity,
             cfg.cfgs().get(&sub_program_entity.program_point).unwrap(),
-            sub_program_entity.kind,
             Some(&sub_program_entity_analysis_parent_state),
         );
 
-        program_analysis_state = program_analysis_state.join(&sub_program_analysis_state);
+        dependency_graph = dependency_graph.join(&sub_program_analysis_state);
 
-        program_analysis_state.add_dependency(
-            ProgramEntityNode::Location(sub_program_entity.location.clone()),
+        dependency_graph.add_dependency(
+            ProgramEntityNode::Entity(sub_program_entity.location.clone()),
             program_entity_node.clone(),
         );
     }
 
-    program_analysis_state.insert(
+    dependency_graph.insert(
         program_entity_node,
         program_entity_exit_abstract_state.clone(),
     );
 
-    program_analysis_state
+    dependency_graph
 }
 
 pub fn analyse_program<C: CfgImporter + Sync>(
     cfg_importer: &C,
     initial_modules: HashSet<ModuleName>,
-) -> ProgramAnalysisState {
-    let builtin_module_name = Arc::new(QualifiedName::parse(BUILTINS_MODULE));
+) -> DependencyGraph<ModuleNode, DependencyGraph<ProgramEntityNode, ProgramEntityAbstractEnvironment>>
+{
+    let builtins_module_name = Arc::new(QualifiedName::parse(BUILTINS_MODULE));
 
     let cfg = cfg_importer
-        .import_cfg(&builtin_module_name)
+        .import_cfg(&builtins_module_name)
         .expect("Should build CFG");
 
-    let builtin_location = QualifiedLocation::from(builtin_module_name.clone());
-    let builtin_node = ProgramEntityNode::Location(builtin_location.clone());
+    let builtins_location = QualifiedLocation::from(builtins_module_name.clone());
+    let builtins_node = ProgramEntityNode::Entity(builtins_location.clone());
+    let builtins_module_node = ModuleNode::Module(builtins_module_name.clone());
 
-    let mut program_analysis = analyse_cfg(
-        &ProgramEntity::new(
-            builtin_location.clone(),
-            ProgramPoint::Entry,
-            ProgramEntityKind::Module,
+    let mut dependency_graph = DependencyGraph::default();
+
+    dependency_graph.insert(
+        builtins_module_node.clone(),
+        analyse_cfg(
+            &ProgramEntity::new(
+                builtins_location.clone(),
+                ProgramPoint::Entry,
+                ProgramEntityKind::Module,
+            ),
+            &cfg,
+            None,
         ),
-        &cfg,
-        ProgramEntityKind::Module,
-        None,
     );
 
-    program_analysis.add_dependency(builtin_node.clone(), ProgramEntityNode::Entry);
-    program_analysis.add_dependency(ProgramEntityNode::Exit, builtin_node.clone());
+    dependency_graph.add_dependency(builtins_module_node.clone(), ModuleNode::Entry);
+    dependency_graph.add_dependency(ModuleNode::Exit, builtins_module_node.clone());
 
     let mut worklist = initial_modules;
 
     while !worklist.is_empty() {
         let builtin_parent_state = &ProgramEntityAbstractParentState::new(
-            &program_analysis.nodes[&builtin_node],
+            &dependency_graph.nodes[&builtins_module_node].nodes[&builtins_node],
             ProgramEntityKind::Module,
             None,
         );
 
-        let new_program_analysis = worklist
+        let analysed_modules = worklist
             .drain()
             .par_bridge()
             .map(|module_name| {
@@ -2702,52 +2733,52 @@ pub fn analyse_program<C: CfgImporter + Sync>(
                     .import_cfg(&module_name)
                     .expect("Should build CFG");
 
-                let parent_state = if module_name != builtin_module_name {
+                let parent_state = if module_name != builtins_module_name {
                     Some(builtin_parent_state)
                 } else {
                     None
                 };
 
-                analyse_cfg(
-                    &ProgramEntity::new(
-                        QualifiedLocation::from(module_name),
-                        ProgramPoint::Entry,
-                        ProgramEntityKind::Module,
+                (
+                    ModuleNode::Module(module_name.clone()),
+                    analyse_cfg(
+                        &ProgramEntity::new(
+                            QualifiedLocation::from(module_name),
+                            ProgramPoint::Entry,
+                            ProgramEntityKind::Module,
+                        ),
+                        &cfg,
+                        parent_state,
                     ),
-                    &cfg,
-                    ProgramEntityKind::Module,
-                    parent_state,
                 )
             })
-            .reduce(
-                || ProgramAnalysisState::new(),
-                |left, right| left.join(&right),
-            );
+            .collect::<HashMap<_, _>>();
 
-        program_analysis = program_analysis.join(&new_program_analysis);
+        for (module_node, program_entity_dependency_graph) in &analysed_modules {
+            dependency_graph.add_dependency(module_node.clone(), builtins_module_node.clone());
+            dependency_graph.add_dependency(ModuleNode::Exit, module_node.clone());
+            dependency_graph.remove_dependency(ModuleNode::Exit, builtins_module_node.clone());
 
-        for (node, analysis_state) in new_program_analysis.nodes.as_ref() {
-            let imports = analysis_state
-                .imports
-                .values
-                .update(builtin_module_name.clone());
+            for abstract_environment in program_entity_dependency_graph.nodes.values() {
+                for import_module_name in abstract_environment.imports.as_ref() {
+                    let import_module_node = ModuleNode::Module(import_module_name.clone());
 
-            for import in imports {
-                let import_node =
-                    ProgramEntityNode::Location(QualifiedLocation::from(import.clone()));
+                    dependency_graph
+                        .add_dependency(module_node.clone(), import_module_node.clone());
+                    dependency_graph
+                        .remove_dependency(ModuleNode::Exit, import_module_node.clone());
 
-                program_analysis.add_dependency(node.clone(), import_node.clone());
-                program_analysis.add_dependency(ProgramEntityNode::Exit, node.clone());
-                program_analysis.remove_dependency(ProgramEntityNode::Exit, import_node.clone());
-
-                if !program_analysis.nodes.contains_key(&import_node) {
-                    worklist.insert(import.clone());
+                    if !dependency_graph.nodes.contains_key(&import_module_node) {
+                        worklist.insert(import_module_name.clone());
+                    }
                 }
             }
         }
+
+        dependency_graph.nodes.extend(analysed_modules);
     }
 
-    program_analysis
+    dependency_graph
 }
 
 #[cfg(test)]
@@ -3641,12 +3672,12 @@ mod tests {
         result = add_two(42, 67)
         "##},
         indoc! {r##"
-        digraph "Dependency" {
-            "Location(module)";
-            "Location(module[1:4])";
-            "Location(module)" -> "Location(module[1:4])";
+        digraph "DependencyGraph" {
+            "Entity(module)";
+            "Entity(module[1:4])";
+            "Entity(module)" -> "Entity(module[1:4])";
         }
-        digraph "Location(module)" {
+        digraph "Entity(module)" {
             "#entry";
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}";
             "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}";
@@ -3667,7 +3698,7 @@ mod tests {
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
-        digraph "Location(module[1:4])" {
+        digraph "Entity(module[1:4])" {
             "#entry";
             "#type_exit";
             "#exit";
@@ -3679,20 +3710,19 @@ mod tests {
     fn test_cfg_analysis(#[case] source: &str, #[case] expected_dot: &str) {
         let cfg = Cfg::parse(source).expect("Should build CFG");
 
-        let program_analysis_state = analyse_cfg(
+        let dependency_graph = analyse_cfg(
             &ProgramEntity::new(
                 QualifiedLocation::from(Arc::new(QualifiedName::parse("module"))),
                 ProgramPoint::Entry,
                 ProgramEntityKind::Module,
             ),
             &cfg,
-            ProgramEntityKind::Module,
             None,
         );
 
-        let mut actual_dot = program_analysis_state.dot("Dependency");
+        let mut actual_dot = dependency_graph.dot("DependencyGraph");
 
-        for (node, state) in program_analysis_state.nodes.as_ref() {
+        for (node, state) in dependency_graph.nodes.as_ref() {
             actual_dot.push_str(&state.constraint_graph.dot(&node.to_string()));
         }
 
@@ -3718,25 +3748,29 @@ mod tests {
         result = add_two(42, 67)
         "##},
         indoc! {r##"
-        digraph "Dependency" {
-            "Location(builtins)";
-            "Location(module)";
-            "Location(module[1:4])";
-            "Entry" -> "Location(builtins)";
-            "Location(builtins)" -> "Location(module)";
-            "Location(builtins)" -> "Location(module[1:4])";
-            "Location(module)" -> "Location(module[1:4])";
-            "Location(module)" -> "Exit";
-            "Location(module[1:4])" -> "Exit";
+        digraph "DependencyGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
         }
-        digraph "Location(builtins)" {
+        digraph "Module(builtins)" {
+            "Entity(builtins)";
+        }
+        digraph "Entity(builtins)" {
             "#entry";
             "#type_exit";
             "#exit";
             "#entry" -> "#type_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
         }
-        digraph "Location(module)" {
+        digraph "Module(module)" {
+            "Entity(module)";
+            "Entity(module[1:4])";
+            "Entity(module)" -> "Entity(module[1:4])";
+        }
+        digraph "Entity(module)" {
             "#entry";
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}";
             "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}";
@@ -3757,7 +3791,7 @@ mod tests {
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
-        digraph "Location(module[1:4])" {
+        digraph "Entity(module[1:4])" {
             "#entry";
             "#type_exit";
             "#exit";
@@ -3779,13 +3813,15 @@ mod tests {
                 ),
             ]),
         };
-        let program_analysis_state =
-            analyse_program(&cfg_importer, HashSet::from_iter([module_name]));
+        let dependency_graph = analyse_program(&cfg_importer, HashSet::from_iter([module_name]));
 
-        let mut actual_dot = program_analysis_state.dot("Dependency");
+        let mut actual_dot = dependency_graph.dot("DependencyGraph");
 
-        for (node, state) in program_analysis_state.nodes.as_ref() {
-            actual_dot.push_str(&state.constraint_graph.dot(&node.to_string()));
+        for (module_node, program_entity_dependency_graph) in dependency_graph.nodes.as_ref() {
+            actual_dot.push_str(&program_entity_dependency_graph.dot(&module_node.to_string()));
+            for (node, abstract_environment) in program_entity_dependency_graph.nodes.as_ref() {
+                actual_dot.push_str(&abstract_environment.constraint_graph.dot(&node.to_string()));
+            }
         }
 
         assert_eq!(expected_dot, actual_dot, "{actual_dot}");
