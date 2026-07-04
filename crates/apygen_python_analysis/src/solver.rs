@@ -1,8 +1,8 @@
 use crate::abstract_environment::{Completeness, RaisedExceptions, Type, TypeLiteral};
 use crate::constraints::{
-    ConstraintGraph, ConstraintNode, DependentGraph, ExceptionExpression, ExpressionBinary,
-    ExpressionVariable, IncludeConstraint, IncludeConstraintDefinition, LatticeMap, ModuleNode,
-    ProgramEntityAbstractEnvironment, ProgramEntityNode, TypeExpression,
+    Constraint, ConstraintGraph, ConstraintNode, DefinedVariables, DependentGraph,
+    ExceptionExpression, ExpressionBinary, ExpressionVariable, IncludeConstraintDefinition,
+    LatticeMap, ModuleNode, ProgramEntityAbstractEnvironment, ProgramEntityNode, TypeExpression,
 };
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::is_type_unreachable;
@@ -16,6 +16,7 @@ use std::sync::Arc;
 pub struct EvaluationState {
     pub type_evaluations: LatticeMap<Arc<TypeExpression>, PyTypeEval>,
     pub exception_evaluations: LatticeMap<Arc<ExceptionExpression>, RaisedExceptions>,
+    pub defined_variables: DefinedVariables,
 }
 
 impl Lattice for EvaluationState {
@@ -24,6 +25,7 @@ impl Lattice for EvaluationState {
             && self
                 .exception_evaluations
                 .includes(&other.exception_evaluations)
+            && self.defined_variables.includes(&other.defined_variables)
     }
 
     fn join(&self, other: &Self) -> Self {
@@ -32,6 +34,7 @@ impl Lattice for EvaluationState {
             exception_evaluations: self
                 .exception_evaluations
                 .join(&other.exception_evaluations),
+            defined_variables: self.defined_variables.join(&other.defined_variables),
         }
     }
 }
@@ -216,10 +219,14 @@ impl GraphAnalyser for ConstraintSolver<'_> {
 
         match &node {
             ConstraintNode::Constraint(constraint) => match constraint.as_ref() {
-                IncludeConstraint::Type(constraint_type) => {
+                Constraint::Type(constraint_type) => {
                     self.evaluate_type_constraint(&mut abstract_state, constraint_type)
                 }
-                IncludeConstraint::Exception(_) => {}
+                Constraint::DefinedVariables(constraint_defined_variables) => abstract_state
+                    .defined_variables
+                    .names
+                    .extend(constraint_defined_variables.names.clone()),
+                _ => {}
             },
             _ => {}
         }
@@ -368,14 +375,15 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
                 .evaluation_states
                 .get(&ConstraintNode::ExceptionExit);
 
-            let variable_types: LatticeMap<_, _> = abstract_environment
-                .variable_locations
-                .values
+            let variable_types: LatticeMap<_, _> = type_exit
+                .unwrap()
+                .defined_variables
+                .names
                 .iter()
-                .map(|(variable, definitions)| {
-                    definitions.values.iter().map(|definition| {
+                .map(|(variable, locations)| {
+                    locations.iter().map(|location| {
                         let expression_variable =
-                            ExpressionVariable::new(variable.clone(), definition.clone());
+                            ExpressionVariable::new(variable.clone(), location.clone());
 
                         (
                             expression_variable.clone(),
@@ -599,10 +607,8 @@ mod tests {
         indoc! {r##"
         a@{module[4:4]} = builtins.Literal[42]
         a@{module[6:4]} = builtins.Literal[67]
-        a@{module[8:4]} = Union[builtins.Literal[42], builtins.Literal[67]]
         b@{module[8:0]} = Union[builtins.Literal[42], builtins.Literal[67]]
         x@{module[1:0]} = builtins.Literal[true]
-        x@{module[3:3]} = builtins.Literal[true]
         "##},
     )]
     #[case::simple_while_statement(
@@ -616,9 +622,7 @@ mod tests {
         "##},
         indoc! {r##"
         a@{module[1:0]} = builtins.Literal[0]
-        a@{module[3:6]} = Any
         a@{module[4:4]} = Any
-        a@{module[6:4]} = Any
         b@{module[6:0]} = Any
         "##},  // TODO: fix this when operations are implemented
     )]
@@ -643,14 +647,14 @@ mod tests {
 
         let type_exit_evaluations = &types.evaluation_states[&ConstraintNode::TypeExit];
 
-        let actual_types: String = exit_state
-            .variable_locations
-            .values
+        let actual_types: String = type_exit_evaluations
+            .defined_variables
+            .names
             .iter()
-            .map(|(variable, definitions)| {
-                definitions.values.iter().map(|definition| {
+            .map(|(variable, locations)| {
+                locations.iter().map(|location| {
                     let expression_variable =
-                        ExpressionVariable::new(variable.clone(), definition.clone());
+                        ExpressionVariable::new(variable.clone(), location.clone());
                     format!(
                         "{} = {}\n",
                         expression_variable.clone(),
@@ -690,7 +694,6 @@ mod tests {
         Module(module):
             Entity(module):
                 add_two@{module[1:4]} = Never
-                add_two@{module[4:9]} = Never
                 result@{module[4:0]} = Never
         "##},
     )]
