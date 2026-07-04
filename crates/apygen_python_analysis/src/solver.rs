@@ -1,8 +1,9 @@
 use crate::abstract_environment::{Completeness, RaisedExceptions, Type, TypeLiteral};
 use crate::constraints::{
-    Constraint, ConstraintGraph, ConstraintNode, DefinedVariables, DependentGraph,
-    ExceptionExpression, ExpressionBinary, ExpressionVariable, IncludeConstraintDefinition,
-    LatticeMap, ModuleNode, ProgramEntityAbstractEnvironment, ProgramEntityNode, TypeExpression,
+    Constraint, ConstraintGraph, ConstraintNode, DependentGraph, ExceptionExpression,
+    ExpressionBinary, ExpressionVariable, IncludeConstraintDefinition, LatticeMap, LatticeSet,
+    ModuleNode, ProgramEntityAbstractEnvironment, ProgramEntityNode, QualifiedLocation,
+    TypeExpression, VariableName,
 };
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::is_type_unreachable;
@@ -11,6 +12,37 @@ use apygen_analysis::lattice::Lattice;
 use apygen_analysis::{GraphAnalyser, analysis};
 use std::convert::Infallible;
 use std::sync::Arc;
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DefinedVariables {
+    pub names: imbl::OrdMap<VariableName, imbl::OrdSet<QualifiedLocation>>,
+}
+
+impl DefinedVariables {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Lattice for DefinedVariables {
+    fn includes(&self, other: &Self) -> bool {
+        self.names
+            .is_submap_by(&other.names, |self_locations, other_locations| {
+                other_locations.is_subset(self_locations)
+            })
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        Self {
+            names: self
+                .names
+                .clone()
+                .intersection_with(other.names.clone(), |self_locations, other_locations| {
+                    self_locations.union(other_locations)
+                }),
+        }
+    }
+}
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct EvaluationState {
@@ -222,10 +254,12 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                 Constraint::Type(constraint_type) => {
                     self.evaluate_type_constraint(&mut abstract_state, constraint_type)
                 }
-                Constraint::DefinedVariables(constraint_defined_variables) => abstract_state
-                    .defined_variables
-                    .names
-                    .extend(constraint_defined_variables.names.clone()),
+                Constraint::DefinedVariable(constraint_defined_variable) => {
+                    abstract_state.defined_variables.names.insert(
+                        constraint_defined_variable.name.clone(),
+                        imbl::OrdSet::unit(constraint_defined_variable.location.clone()),
+                    );
+                }
                 _ => {}
             },
             _ => {}

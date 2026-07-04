@@ -801,59 +801,11 @@ impl<T: Display> Display for IncludeConstraintDefinition<T> {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DefinedVariables {
-    pub names: imbl::OrdMap<VariableName, imbl::OrdSet<QualifiedLocation>>,
-}
-
-impl DefinedVariables {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl Lattice for DefinedVariables {
-    fn includes(&self, other: &Self) -> bool {
-        self.names
-            .is_submap_by(&other.names, |self_locations, other_locations| {
-                other_locations.is_subset(self_locations)
-            })
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self {
-            names: self
-                .names
-                .clone()
-                .intersection_with(other.names.clone(), |self_locations, other_locations| {
-                    self_locations.union(other_locations)
-                }),
-        }
-    }
-}
-
-impl Display for DefinedVariables {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#defined(")?;
-        let mut i = 0;
-        for (name, locations) in &self.names {
-            for location in locations {
-                if i > 0 {
-                    write!(f, ", ")?;
-                }
-                write!(f, "{}@{{{}}}", name, location)?;
-                i += 1;
-            }
-        }
-        write!(f, ")")
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Constraint {
     Type(IncludeConstraintDefinition<TypeExpression>),
     Exception(IncludeConstraintDefinition<ExceptionExpression>),
-    DefinedVariables(DefinedVariables),
+    DefinedVariable(ExpressionVariable),
 }
 
 impl Display for Constraint {
@@ -863,8 +815,8 @@ impl Display for Constraint {
             Constraint::Exception(constraint_exception) => {
                 write!(f, "{}", constraint_exception)
             }
-            Constraint::DefinedVariables(defined_variables) => {
-                write!(f, "{}", defined_variables)
+            Constraint::DefinedVariable(defined_variable) => {
+                write!(f, "#defined({})", defined_variable)
             }
         }
     }
@@ -1402,14 +1354,13 @@ impl<'a> ConstraintsBuilder<'a> {
         variable: VariableName,
         type_expression: Arc<TypeExpression>,
     ) {
+        let expression_variable = ExpressionVariable::new(variable.clone(), location.clone());
+
         let node = self.create_include_constraint(
             abstract_environment,
             location.clone(),
             type_expression,
-            Arc::new(TypeExpression::Variable(ExpressionVariable::new(
-                variable.clone(),
-                location.clone(),
-            ))),
+            Arc::new(TypeExpression::Variable(expression_variable.clone())),
         );
 
         let guard = abstract_environment
@@ -1417,10 +1368,9 @@ impl<'a> ConstraintsBuilder<'a> {
             .remove(&node)
             .expect("node should be in current_nodes");
 
-        let defined_variables_node =
-            ConstraintNode::Constraint(Arc::new(Constraint::DefinedVariables(DefinedVariables {
-                names: imbl::OrdMap::unit(variable.clone(), imbl::OrdSet::unit(location.clone())),
-            })));
+        let defined_variables_node = ConstraintNode::Constraint(Arc::new(
+            Constraint::DefinedVariable(expression_variable.clone()),
+        ));
 
         abstract_environment
             .constraint_graph
@@ -2071,11 +2021,9 @@ impl<'a> ConstraintsBuilder<'a> {
                             .expect("node should be in current_nodes");
 
                         let defined_variables_node = ConstraintNode::Constraint(Arc::new(
-                            Constraint::DefinedVariables(DefinedVariables {
-                                names: imbl::OrdMap::unit(
-                                    Arc::new(module_identifiers[0].clone()),
-                                    imbl::OrdSet::unit(variable_location.clone()),
-                                ),
+                            Constraint::DefinedVariable(ExpressionVariable {
+                                name: Arc::new(module_identifiers[0].clone()),
+                                location: variable_location.clone(),
                             }),
                         ));
 
