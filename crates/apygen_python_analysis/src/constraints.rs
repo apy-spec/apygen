@@ -688,33 +688,15 @@ impl Display for TypeExpression {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RaisedException {
-    pub program_points: imbl::Vector<ProgramPoint>,
-}
-
-impl Display for RaisedException {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#raised_exceptions(")?;
-        for (i, program_point) in self.program_points.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}", program_point)?;
-        }
-        write!(f, ")")
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ExceptionExpression {
-    Raised(RaisedException),
+    Raised,
     Type(Arc<TypeExpression>),
 }
 
 impl Display for ExceptionExpression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ExceptionExpression::Raised(raised_exception) => write!(f, "{}", raised_exception),
+            ExceptionExpression::Raised => write!(f, "#raised_exceptions"),
             ExceptionExpression::Type(type_expression) => {
                 write!(f, "#exceptions({})", type_expression)
             }
@@ -2401,9 +2383,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                         let unhandled_exception_constraint = ConstraintNode::Constraint(Arc::new(
                             IncludeConstraint::Exception(IncludeConstraintDefinition::new(
                                 Arc::new(ExceptionExpression::Type(expression.clone())),
-                                Arc::new(ExceptionExpression::Raised(RaisedException {
-                                    program_points: imbl::Vector::new(),
-                                })),
+                                Arc::new(ExceptionExpression::Raised),
                             )),
                         ));
 
@@ -2497,37 +2477,37 @@ impl Display for ProgramEntityNode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DependencyGraph<N: Ord, S> {
+pub struct DependentGraph<N: Ord, S> {
     pub nodes: LatticeMap<N, S>,
-    pub dependencies: LatticeMap<N, LatticeSet<N>>,
+    pub dependents: LatticeMap<N, LatticeSet<N>>,
 }
 
-impl<N: Ord, S> Default for DependencyGraph<N, S> {
+impl<N: Ord, S> Default for DependentGraph<N, S> {
     fn default() -> Self {
         Self {
             nodes: LatticeMap::default(),
-            dependencies: LatticeMap::default(),
+            dependents: LatticeMap::default(),
         }
     }
 }
 
-impl<N: Ord, S> DependencyGraph<N, S> {
+impl<N: Ord, S> DependentGraph<N, S> {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl<N: Clone + Ord, S: Clone> DependencyGraph<N, S> {
+impl<N: Clone + Ord, S: Clone> DependentGraph<N, S> {
     pub fn insert(&mut self, node: N, analysis_state: S) {
         self.nodes.insert(node.clone(), analysis_state);
     }
 
-    pub fn add_dependency(&mut self, from: N, to: N) {
-        self.dependencies.values.entry(from).or_default().insert(to);
+    pub fn add_dependent(&mut self, from: N, to: N) {
+        self.dependents.values.entry(from).or_default().insert(to);
     }
 
-    pub fn remove_dependency(&mut self, from: N, to: N) {
-        if let Entry::Occupied(mut tos) = self.dependencies.values.entry(from) {
+    pub fn remove_dependent(&mut self, from: N, to: N) {
+        if let Entry::Occupied(mut tos) = self.dependents.values.entry(from) {
             tos.get_mut().remove(&to);
         }
     }
@@ -2537,7 +2517,7 @@ impl<N: Clone + Ord, S: Clone> DependencyGraph<N, S> {
         N: Display,
     {
         let mut edges: imbl::OrdSet<(N, N)> = imbl::OrdSet::new();
-        for (dependent, dependencies) in &self.dependencies.values {
+        for (dependent, dependencies) in &self.dependents.values {
             for dependency in &dependencies.values {
                 edges.insert((dependent.clone(), dependency.clone()));
             }
@@ -2551,7 +2531,7 @@ impl<N: Clone + Ord, S: Clone> DependencyGraph<N, S> {
             dot_representation.push_str(&node.to_string());
             dot_representation.push_str("\";\n");
         }
-        for (dependent, dependency) in &edges {
+        for (dependency, dependent) in &edges {
             dot_representation.push_str("    \"");
             dot_representation.push_str(&dependency.to_string());
             dot_representation.push_str("\" -> \"");
@@ -2564,25 +2544,25 @@ impl<N: Clone + Ord, S: Clone> DependencyGraph<N, S> {
     }
 }
 
-impl<N: Clone + Ord, S: Clone + Lattice> Lattice for DependencyGraph<N, S> {
+impl<N: Clone + Ord, S: Clone + Lattice> Lattice for DependentGraph<N, S> {
     fn includes(&self, other: &Self) -> bool {
-        self.nodes.includes(&other.nodes) && self.dependencies.includes(&other.dependencies)
+        self.nodes.includes(&other.nodes) && self.dependents.includes(&other.dependents)
     }
 
     fn join(&self, other: &Self) -> Self {
         Self {
             nodes: self.nodes.join(&other.nodes),
-            dependencies: self.dependencies.join(&other.dependencies),
+            dependents: self.dependents.join(&other.dependents),
         }
     }
 }
 
-impl<N: Debug + Ord, S: Debug> Display for DependencyGraph<N, S> {
+impl<N: Debug + Ord, S: Debug> Display for DependentGraph<N, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "ApyAnalysisState {{ nodes: {:?}, dependency_edges: {:?} }}",
-            self.nodes, self.dependencies
+            "ApyAnalysisState {{ nodes: {:?}, dependents: {:?} }}",
+            self.nodes, self.dependents
         )
     }
 }
@@ -2634,7 +2614,7 @@ pub fn analyse_cfg<'a>(
     entity: &'a ProgramEntity,
     cfg: &'a Cfg,
     program_entity_analysis_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
-) -> DependencyGraph<ProgramEntityNode, ProgramEntityAbstractEnvironment> {
+) -> DependentGraph<ProgramEntityNode, ProgramEntityAbstractEnvironment> {
     let constraint_builder =
         ConstraintsBuilder::new(cfg, entity, program_entity_analysis_parent_state);
 
@@ -2644,7 +2624,12 @@ pub fn analyse_cfg<'a>(
     let program_entity_exit_abstract_state =
         &program_entity_analysis_state.abstract_states[&ProgramPoint::Exit];
 
-    let mut dependency_graph = DependencyGraph::default();
+    let mut dependent_graph = DependentGraph::default();
+
+    if entity.location.locations.is_empty() {
+        dependent_graph.add_dependent(ProgramEntityNode::Entry, program_entity_node.clone());
+        dependent_graph.add_dependent(program_entity_node.clone(), ProgramEntityNode::Exit);
+    }
 
     let sub_program_entity_analysis_parent_state = ProgramEntityAbstractParentState::new(
         &program_entity_exit_abstract_state,
@@ -2661,26 +2646,26 @@ pub fn analyse_cfg<'a>(
             Some(&sub_program_entity_analysis_parent_state),
         );
 
-        dependency_graph = dependency_graph.join(&sub_program_analysis_state);
+        dependent_graph = dependent_graph.join(&sub_program_analysis_state);
 
-        dependency_graph.add_dependency(
-            ProgramEntityNode::Entity(sub_program_entity.location.clone()),
+        dependent_graph.add_dependent(
             program_entity_node.clone(),
+            ProgramEntityNode::Entity(sub_program_entity.location.clone()),
         );
     }
 
-    dependency_graph.insert(
+    dependent_graph.insert(
         program_entity_node,
         program_entity_exit_abstract_state.clone(),
     );
 
-    dependency_graph
+    dependent_graph
 }
 
 pub fn analyse_program<C: CfgImporter + Sync>(
     cfg_importer: &C,
     initial_modules: HashSet<ModuleName>,
-) -> DependencyGraph<ModuleNode, DependencyGraph<ProgramEntityNode, ProgramEntityAbstractEnvironment>>
+) -> DependentGraph<ModuleNode, DependentGraph<ProgramEntityNode, ProgramEntityAbstractEnvironment>>
 {
     let builtins_module_name = Arc::new(QualifiedName::parse(BUILTINS_MODULE));
 
@@ -2692,9 +2677,9 @@ pub fn analyse_program<C: CfgImporter + Sync>(
     let builtins_node = ProgramEntityNode::Entity(builtins_location.clone());
     let builtins_module_node = ModuleNode::Module(builtins_module_name.clone());
 
-    let mut dependency_graph = DependencyGraph::default();
+    let mut dependent_graph = DependentGraph::default();
 
-    dependency_graph.insert(
+    dependent_graph.insert(
         builtins_module_node.clone(),
         analyse_cfg(
             &ProgramEntity::new(
@@ -2707,14 +2692,14 @@ pub fn analyse_program<C: CfgImporter + Sync>(
         ),
     );
 
-    dependency_graph.add_dependency(builtins_module_node.clone(), ModuleNode::Entry);
-    dependency_graph.add_dependency(ModuleNode::Exit, builtins_module_node.clone());
+    dependent_graph.add_dependent(ModuleNode::Entry, builtins_module_node.clone());
+    dependent_graph.add_dependent(builtins_module_node.clone(), ModuleNode::Exit);
 
     let mut worklist = initial_modules;
 
     while !worklist.is_empty() {
         let builtin_parent_state = &ProgramEntityAbstractParentState::new(
-            &dependency_graph.nodes[&builtins_module_node].nodes[&builtins_node],
+            &dependent_graph.nodes[&builtins_module_node].nodes[&builtins_node],
             ProgramEntityKind::Module,
             None,
         );
@@ -2749,30 +2734,28 @@ pub fn analyse_program<C: CfgImporter + Sync>(
             .collect::<HashMap<_, _>>();
 
         for (module_node, program_entity_dependency_graph) in &analysed_modules {
-            dependency_graph.add_dependency(module_node.clone(), builtins_module_node.clone());
-            dependency_graph.add_dependency(ModuleNode::Exit, module_node.clone());
-            dependency_graph.remove_dependency(ModuleNode::Exit, builtins_module_node.clone());
+            dependent_graph.add_dependent(builtins_module_node.clone(), module_node.clone());
+            dependent_graph.add_dependent(module_node.clone(), ModuleNode::Exit);
+            dependent_graph.remove_dependent(builtins_module_node.clone(), ModuleNode::Exit);
 
             for abstract_environment in program_entity_dependency_graph.nodes.values() {
                 for import_module_name in abstract_environment.imports.as_ref() {
                     let import_module_node = ModuleNode::Module(import_module_name.clone());
 
-                    dependency_graph
-                        .add_dependency(module_node.clone(), import_module_node.clone());
-                    dependency_graph
-                        .remove_dependency(ModuleNode::Exit, import_module_node.clone());
+                    dependent_graph.add_dependent(import_module_node.clone(), module_node.clone());
+                    dependent_graph.remove_dependent(import_module_node.clone(), ModuleNode::Exit);
 
-                    if !dependency_graph.nodes.contains_key(&import_module_node) {
+                    if !dependent_graph.nodes.contains_key(&import_module_node) {
                         worklist.insert(import_module_name.clone());
                     }
                 }
             }
         }
 
-        dependency_graph.nodes.extend(analysed_modules);
+        dependent_graph.nodes.extend(analysed_modules);
     }
 
-    dependency_graph
+    dependent_graph
 }
 
 #[cfg(test)]
@@ -2790,14 +2773,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "#import(some_module) ⊑ some_module@{module[1:7]}";
-            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "#import(some_module) ⊑ some_module@{module[1:7]}" [label="#succeed(#import(some_module))"];
-            "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
+            "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions" [label="#raise(#import(some_module))"];
             "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#type_exit" [label="{}"];
-            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -2810,14 +2793,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "#import(some_module) ⊑ mod@{module[1:22]}";
-            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "#import(some_module) ⊑ mod@{module[1:22]}" [label="#succeed(#import(some_module))"];
-            "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
+            "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions" [label="#raise(#import(some_module))"];
             "#import(some_module) ⊑ mod@{module[1:22]}" -> "#type_exit" [label="{}"];
-            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -2831,18 +2814,18 @@ mod tests {
             "#entry";
             "#import(some_module) ⊑ some_module@{module[1:7]}";
             "#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule";
-            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
-            "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()";
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions";
+            "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "#import(some_module) ⊑ some_module@{module[1:7]}" [label="#succeed(#import(some_module))"];
-            "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
+            "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions" [label="#raise(#import(some_module))"];
             "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule" [label="#succeed(#import(some_module.submodule))"];
-            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module.submodule))"];
+            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions" [label="#raise(#import(some_module.submodule))"];
             "#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule" -> "#type_exit" [label="{}"];
-            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
+            "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -2857,20 +2840,20 @@ mod tests {
             "#import(some_module) ⊑ some_module@{module[1:7]}";
             "#import(some_module) ⊑ some_module@{module[1:20]}";
             "#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule";
-            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
-            "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()";
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions";
+            "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "#import(some_module) ⊑ some_module@{module[1:7]}" [label="#succeed(#import(some_module))"];
-            "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
+            "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions" [label="#raise(#import(some_module))"];
             "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#import(some_module) ⊑ some_module@{module[1:20]}" [label="#succeed(#import(some_module))"];
-            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
+            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions" [label="#raise(#import(some_module))"];
             "#import(some_module) ⊑ some_module@{module[1:20]}" -> "#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule" [label="#succeed(#import(some_module.submodule))"];
-            "#import(some_module) ⊑ some_module@{module[1:20]}" -> "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module.submodule))"];
+            "#import(some_module) ⊑ some_module@{module[1:20]}" -> "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions" [label="#raise(#import(some_module.submodule))"];
             "#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule" -> "#type_exit" [label="{}"];
-            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
+            "#exceptions(#import(some_module.submodule)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -2884,18 +2867,18 @@ mod tests {
             "#entry";
             "#import(another_module) ⊑ another_module@{module[1:20]}";
             "#import(some_module) ⊑ some_module@{module[1:7]}";
-            "#exceptions(#import(another_module)) ⊑ #raised_exceptions()";
-            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
+            "#exceptions(#import(another_module)) ⊑ #raised_exceptions";
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "#import(some_module) ⊑ some_module@{module[1:7]}" [label="#succeed(#import(some_module))"];
-            "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
+            "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions" [label="#raise(#import(some_module))"];
             "#import(another_module) ⊑ another_module@{module[1:20]}" -> "#type_exit" [label="{}"];
             "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#import(another_module) ⊑ another_module@{module[1:20]}" [label="#succeed(#import(another_module))"];
-            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" [label="#raise(#import(another_module))"];
-            "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#exceptions(#import(another_module)) ⊑ #raised_exceptions" [label="#raise(#import(another_module))"];
+            "#exceptions(#import(another_module)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -2909,18 +2892,18 @@ mod tests {
             "#entry";
             "#import(another_module) ⊑ mod@{module[1:45]}";
             "#import(some_module) ⊑ mod@{module[1:22]}";
-            "#exceptions(#import(another_module)) ⊑ #raised_exceptions()";
-            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()";
+            "#exceptions(#import(another_module)) ⊑ #raised_exceptions";
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "#import(some_module) ⊑ mod@{module[1:22]}" [label="#succeed(#import(some_module))"];
-            "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" [label="#raise(#import(some_module))"];
+            "#entry" -> "#exceptions(#import(some_module)) ⊑ #raised_exceptions" [label="#raise(#import(some_module))"];
             "#import(another_module) ⊑ mod@{module[1:45]}" -> "#type_exit" [label="{}"];
             "#import(some_module) ⊑ mod@{module[1:22]}" -> "#import(another_module) ⊑ mod@{module[1:45]}" [label="#succeed(#import(another_module))"];
-            "#import(some_module) ⊑ mod@{module[1:22]}" -> "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" [label="#raise(#import(another_module))"];
-            "#exceptions(#import(another_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions(#import(some_module)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#import(some_module) ⊑ mod@{module[1:22]}" -> "#exceptions(#import(another_module)) ⊑ #raised_exceptions" [label="#raise(#import(another_module))"];
+            "#exceptions(#import(another_module)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
+            "#exceptions(#import(some_module)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -2963,14 +2946,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) + (67) ⊑ add@{module[1:0]}";
-            "#exceptions((42) + (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) + (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) + (67) ⊑ add@{module[1:0]}" [label="#succeed((42) + (67))"];
-            "#entry" -> "#exceptions((42) + (67)) ⊑ #raised_exceptions()" [label="#raise((42) + (67))"];
+            "#entry" -> "#exceptions((42) + (67)) ⊑ #raised_exceptions" [label="#raise((42) + (67))"];
             "(42) + (67) ⊑ add@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) + (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) + (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -2983,14 +2966,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) - (67) ⊑ sub@{module[1:0]}";
-            "#exceptions((42) - (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) - (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) - (67) ⊑ sub@{module[1:0]}" [label="#succeed((42) - (67))"];
-            "#entry" -> "#exceptions((42) - (67)) ⊑ #raised_exceptions()" [label="#raise((42) - (67))"];
+            "#entry" -> "#exceptions((42) - (67)) ⊑ #raised_exceptions" [label="#raise((42) - (67))"];
             "(42) - (67) ⊑ sub@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) - (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) - (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3003,14 +2986,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) * (67) ⊑ mult@{module[1:0]}";
-            "#exceptions((42) * (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) * (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) * (67) ⊑ mult@{module[1:0]}" [label="#succeed((42) * (67))"];
-            "#entry" -> "#exceptions((42) * (67)) ⊑ #raised_exceptions()" [label="#raise((42) * (67))"];
+            "#entry" -> "#exceptions((42) * (67)) ⊑ #raised_exceptions" [label="#raise((42) * (67))"];
             "(42) * (67) ⊑ mult@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) * (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) * (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3023,14 +3006,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) @ (67) ⊑ mat_mult@{module[1:0]}";
-            "#exceptions((42) @ (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) @ (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) @ (67) ⊑ mat_mult@{module[1:0]}" [label="#succeed((42) @ (67))"];
-            "#entry" -> "#exceptions((42) @ (67)) ⊑ #raised_exceptions()" [label="#raise((42) @ (67))"];
+            "#entry" -> "#exceptions((42) @ (67)) ⊑ #raised_exceptions" [label="#raise((42) @ (67))"];
             "(42) @ (67) ⊑ mat_mult@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) @ (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) @ (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3043,14 +3026,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) / (67) ⊑ div@{module[1:0]}";
-            "#exceptions((42) / (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) / (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) / (67) ⊑ div@{module[1:0]}" [label="#succeed((42) / (67))"];
-            "#entry" -> "#exceptions((42) / (67)) ⊑ #raised_exceptions()" [label="#raise((42) / (67))"];
+            "#entry" -> "#exceptions((42) / (67)) ⊑ #raised_exceptions" [label="#raise((42) / (67))"];
             "(42) / (67) ⊑ div@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) / (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) / (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3063,14 +3046,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) // (67) ⊑ floor_div@{module[1:0]}";
-            "#exceptions((42) // (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) // (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) // (67) ⊑ floor_div@{module[1:0]}" [label="#succeed((42) // (67))"];
-            "#entry" -> "#exceptions((42) // (67)) ⊑ #raised_exceptions()" [label="#raise((42) // (67))"];
+            "#entry" -> "#exceptions((42) // (67)) ⊑ #raised_exceptions" [label="#raise((42) // (67))"];
             "(42) // (67) ⊑ floor_div@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) // (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) // (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3083,14 +3066,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) % (67) ⊑ mod@{module[1:0]}";
-            "#exceptions((42) % (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) % (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) % (67) ⊑ mod@{module[1:0]}" [label="#succeed((42) % (67))"];
-            "#entry" -> "#exceptions((42) % (67)) ⊑ #raised_exceptions()" [label="#raise((42) % (67))"];
+            "#entry" -> "#exceptions((42) % (67)) ⊑ #raised_exceptions" [label="#raise((42) % (67))"];
             "(42) % (67) ⊑ mod@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) % (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) % (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3103,14 +3086,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) ** (67) ⊑ pow@{module[1:0]}";
-            "#exceptions((42) ** (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) ** (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) ** (67) ⊑ pow@{module[1:0]}" [label="#succeed((42) ** (67))"];
-            "#entry" -> "#exceptions((42) ** (67)) ⊑ #raised_exceptions()" [label="#raise((42) ** (67))"];
+            "#entry" -> "#exceptions((42) ** (67)) ⊑ #raised_exceptions" [label="#raise((42) ** (67))"];
             "(42) ** (67) ⊑ pow@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) ** (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) ** (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3123,14 +3106,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) << (67) ⊑ shl@{module[1:0]}";
-            "#exceptions((42) << (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) << (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) << (67) ⊑ shl@{module[1:0]}" [label="#succeed((42) << (67))"];
-            "#entry" -> "#exceptions((42) << (67)) ⊑ #raised_exceptions()" [label="#raise((42) << (67))"];
+            "#entry" -> "#exceptions((42) << (67)) ⊑ #raised_exceptions" [label="#raise((42) << (67))"];
             "(42) << (67) ⊑ shl@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) << (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) << (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3143,14 +3126,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) >> (67) ⊑ shr@{module[1:0]}";
-            "#exceptions((42) >> (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) >> (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) >> (67) ⊑ shr@{module[1:0]}" [label="#succeed((42) >> (67))"];
-            "#entry" -> "#exceptions((42) >> (67)) ⊑ #raised_exceptions()" [label="#raise((42) >> (67))"];
+            "#entry" -> "#exceptions((42) >> (67)) ⊑ #raised_exceptions" [label="#raise((42) >> (67))"];
             "(42) >> (67) ⊑ shr@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) >> (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) >> (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3163,14 +3146,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) | (67) ⊑ bit_or@{module[1:0]}";
-            "#exceptions((42) | (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) | (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) | (67) ⊑ bit_or@{module[1:0]}" [label="#succeed((42) | (67))"];
-            "#entry" -> "#exceptions((42) | (67)) ⊑ #raised_exceptions()" [label="#raise((42) | (67))"];
+            "#entry" -> "#exceptions((42) | (67)) ⊑ #raised_exceptions" [label="#raise((42) | (67))"];
             "(42) | (67) ⊑ bit_or@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) | (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) | (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3183,14 +3166,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) ^ (67) ⊑ bit_xor@{module[1:0]}";
-            "#exceptions((42) ^ (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) ^ (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) ^ (67) ⊑ bit_xor@{module[1:0]}" [label="#succeed((42) ^ (67))"];
-            "#entry" -> "#exceptions((42) ^ (67)) ⊑ #raised_exceptions()" [label="#raise((42) ^ (67))"];
+            "#entry" -> "#exceptions((42) ^ (67)) ⊑ #raised_exceptions" [label="#raise((42) ^ (67))"];
             "(42) ^ (67) ⊑ bit_xor@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) ^ (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) ^ (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3203,14 +3186,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) & (67) ⊑ bit_and@{module[1:0]}";
-            "#exceptions((42) & (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) & (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) & (67) ⊑ bit_and@{module[1:0]}" [label="#succeed((42) & (67))"];
-            "#entry" -> "#exceptions((42) & (67)) ⊑ #raised_exceptions()" [label="#raise((42) & (67))"];
+            "#entry" -> "#exceptions((42) & (67)) ⊑ #raised_exceptions" [label="#raise((42) & (67))"];
             "(42) & (67) ⊑ bit_and@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) & (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) & (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3223,14 +3206,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) and (67) ⊑ and_@{module[1:0]}";
-            "#exceptions((42) and (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) and (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) and (67) ⊑ and_@{module[1:0]}" [label="#succeed((42) and (67))"];
-            "#entry" -> "#exceptions((42) and (67)) ⊑ #raised_exceptions()" [label="#raise((42) and (67))"];
+            "#entry" -> "#exceptions((42) and (67)) ⊑ #raised_exceptions" [label="#raise((42) and (67))"];
             "(42) and (67) ⊑ and_@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) and (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) and (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3243,14 +3226,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) or (67) ⊑ or_@{module[1:0]}";
-            "#exceptions((42) or (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) or (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) or (67) ⊑ or_@{module[1:0]}" [label="#succeed((42) or (67))"];
-            "#entry" -> "#exceptions((42) or (67)) ⊑ #raised_exceptions()" [label="#raise((42) or (67))"];
+            "#entry" -> "#exceptions((42) or (67)) ⊑ #raised_exceptions" [label="#raise((42) or (67))"];
             "(42) or (67) ⊑ or_@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) or (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) or (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3263,14 +3246,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) == (67) ⊑ eq@{module[1:0]}";
-            "#exceptions((42) == (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) == (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) == (67) ⊑ eq@{module[1:0]}" [label="#succeed((42) == (67))"];
-            "#entry" -> "#exceptions((42) == (67)) ⊑ #raised_exceptions()" [label="#raise((42) == (67))"];
+            "#entry" -> "#exceptions((42) == (67)) ⊑ #raised_exceptions" [label="#raise((42) == (67))"];
             "(42) == (67) ⊑ eq@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) == (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) == (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3283,14 +3266,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) != (67) ⊑ not_eq@{module[1:0]}";
-            "#exceptions((42) != (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) != (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) != (67) ⊑ not_eq@{module[1:0]}" [label="#succeed((42) != (67))"];
-            "#entry" -> "#exceptions((42) != (67)) ⊑ #raised_exceptions()" [label="#raise((42) != (67))"];
+            "#entry" -> "#exceptions((42) != (67)) ⊑ #raised_exceptions" [label="#raise((42) != (67))"];
             "(42) != (67) ⊑ not_eq@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) != (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) != (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3303,14 +3286,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) < (67) ⊑ lt@{module[1:0]}";
-            "#exceptions((42) < (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) < (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) < (67) ⊑ lt@{module[1:0]}" [label="#succeed((42) < (67))"];
-            "#entry" -> "#exceptions((42) < (67)) ⊑ #raised_exceptions()" [label="#raise((42) < (67))"];
+            "#entry" -> "#exceptions((42) < (67)) ⊑ #raised_exceptions" [label="#raise((42) < (67))"];
             "(42) < (67) ⊑ lt@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) < (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) < (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3323,14 +3306,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) > (67) ⊑ gt@{module[1:0]}";
-            "#exceptions((42) > (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) > (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) > (67) ⊑ gt@{module[1:0]}" [label="#succeed((42) > (67))"];
-            "#entry" -> "#exceptions((42) > (67)) ⊑ #raised_exceptions()" [label="#raise((42) > (67))"];
+            "#entry" -> "#exceptions((42) > (67)) ⊑ #raised_exceptions" [label="#raise((42) > (67))"];
             "(42) > (67) ⊑ gt@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) > (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) > (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3343,14 +3326,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) <= (67) ⊑ lte@{module[1:0]}";
-            "#exceptions((42) <= (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) <= (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) <= (67) ⊑ lte@{module[1:0]}" [label="#succeed((42) <= (67))"];
-            "#entry" -> "#exceptions((42) <= (67)) ⊑ #raised_exceptions()" [label="#raise((42) <= (67))"];
+            "#entry" -> "#exceptions((42) <= (67)) ⊑ #raised_exceptions" [label="#raise((42) <= (67))"];
             "(42) <= (67) ⊑ lte@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) <= (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) <= (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3363,14 +3346,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) >= (67) ⊑ gte@{module[1:0]}";
-            "#exceptions((42) >= (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) >= (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) >= (67) ⊑ gte@{module[1:0]}" [label="#succeed((42) >= (67))"];
-            "#entry" -> "#exceptions((42) >= (67)) ⊑ #raised_exceptions()" [label="#raise((42) >= (67))"];
+            "#entry" -> "#exceptions((42) >= (67)) ⊑ #raised_exceptions" [label="#raise((42) >= (67))"];
             "(42) >= (67) ⊑ gte@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) >= (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) >= (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3383,14 +3366,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) is (67) ⊑ is_@{module[1:0]}";
-            "#exceptions((42) is (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) is (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) is (67) ⊑ is_@{module[1:0]}" [label="#succeed((42) is (67))"];
-            "#entry" -> "#exceptions((42) is (67)) ⊑ #raised_exceptions()" [label="#raise((42) is (67))"];
+            "#entry" -> "#exceptions((42) is (67)) ⊑ #raised_exceptions" [label="#raise((42) is (67))"];
             "(42) is (67) ⊑ is_@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) is (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) is (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3403,14 +3386,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) is not (67) ⊑ is_not@{module[1:0]}";
-            "#exceptions((42) is not (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) is not (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) is not (67) ⊑ is_not@{module[1:0]}" [label="#succeed((42) is not (67))"];
-            "#entry" -> "#exceptions((42) is not (67)) ⊑ #raised_exceptions()" [label="#raise((42) is not (67))"];
+            "#entry" -> "#exceptions((42) is not (67)) ⊑ #raised_exceptions" [label="#raise((42) is not (67))"];
             "(42) is not (67) ⊑ is_not@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) is not (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) is not (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3423,14 +3406,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) in (67) ⊑ in_@{module[1:0]}";
-            "#exceptions((42) in (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) in (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) in (67) ⊑ in_@{module[1:0]}" [label="#succeed((42) in (67))"];
-            "#entry" -> "#exceptions((42) in (67)) ⊑ #raised_exceptions()" [label="#raise((42) in (67))"];
+            "#entry" -> "#exceptions((42) in (67)) ⊑ #raised_exceptions" [label="#raise((42) in (67))"];
             "(42) in (67) ⊑ in_@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) in (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) in (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3443,14 +3426,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) not in (67) ⊑ not_in@{module[1:0]}";
-            "#exceptions((42) not in (67)) ⊑ #raised_exceptions()";
+            "#exceptions((42) not in (67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "(42) not in (67) ⊑ not_in@{module[1:0]}" [label="#succeed((42) not in (67))"];
-            "#entry" -> "#exceptions((42) not in (67)) ⊑ #raised_exceptions()" [label="#raise((42) not in (67))"];
+            "#entry" -> "#exceptions((42) not in (67)) ⊑ #raised_exceptions" [label="#raise((42) not in (67))"];
             "(42) not in (67) ⊑ not_in@{module[1:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions((42) not in (67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((42) not in (67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3470,19 +3453,19 @@ mod tests {
             "a@{module[1:0]} ⊑ a@{module[3:8]}";
             "(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]}";
             "4 ⊑ a@{module[1:0]}";
-            "#exceptions((a@{module[3:4]}) + (a@{module[3:8]})) ⊑ #raised_exceptions()";
+            "#exceptions((a@{module[3:4]}) + (a@{module[3:8]})) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "4 ⊑ a@{module[1:0]}" [label="{}"];
             "a@{module[1:0]} ⊑ a@{module[3:4]}" -> "(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]}" [label="#succeed((a@{module[3:4]}) + (a@{module[3:8]}))"];
-            "a@{module[1:0]} ⊑ a@{module[3:4]}" -> "#exceptions((a@{module[3:4]}) + (a@{module[3:8]})) ⊑ #raised_exceptions()" [label="#raise((a@{module[3:4]}) + (a@{module[3:8]}))"];
+            "a@{module[1:0]} ⊑ a@{module[3:4]}" -> "#exceptions((a@{module[3:4]}) + (a@{module[3:8]})) ⊑ #raised_exceptions" [label="#raise((a@{module[3:4]}) + (a@{module[3:8]}))"];
             "a@{module[1:0]} ⊑ a@{module[3:8]}" -> "(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]}" [label="#succeed((a@{module[3:4]}) + (a@{module[3:8]}))"];
-            "a@{module[1:0]} ⊑ a@{module[3:8]}" -> "#exceptions((a@{module[3:4]}) + (a@{module[3:8]})) ⊑ #raised_exceptions()" [label="#raise((a@{module[3:4]}) + (a@{module[3:8]}))"];
+            "a@{module[1:0]} ⊑ a@{module[3:8]}" -> "#exceptions((a@{module[3:4]}) + (a@{module[3:8]})) ⊑ #raised_exceptions" [label="#raise((a@{module[3:4]}) + (a@{module[3:8]}))"];
             "(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]}" -> "#type_exit" [label="{}"];
             "4 ⊑ a@{module[1:0]}" -> "a@{module[1:0]} ⊑ a@{module[3:4]}" [label="{}"];
             "4 ⊑ a@{module[1:0]}" -> "a@{module[1:0]} ⊑ a@{module[3:8]}" [label="{}"];
-            "#exceptions((a@{module[3:4]}) + (a@{module[3:8]})) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions((a@{module[3:4]}) + (a@{module[3:8]})) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3510,17 +3493,17 @@ mod tests {
             "42 ⊑ a@{module[4:4]}";
             "67 ⊑ a@{module[6:4]}";
             "True ⊑ x@{module[1:0]}";
-            "#exceptions(a@{module[8:4]}) ⊑ #raised_exceptions()";
-            "#exceptions(x@{module[3:3]}) ⊑ #raised_exceptions()";
+            "#exceptions(a@{module[8:4]}) ⊑ #raised_exceptions";
+            "#exceptions(x@{module[3:3]}) ⊑ #raised_exceptions";
             "#empty(module[3:0])";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "True ⊑ x@{module[1:0]}" [label="{}"];
             "a@{module[4:4]} ⊑ a@{module[8:4]}" -> "a@{module[8:4]} ⊑ b@{module[8:0]}" [label="#succeed(a@{module[8:4]})"];
-            "a@{module[4:4]} ⊑ a@{module[8:4]}" -> "#exceptions(a@{module[8:4]}) ⊑ #raised_exceptions()" [label="#raise(a@{module[8:4]})"];
+            "a@{module[4:4]} ⊑ a@{module[8:4]}" -> "#exceptions(a@{module[8:4]}) ⊑ #raised_exceptions" [label="#raise(a@{module[8:4]})"];
             "a@{module[6:4]} ⊑ a@{module[8:4]}" -> "a@{module[8:4]} ⊑ b@{module[8:0]}" [label="#succeed(a@{module[8:4]})"];
-            "a@{module[6:4]} ⊑ a@{module[8:4]}" -> "#exceptions(a@{module[8:4]}) ⊑ #raised_exceptions()" [label="#raise(a@{module[8:4]})"];
+            "a@{module[6:4]} ⊑ a@{module[8:4]}" -> "#exceptions(a@{module[8:4]}) ⊑ #raised_exceptions" [label="#raise(a@{module[8:4]})"];
             "a@{module[8:4]} ⊑ b@{module[8:0]}" -> "#type_exit" [label="{}"];
             "x@{module[1:0]} ⊑ x@{module[3:3]}" -> "#empty(module[3:0])" [label="{}"];
             "42 ⊑ a@{module[4:4]}" -> "a@{module[4:4]} ⊑ a@{module[8:4]}" [label="{}"];
@@ -3528,11 +3511,11 @@ mod tests {
             "67 ⊑ a@{module[6:4]}" -> "a@{module[4:4]} ⊑ a@{module[8:4]}" [label="{}"];
             "67 ⊑ a@{module[6:4]}" -> "a@{module[6:4]} ⊑ a@{module[8:4]}" [label="{}"];
             "True ⊑ x@{module[1:0]}" -> "x@{module[1:0]} ⊑ x@{module[3:3]}" [label="{}"];
-            "#exceptions(a@{module[8:4]}) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions(x@{module[3:3]}) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions(a@{module[8:4]}) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
+            "#exceptions(x@{module[3:3]}) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#empty(module[3:0])" -> "42 ⊑ a@{module[4:4]}" [label="#is_true(x@{module[3:3]})"];
             "#empty(module[3:0])" -> "67 ⊑ a@{module[6:4]}" [label="#is_false(x@{module[3:3]})"];
-            "#empty(module[3:0])" -> "#exceptions(x@{module[3:3]}) ⊑ #raised_exceptions()" [label="#raise(x@{module[3:3]})"];
+            "#empty(module[3:0])" -> "#exceptions(x@{module[3:3]}) ⊑ #raised_exceptions" [label="#raise(x@{module[3:3]})"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3558,9 +3541,9 @@ mod tests {
             "a@{module[6:4]} ⊑ b@{module[6:0]}";
             "(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]}";
             "0 ⊑ a@{module[1:0]}";
-            "#exceptions(a@{module[6:4]}) ⊑ #raised_exceptions()";
-            "#exceptions((a@{module[3:6]}) < (5)) ⊑ #raised_exceptions()";
-            "#exceptions((a@{module[4:8]}) + (1)) ⊑ #raised_exceptions()";
+            "#exceptions(a@{module[6:4]}) ⊑ #raised_exceptions";
+            "#exceptions((a@{module[3:6]}) < (5)) ⊑ #raised_exceptions";
+            "#exceptions((a@{module[4:8]}) + (1)) ⊑ #raised_exceptions";
             "#empty(module[3:0])";
             "#type_exit";
             "#exception_exit";
@@ -3568,21 +3551,21 @@ mod tests {
             "#entry" -> "0 ⊑ a@{module[1:0]}" [label="{}"];
             "a@{module[1:0]} ⊑ a@{module[3:6]}" -> "#empty(module[3:0])" [label="{}"];
             "a@{module[3:6]} ⊑ a@{module[4:8]}" -> "(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]}" [label="#succeed((a@{module[4:8]}) + (1))"];
-            "a@{module[3:6]} ⊑ a@{module[4:8]}" -> "#exceptions((a@{module[4:8]}) + (1)) ⊑ #raised_exceptions()" [label="#raise((a@{module[4:8]}) + (1))"];
+            "a@{module[3:6]} ⊑ a@{module[4:8]}" -> "#exceptions((a@{module[4:8]}) + (1)) ⊑ #raised_exceptions" [label="#raise((a@{module[4:8]}) + (1))"];
             "a@{module[3:6]} ⊑ a@{module[6:4]}" -> "a@{module[6:4]} ⊑ b@{module[6:0]}" [label="#succeed(a@{module[6:4]})"];
-            "a@{module[3:6]} ⊑ a@{module[6:4]}" -> "#exceptions(a@{module[6:4]}) ⊑ #raised_exceptions()" [label="#raise(a@{module[6:4]})"];
+            "a@{module[3:6]} ⊑ a@{module[6:4]}" -> "#exceptions(a@{module[6:4]}) ⊑ #raised_exceptions" [label="#raise(a@{module[6:4]})"];
             "a@{module[4:4]} ⊑ a@{module[3:6]}" -> "#empty(module[3:0])" [label="{}"];
             "a@{module[6:4]} ⊑ b@{module[6:0]}" -> "#type_exit" [label="{}"];
             "(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]}" -> "a@{module[1:0]} ⊑ a@{module[3:6]}" [label="{}"];
             "(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]}" -> "a@{module[4:4]} ⊑ a@{module[3:6]}" [label="{}"];
             "0 ⊑ a@{module[1:0]}" -> "a@{module[1:0]} ⊑ a@{module[3:6]}" [label="{}"];
             "0 ⊑ a@{module[1:0]}" -> "a@{module[4:4]} ⊑ a@{module[3:6]}" [label="{}"];
-            "#exceptions(a@{module[6:4]}) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions((a@{module[3:6]}) < (5)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions((a@{module[4:8]}) + (1)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions(a@{module[6:4]}) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
+            "#exceptions((a@{module[3:6]}) < (5)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
+            "#exceptions((a@{module[4:8]}) + (1)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#empty(module[3:0])" -> "a@{module[3:6]} ⊑ a@{module[4:8]}" [label="#is_true((a@{module[3:6]}) < (5))"];
             "#empty(module[3:0])" -> "a@{module[3:6]} ⊑ a@{module[6:4]}" [label="#is_false((a@{module[3:6]}) < (5))"];
-            "#empty(module[3:0])" -> "#exceptions((a@{module[3:6]}) < (5)) ⊑ #raised_exceptions()" [label="#raise((a@{module[3:6]}) < (5))"];
+            "#empty(module[3:0])" -> "#exceptions((a@{module[3:6]}) < (5)) ⊑ #raised_exceptions" [label="#raise((a@{module[3:6]}) < (5))"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3602,19 +3585,19 @@ mod tests {
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}";
             "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}";
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}";
-            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()";
-            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()";
+            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions";
+            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" [label="#succeed(#function(location=module[1:4], async=false))"];
-            "#entry" -> "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()" [label="#raise(#function(location=module[1:4], async=false))"];
+            "#entry" -> "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions" [label="#raise(#function(location=module[1:4], async=false))"];
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
-            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()" [label="#raise((add_two@{module[4:9]})(42, 67))"];
+            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions" [label="#raise((add_two@{module[4:9]})(42, 67))"];
             "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" -> "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" [label="{}"];
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
+            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3669,26 +3652,28 @@ mod tests {
         digraph "DependencyGraph" {
             "Entity(module)";
             "Entity(module[1:4])";
+            "Entry" -> "Entity(module)";
             "Entity(module)" -> "Entity(module[1:4])";
+            "Entity(module)" -> "Exit";
         }
         digraph "Entity(module)" {
             "#entry";
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}";
             "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}";
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}";
-            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()";
-            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()";
+            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions";
+            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" [label="#succeed(#function(location=module[1:4], async=false))"];
-            "#entry" -> "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()" [label="#raise(#function(location=module[1:4], async=false))"];
+            "#entry" -> "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions" [label="#raise(#function(location=module[1:4], async=false))"];
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
-            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()" [label="#raise((add_two@{module[4:9]})(42, 67))"];
+            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions" [label="#raise((add_two@{module[4:9]})(42, 67))"];
             "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" -> "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" [label="{}"];
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
+            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3704,7 +3689,7 @@ mod tests {
     fn test_cfg_analysis(#[case] source: &str, #[case] expected_dot: &str) {
         let cfg = Cfg::parse(source).expect("Should build CFG");
 
-        let dependency_graph = analyse_cfg(
+        let dependent_graph = analyse_cfg(
             &ProgramEntity::new(
                 QualifiedLocation::from(Arc::new(QualifiedName::parse("module"))),
                 ProgramPoint::Entry,
@@ -3714,9 +3699,9 @@ mod tests {
             None,
         );
 
-        let mut actual_dot = dependency_graph.dot("DependencyGraph");
+        let mut actual_dot = dependent_graph.dot("DependencyGraph");
 
-        for (node, state) in dependency_graph.nodes.as_ref() {
+        for (node, state) in dependent_graph.nodes.as_ref() {
             actual_dot.push_str(&state.constraint_graph.dot(&node.to_string()));
         }
 
@@ -3751,6 +3736,8 @@ mod tests {
         }
         digraph "Module(builtins)" {
             "Entity(builtins)";
+            "Entry" -> "Entity(builtins)";
+            "Entity(builtins)" -> "Exit";
         }
         digraph "Entity(builtins)" {
             "#entry";
@@ -3762,26 +3749,28 @@ mod tests {
         digraph "Module(module)" {
             "Entity(module)";
             "Entity(module[1:4])";
+            "Entry" -> "Entity(module)";
             "Entity(module)" -> "Entity(module[1:4])";
+            "Entity(module)" -> "Exit";
         }
         digraph "Entity(module)" {
             "#entry";
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}";
             "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}";
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}";
-            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()";
-            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()";
+            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions";
+            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions";
             "#type_exit";
             "#exception_exit";
             "#exit";
             "#entry" -> "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" [label="#succeed(#function(location=module[1:4], async=false))"];
-            "#entry" -> "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()" [label="#raise(#function(location=module[1:4], async=false))"];
+            "#entry" -> "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions" [label="#raise(#function(location=module[1:4], async=false))"];
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
-            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()" [label="#raise((add_two@{module[4:9]})(42, 67))"];
+            "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions" [label="#raise((add_two@{module[4:9]})(42, 67))"];
             "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" -> "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" [label="{}"];
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" -> "#type_exit" [label="{}"];
-            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
-            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions()" -> "#exception_exit" [label="{}"];
+            "#exceptions(#function(location=module[1:4], async=false)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
+            "#exceptions((add_two@{module[4:9]})(42, 67)) ⊑ #raised_exceptions" -> "#exception_exit" [label="{}"];
             "#type_exit" -> "#exit" [label="{}"];
             "#exception_exit" -> "#exit" [label="{}"];
         }
@@ -3807,11 +3796,11 @@ mod tests {
                 ),
             ]),
         };
-        let dependency_graph = analyse_program(&cfg_importer, HashSet::from_iter([module_name]));
+        let dependent_graph = analyse_program(&cfg_importer, HashSet::from_iter([module_name]));
 
-        let mut actual_dot = dependency_graph.dot("DependencyGraph");
+        let mut actual_dot = dependent_graph.dot("DependencyGraph");
 
-        for (module_node, program_entity_dependency_graph) in dependency_graph.nodes.as_ref() {
+        for (module_node, program_entity_dependency_graph) in dependent_graph.nodes.as_ref() {
             actual_dot.push_str(&program_entity_dependency_graph.dot(&module_node.to_string()));
             for (node, abstract_environment) in program_entity_dependency_graph.nodes.as_ref() {
                 actual_dot.push_str(&abstract_environment.constraint_graph.dot(&node.to_string()));
