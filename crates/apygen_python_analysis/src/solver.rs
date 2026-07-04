@@ -685,6 +685,13 @@ mod tests {
         result = add_two(42, 67)
         "##},
         indoc! {r##"
+        Module(builtins):
+            Entity(builtins):
+        Module(module):
+            Entity(module):
+                add_two@{module[1:4]} = Never
+                add_two@{module[4:9]} = Never
+                result@{module[4:0]} = Never
         "##},
     )]
     fn test_program_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
@@ -709,6 +716,17 @@ mod tests {
             .solver_states[&ModuleNode::Exit]
             .clone();
 
-        println!("{:#?}", state);
+        let mut actual_types = String::new();
+        for (module_node, graph) in state.as_ref() {
+            actual_types.push_str(&format!("{}:\n", module_node));
+            for (node, abstract_state) in graph.as_ref() {
+                actual_types.push_str(&format!("    {}:\n", node));
+                for (variable, ty) in abstract_state.variable_types.as_ref() {
+                    actual_types.push_str(&format!("        {} = {}\n", variable, ty));
+                }
+            }
+        }
+
+        assert_eq!(expected_types, actual_types, "{actual_types}");
     }
 }
