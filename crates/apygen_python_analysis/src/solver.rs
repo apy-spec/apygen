@@ -1,9 +1,8 @@
 use crate::abstract_environment::{Completeness, RaisedExceptions, Type, TypeLiteral};
 use crate::constraints::{
-    Constraint, ConstraintGraph, ConstraintNode, DependentGraph, ExceptionExpression,
-    ExpressionBinary, ExpressionVariable, IncludeConstraintDefinition, LatticeMap, LatticeSet,
-    ModuleNode, ProgramEntityAbstractEnvironment, ProgramEntityNode, QualifiedLocation,
-    TypeExpression, VariableName,
+    ConstraintGraph, ConstraintNode, DependentGraph, Expression, ExpressionBinary,
+    ExpressionVariable, IncludeConstraint, LatticeMap, ModuleNode,
+    ProgramEntityAbstractEnvironment, ProgramEntityNode, QualifiedLocation, VariableName,
 };
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::is_type_unreachable;
@@ -46,26 +45,22 @@ impl Lattice for DefinedVariables {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct EvaluationState {
-    pub type_evaluations: LatticeMap<Arc<TypeExpression>, PyTypeEval>,
-    pub exception_evaluations: LatticeMap<Arc<ExceptionExpression>, RaisedExceptions>,
+    pub evaluations: LatticeMap<Arc<Expression>, PyTypeEval>,
+    pub raised_exceptions: RaisedExceptions,
     pub defined_variables: DefinedVariables,
 }
 
 impl Lattice for EvaluationState {
     fn includes(&self, other: &Self) -> bool {
-        self.type_evaluations.includes(&other.type_evaluations)
-            && self
-                .exception_evaluations
-                .includes(&other.exception_evaluations)
+        self.evaluations.includes(&other.evaluations)
+            && self.raised_exceptions.includes(&other.raised_exceptions)
             && self.defined_variables.includes(&other.defined_variables)
     }
 
     fn join(&self, other: &Self) -> Self {
         Self {
-            type_evaluations: self.type_evaluations.join(&other.type_evaluations),
-            exception_evaluations: self
-                .exception_evaluations
-                .join(&other.exception_evaluations),
+            evaluations: self.evaluations.join(&other.evaluations),
+            raised_exceptions: self.raised_exceptions.join(&other.raised_exceptions),
             defined_variables: self.defined_variables.join(&other.defined_variables),
         }
     }
@@ -145,49 +140,49 @@ impl<'a> ConstraintSolver<'a> {
     pub fn evaluate_type_expression(
         &self,
         abstract_state: &EvaluationState,
-        type_expression: &TypeExpression,
+        type_expression: &Expression,
     ) -> PyTypeEval {
-        if let Some(eval) = abstract_state.type_evaluations.values.get(type_expression) {
+        if let Some(eval) = abstract_state.evaluations.values.get(type_expression) {
             return eval.clone();
         }
 
         match type_expression {
-            TypeExpression::Variable(_) => PyTypeEval::new(
+            Expression::Variable(_) => PyTypeEval::new(
                 Type::Never,
                 PyEffects::new().with_completeness(Completeness::Partial),
             ),
-            TypeExpression::Override(_) => PyTypeEval::with_default_effects(Type::Never),
-            TypeExpression::Function(_) => PyTypeEval::with_default_effects(Type::Never),
-            TypeExpression::Import(_) => PyTypeEval::with_default_effects(Type::Never),
-            TypeExpression::Attribute(_) => PyTypeEval::with_default_effects(Type::Never),
-            TypeExpression::Subscript(_) => PyTypeEval::with_default_effects(Type::Never),
-            TypeExpression::Call(_) => PyTypeEval::with_default_effects(Type::Never),
-            TypeExpression::Unary(_) => PyTypeEval::with_default_effects(Type::Never),
-            TypeExpression::Binary(expression_binary) => {
+            Expression::Override(_) => PyTypeEval::with_default_effects(Type::Never),
+            Expression::Function(_) => PyTypeEval::with_default_effects(Type::Never),
+            Expression::Import(_) => PyTypeEval::with_default_effects(Type::Never),
+            Expression::Attribute(_) => PyTypeEval::with_default_effects(Type::Never),
+            Expression::Subscript(_) => PyTypeEval::with_default_effects(Type::Never),
+            Expression::Call(_) => PyTypeEval::with_default_effects(Type::Never),
+            Expression::Unary(_) => PyTypeEval::with_default_effects(Type::Never),
+            Expression::Binary(expression_binary) => {
                 self.evaluate_expression_binary(abstract_state, expression_binary)
             }
-            TypeExpression::LiteralInteger(literal_integer) => {
+            Expression::LiteralInteger(literal_integer) => {
                 PyTypeEval::with_default_effects(Type::new_integer_literal(literal_integer.clone()))
             }
-            TypeExpression::LiteralFloat(literal_float) => {
+            Expression::LiteralFloat(literal_float) => {
                 PyTypeEval::with_default_effects(Type::new_float_literal(literal_float.clone()))
             }
-            TypeExpression::LiteralComplex(literal_complex) => {
+            Expression::LiteralComplex(literal_complex) => {
                 PyTypeEval::with_default_effects(Type::new_complex_literal(literal_complex.clone()))
             }
-            TypeExpression::LiteralString(literal_string) => {
+            Expression::LiteralString(literal_string) => {
                 PyTypeEval::with_default_effects(Type::new_string_literal(literal_string.clone()))
             }
-            TypeExpression::LiteralBytes(literal_bytes) => {
+            Expression::LiteralBytes(literal_bytes) => {
                 PyTypeEval::with_default_effects(Type::new_bytes_literal(literal_bytes.clone()))
             }
-            TypeExpression::LiteralBoolean(literal_boolean) => {
+            Expression::LiteralBoolean(literal_boolean) => {
                 PyTypeEval::with_default_effects(Type::new_boolean_literal(literal_boolean.clone()))
             }
-            TypeExpression::LiteralNone => {
+            Expression::LiteralNone => {
                 PyTypeEval::with_default_effects(Type::new_literal(TypeLiteral::None))
             }
-            TypeExpression::LiteralEllipsis => {
+            Expression::LiteralEllipsis => {
                 PyTypeEval::with_default_effects(Type::new_literal(TypeLiteral::Ellipsis))
             }
         }
@@ -196,15 +191,15 @@ impl<'a> ConstraintSolver<'a> {
     pub fn evaluate_type_constraint(
         &self,
         abstract_state: &mut EvaluationState,
-        type_constraint: &IncludeConstraintDefinition<TypeExpression>,
+        type_constraint: &IncludeConstraint<Expression>,
     ) {
         let previous_eval = abstract_state
-            .type_evaluations
+            .evaluations
             .values
             .get(&type_constraint.right);
         let new_eval = self.evaluate_type_expression(abstract_state, &type_constraint.left);
 
-        abstract_state.type_evaluations.values.insert(
+        abstract_state.evaluations.values.insert(
             type_constraint.right.clone(),
             if let Some(previous_eval) = previous_eval {
                 previous_eval.join(&new_eval)
@@ -250,18 +245,15 @@ impl GraphAnalyser for ConstraintSolver<'_> {
         let mut abstract_state = analysis_state.clone_abstract_state_or_default(&node);
 
         match &node {
-            ConstraintNode::Constraint(constraint) => match constraint.as_ref() {
-                Constraint::Type(constraint_type) => {
-                    self.evaluate_type_constraint(&mut abstract_state, constraint_type)
-                }
-                Constraint::DefinedVariable(constraint_defined_variable) => {
-                    abstract_state.defined_variables.names.insert(
-                        constraint_defined_variable.name.clone(),
-                        imbl::OrdSet::unit(constraint_defined_variable.location.clone()),
-                    );
-                }
-                _ => {}
-            },
+            ConstraintNode::TypeConstraint(constraint) => {
+                self.evaluate_type_constraint(&mut abstract_state, constraint)
+            }
+            ConstraintNode::DefinedVariableConstraint(constraint) => {
+                abstract_state.defined_variables.names.insert(
+                    constraint.name.clone(),
+                    imbl::OrdSet::unit(constraint.location.clone()),
+                );
+            }
             _ => {}
         }
 
@@ -424,8 +416,8 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
                             type_exit
                                 .and_then(|type_exit| {
                                     type_exit
-                                        .type_evaluations
-                                        .get(&TypeExpression::Variable(expression_variable))
+                                        .evaluations
+                                        .get(&Expression::Variable(expression_variable))
                                 })
                                 .map(|eval| eval.value.clone())
                                 .unwrap_or(Type::Never),
@@ -435,12 +427,7 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
                 .flatten()
                 .collect();
             let exceptions = type_exceptions
-                .and_then(|type_exceptions| {
-                    type_exceptions
-                        .exception_evaluations
-                        .get(&ExceptionExpression::Raised)
-                })
-                .cloned()
+                .map(|type_exceptions| type_exceptions.raised_exceptions.clone())
                 .unwrap_or(RaisedExceptions::default());
 
             Ok(previous_state.update_join(
@@ -692,8 +679,8 @@ mod tests {
                     format!(
                         "{} = {}\n",
                         expression_variable.clone(),
-                        type_exit_evaluations.type_evaluations.values
-                            [&TypeExpression::Variable(expression_variable)]
+                        type_exit_evaluations.evaluations.values
+                            [&Expression::Variable(expression_variable)]
                             .value
                     )
                 })
