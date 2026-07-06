@@ -10,6 +10,7 @@ use crate::{pytype_consume_or_return, pytype_return_unreachable};
 use apygen_analysis::lattice::Lattice;
 use apygen_analysis::{GraphAnalyser, analysis};
 use std::convert::Infallible;
+use std::fmt::Display;
 use std::sync::Arc;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -46,6 +47,7 @@ impl Lattice for DefinedVariables {
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct EvaluationState {
     pub evaluations: LatticeMap<Arc<Expression>, PyTypeEval>,
+    pub return_value: Type,
     pub raised_exceptions: RaisedExceptions,
     pub defined_variables: DefinedVariables,
 }
@@ -53,6 +55,7 @@ pub struct EvaluationState {
 impl Lattice for EvaluationState {
     fn includes(&self, other: &Self) -> bool {
         self.evaluations.includes(&other.evaluations)
+            && self.return_value.includes(&other.return_value)
             && self.raised_exceptions.includes(&other.raised_exceptions)
             && self.defined_variables.includes(&other.defined_variables)
     }
@@ -60,6 +63,7 @@ impl Lattice for EvaluationState {
     fn join(&self, other: &Self) -> Self {
         Self {
             evaluations: self.evaluations.join(&other.evaluations),
+            return_value: self.return_value.join(&other.return_value),
             raised_exceptions: self.raised_exceptions.join(&other.raised_exceptions),
             defined_variables: self.defined_variables.join(&other.defined_variables),
         }
@@ -254,6 +258,10 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                     imbl::OrdSet::unit(constraint.location.clone()),
                 );
             }
+            ConstraintNode::ReturnConstraint(constraint) => {
+                let return_eval = self.evaluate_expression(&abstract_state, constraint.as_ref());
+                abstract_state.return_value = return_eval.value;
+            }
             _ => {}
         }
 
@@ -304,18 +312,31 @@ impl GraphAnalyser for ConstraintSolver<'_> {
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct ProgramEntityAbstractState {
     pub variable_types: LatticeMap<ExpressionVariable, Type>,
+    pub return_value: Type,
     pub exceptions: RaisedExceptions,
+}
+
+impl Display for ProgramEntityAbstractState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{{ variable_types: {}, return_value: {}, exceptions: {} }}",
+            self.variable_types, self.return_value, self.exceptions
+        )
+    }
 }
 
 impl Lattice for ProgramEntityAbstractState {
     fn includes(&self, other: &Self) -> bool {
         self.variable_types.includes(&other.variable_types)
+            && self.return_value.includes(&other.return_value)
             && self.exceptions.includes(&other.exceptions)
     }
 
     fn join(&self, other: &Self) -> Self {
         Self {
             variable_types: self.variable_types.join(&other.variable_types),
+            return_value: self.return_value.join(&other.return_value),
             exceptions: self.exceptions.join(&other.exceptions),
         }
     }
@@ -426,14 +447,18 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
                 })
                 .flatten()
                 .collect();
+            let return_value = type_exit
+                .map(|type_exit| type_exit.return_value.clone())
+                .unwrap_or_default();
             let exceptions = type_exceptions
                 .map(|type_exceptions| type_exceptions.raised_exceptions.clone())
                 .unwrap_or(RaisedExceptions::default());
 
-            Ok(previous_state.update_join(
+            Ok(previous_state.update(
                 node,
                 ProgramEntityAbstractState {
                     variable_types,
+                    return_value,
                     exceptions,
                 },
             ))
@@ -548,7 +573,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
             .unwrap_or_default();
 
         if let Some(dependent_graph) = self.graph.nodes.get(&node) {
-            Ok(previous_state.update_join(
+            Ok(previous_state.update(
                 node,
                 analysis(&ProgramEntityConstraintSolver::new(dependent_graph))?.states
                     [&ProgramEntityNode::Exit]
@@ -712,10 +737,14 @@ mod tests {
         indoc! {r##"
         Module(builtins):
             Entity(builtins):
+                #return = Never
         Module(module):
             Entity(module):
                 add_two@{module[1:4]} = Never
                 result@{module[4:0]} = Never
+                #return = Never
+            Entity(module[1:4]):
+                #return = Never
         "##},
     )]
     fn test_program_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
@@ -748,6 +777,10 @@ mod tests {
                 for (variable, ty) in abstract_state.variable_types.as_ref() {
                     actual_types.push_str(&format!("        {} = {}\n", variable, ty));
                 }
+                actual_types.push_str(&format!(
+                    "        #return = {}\n",
+                    abstract_state.return_value
+                ));
             }
         }
 

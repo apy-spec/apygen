@@ -1336,6 +1336,12 @@ impl Type {
     }
 }
 
+impl Default for Type {
+    fn default() -> Self {
+        Type::Never
+    }
+}
+
 impl Lattice for Type {
     fn includes(&self, other: &Self) -> bool {
         if self == other {
