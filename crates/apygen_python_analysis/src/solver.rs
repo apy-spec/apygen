@@ -112,11 +112,11 @@ impl<'a> ConstraintSolver<'a> {
 
         let left_ty = pytype_consume_or_return!(
             effects,
-            self.evaluate_type_expression(abstract_state, &type_expression.left)
+            self.evaluate_expression(abstract_state, &type_expression.left)
         );
         let right_ty = pytype_consume_or_return!(
             effects,
-            self.evaluate_type_expression(abstract_state, &type_expression.right)
+            self.evaluate_expression(abstract_state, &type_expression.right)
         );
 
         let ty = pytype_consume_or_return!(
@@ -137,16 +137,16 @@ impl<'a> ConstraintSolver<'a> {
         PyTypeEval::new(ty, effects)
     }
 
-    pub fn evaluate_type_expression(
+    pub fn evaluate_expression(
         &self,
         abstract_state: &EvaluationState,
-        type_expression: &Expression,
+        expression: &Expression,
     ) -> PyTypeEval {
-        if let Some(eval) = abstract_state.evaluations.values.get(type_expression) {
+        if let Some(eval) = abstract_state.evaluations.values.get(expression) {
             return eval.clone();
         }
 
-        match type_expression {
+        match expression {
             Expression::Variable(_) => PyTypeEval::new(
                 Type::Never,
                 PyEffects::new().with_completeness(Completeness::Partial),
@@ -191,13 +191,13 @@ impl<'a> ConstraintSolver<'a> {
     pub fn evaluate_type_constraint(
         &self,
         abstract_state: &mut EvaluationState,
-        type_constraint: &IncludeConstraint<Expression>,
+        type_constraint: &IncludeConstraint<Arc<Expression>>,
     ) {
         let previous_eval = abstract_state
             .evaluations
             .values
             .get(&type_constraint.right);
-        let new_eval = self.evaluate_type_expression(abstract_state, &type_constraint.left);
+        let new_eval = self.evaluate_expression(abstract_state, &type_constraint.left);
 
         abstract_state.evaluations.values.insert(
             type_constraint.right.clone(),
