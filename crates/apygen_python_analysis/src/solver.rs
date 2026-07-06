@@ -1,8 +1,8 @@
 use crate::abstract_environment::{Completeness, RaisedExceptions, Type, TypeLiteral};
 use crate::constraints::{
-    ConstraintGraph, ConstraintNode, DependentGraph, Expression, ExpressionBinary,
-    ExpressionVariable, IncludeConstraint, LatticeMap, ModuleNode,
-    ProgramEntityAbstractEnvironment, ProgramEntityNode, QualifiedLocation, VariableName,
+    AbstractEnvironmentSpecification, ConstraintGraph, ConstraintNode, DependentGraph, Expression,
+    ExpressionBinary, ExpressionVariable, IncludeConstraint, LatticeMap, ModuleNode,
+    ProgramAnalysis, ProgramEntityNode, QualifiedLocation, VariableName,
 };
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::is_type_unreachable;
@@ -99,12 +99,19 @@ impl Lattice for SolverState {
 }
 
 pub struct ConstraintSolver<'a> {
+    pub specification: &'a AbstractEnvironmentSpecification,
     pub graph: &'a ConstraintGraph,
 }
 
 impl<'a> ConstraintSolver<'a> {
-    pub fn new(graph: &'a ConstraintGraph) -> Self {
-        Self { graph }
+    pub fn new(
+        specification: &'a AbstractEnvironmentSpecification,
+        graph: &'a ConstraintGraph,
+    ) -> Self {
+        Self {
+            specification,
+            graph,
+        }
     }
 
     pub fn evaluate_expression_binary(
@@ -249,6 +256,23 @@ impl GraphAnalyser for ConstraintSolver<'_> {
         let mut abstract_state = analysis_state.clone_abstract_state_or_default(&node);
 
         match &node {
+            ConstraintNode::Entry => {
+                for (variable, expressions) in self.specification.arguments.as_ref() {
+                    let mut ty = PyTypeEval::never();
+
+                    for expression in expressions.as_ref() {
+                        ty = ty.join(&self.evaluate_expression(&mut abstract_state, expression));
+                    }
+
+                    abstract_state.defined_variables.names.insert(
+                        variable.name.clone(),
+                        imbl::OrdSet::unit(variable.location.clone()),
+                    );
+                    abstract_state
+                        .evaluations
+                        .insert(Arc::new(Expression::Variable(variable.clone())), ty);
+                }
+            }
             ConstraintNode::TypeConstraint(constraint) => {
                 self.evaluate_type_constraint(&mut abstract_state, constraint)
             }
@@ -361,13 +385,11 @@ impl Lattice for ProgramEntitySolverState {
 }
 
 pub struct ProgramEntityConstraintSolver<'a> {
-    pub graph: &'a DependentGraph<ProgramEntityNode, ProgramEntityAbstractEnvironment>,
+    pub graph: &'a DependentGraph<ProgramEntityNode, ProgramAnalysis>,
 }
 
 impl<'a> ProgramEntityConstraintSolver<'a> {
-    pub fn new(
-        graph: &'a DependentGraph<ProgramEntityNode, ProgramEntityAbstractEnvironment>,
-    ) -> Self {
+    pub fn new(graph: &'a DependentGraph<ProgramEntityNode, ProgramAnalysis>) -> Self {
         Self { graph }
     }
 }
@@ -411,60 +433,61 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
             .cloned()
             .unwrap_or_default();
 
-        if let Some(abstract_environment) = self.graph.nodes.get(&node) {
-            let solver_state = analysis(&ConstraintSolver::new(
-                &abstract_environment.constraint_graph,
-            ))?;
-            let type_exit = solver_state
-                .evaluation_states
-                .get(&ConstraintNode::TypeExit);
-            let type_exceptions = solver_state
-                .evaluation_states
-                .get(&ConstraintNode::ExceptionExit);
+        let Some(abstract_environment) = self.graph.nodes.get(&node) else {
+            return Ok(previous_state);
+        };
 
-            let variable_types: LatticeMap<_, _> = type_exit
-                .unwrap()
-                .defined_variables
-                .names
-                .iter()
-                .map(|(variable, locations)| {
-                    locations.iter().map(|location| {
-                        let expression_variable =
-                            ExpressionVariable::new(variable.clone(), location.clone());
+        let solver_state = analysis(&ConstraintSolver::new(
+            &abstract_environment.specification,
+            &abstract_environment.constraint_graph,
+        ))?;
+        let type_exit = solver_state
+            .evaluation_states
+            .get(&ConstraintNode::TypeExit);
+        let type_exceptions = solver_state
+            .evaluation_states
+            .get(&ConstraintNode::ExceptionExit);
 
-                        (
-                            expression_variable.clone(),
-                            type_exit
-                                .and_then(|type_exit| {
-                                    type_exit
-                                        .evaluations
-                                        .get(&Expression::Variable(expression_variable))
-                                })
-                                .map(|eval| eval.value.clone())
-                                .unwrap_or(Type::Never),
-                        )
-                    })
+        let variable_types: LatticeMap<_, _> = type_exit
+            .unwrap()
+            .defined_variables
+            .names
+            .iter()
+            .map(|(variable, locations)| {
+                locations.iter().map(|location| {
+                    let expression_variable =
+                        ExpressionVariable::new(variable.clone(), location.clone());
+
+                    (
+                        expression_variable.clone(),
+                        type_exit
+                            .and_then(|type_exit| {
+                                type_exit
+                                    .evaluations
+                                    .get(&Expression::Variable(expression_variable))
+                            })
+                            .map(|eval| eval.value.clone())
+                            .unwrap_or(Type::Never),
+                    )
                 })
-                .flatten()
-                .collect();
-            let return_value = type_exit
-                .map(|type_exit| type_exit.return_value.clone())
-                .unwrap_or_default();
-            let exceptions = type_exceptions
-                .map(|type_exceptions| type_exceptions.raised_exceptions.clone())
-                .unwrap_or(RaisedExceptions::default());
+            })
+            .flatten()
+            .collect();
+        let return_value = type_exit
+            .map(|type_exit| type_exit.return_value.clone())
+            .unwrap_or_default();
+        let exceptions = type_exceptions
+            .map(|type_exceptions| type_exceptions.raised_exceptions.clone())
+            .unwrap_or(RaisedExceptions::default());
 
-            Ok(previous_state.update(
-                node,
-                ProgramEntityAbstractState {
-                    variable_types,
-                    return_value,
-                    exceptions,
-                },
-            ))
-        } else {
-            Ok(previous_state)
-        }
+        Ok(previous_state.update(
+            node,
+            ProgramEntityAbstractState {
+                variable_types,
+                return_value,
+                exceptions,
+            },
+        ))
     }
 
     fn update_abstract_state(
@@ -515,18 +538,12 @@ pub struct ModuleSolverState {
 }
 
 pub struct ModuleConstraintSolver<'a> {
-    pub graph: &'a DependentGraph<
-        ModuleNode,
-        DependentGraph<ProgramEntityNode, ProgramEntityAbstractEnvironment>,
-    >,
+    pub graph: &'a DependentGraph<ModuleNode, DependentGraph<ProgramEntityNode, ProgramAnalysis>>,
 }
 
 impl<'a> ModuleConstraintSolver<'a> {
     pub fn new(
-        graph: &'a DependentGraph<
-            ModuleNode,
-            DependentGraph<ProgramEntityNode, ProgramEntityAbstractEnvironment>,
-        >,
+        graph: &'a DependentGraph<ModuleNode, DependentGraph<ProgramEntityNode, ProgramAnalysis>>,
     ) -> Self {
         Self { graph }
     }
@@ -687,7 +704,9 @@ mod tests {
 
         let exit_state = &analysis_state.abstract_states[&ProgramPoint::Exit];
 
-        let solver = ConstraintSolver::new(&exit_state.constraint_graph);
+        let specification = AbstractEnvironmentSpecification::default();
+
+        let solver = ConstraintSolver::new(&specification, &exit_state.constraint_graph);
 
         let types = analysis(&solver).expect("analysis should work");
 
@@ -736,14 +755,16 @@ mod tests {
         "##},
         indoc! {r##"
         Module(builtins):
-            Entity(builtins):
+            ModuleEntity(builtins):
                 #return = Never
         Module(module):
-            Entity(module):
+            ModuleEntity(module):
                 add_two@{module[1:4]} = Never
                 result@{module[4:0]} = Never
                 #return = Never
-            Entity(module[1:4]):
+            FunctionEntity(module[1:4]):
+                a@{module[1:12]} = Never
+                b@{module[1:15]} = Never
                 #return = Never
         "##},
     )]
