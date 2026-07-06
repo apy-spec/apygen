@@ -2660,8 +2660,9 @@ pub fn analyse_cfg<'a>(
 
     if entity.location.locations.is_empty() {
         dependent_graph.add_dependent(ProgramEntityNode::Entry, program_entity_node.clone());
-        dependent_graph.add_dependent(program_entity_node.clone(), ProgramEntityNode::Exit);
     }
+
+    dependent_graph.add_dependent(program_entity_node.clone(), ProgramEntityNode::Exit);
 
     let sub_program_entity_analysis_parent_state = ProgramEntityAbstractParentState::new(
         &program_entity_exit_abstract_state,
@@ -3695,6 +3696,7 @@ mod tests {
             "Entry" -> "Entity(module)";
             "Entity(module)" -> "Entity(module[1:4])";
             "Entity(module)" -> "Exit";
+            "Entity(module[1:4])" -> "Exit";
         }
         digraph "Entity(module)" {
             "#entry";
@@ -3799,6 +3801,7 @@ mod tests {
             "Entry" -> "Entity(module)";
             "Entity(module)" -> "Entity(module[1:4])";
             "Entity(module)" -> "Exit";
+            "Entity(module[1:4])" -> "Exit";
         }
         digraph "Entity(module)" {
             "#entry";
