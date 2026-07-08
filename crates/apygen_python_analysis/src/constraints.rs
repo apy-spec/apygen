@@ -2488,7 +2488,12 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
     type Node = ProgramPoint;
     type AbstractState = ProgramEntityAbstractEnvironment;
     type AnalysisState = ProgramEntityAnalysisState;
+    type Metadata = ();
     type Error = ConstraintsBuilderError;
+
+    fn initialise_analysis_metadata(&self) -> Result<Self::Metadata, Self::Error> {
+        Ok(())
+    }
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
         Ok(std::iter::once(ProgramPoint::Entry))

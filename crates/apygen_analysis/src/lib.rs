@@ -8,7 +8,42 @@ pub trait GraphAnalyser {
     type Node;
     type AbstractState;
     type AnalysisState;
+    type Metadata;
     type Error;
+
+    fn initialise_analysis_metadata(&self) -> Result<Self::Metadata, Self::Error>;
+    fn before_analysis(
+        &self,
+        _metadata: &mut Self::Metadata,
+        _state: &Self::AnalysisState,
+        _worklist: &BTreeSet<Self::Node>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn before_iteration(
+        &self,
+        _metadata: &mut Self::Metadata,
+        _state: &Self::AnalysisState,
+        _worklist: &BTreeSet<Self::Node>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn after_iteration(
+        &self,
+        _metadata: &mut Self::Metadata,
+        _state: &Self::AnalysisState,
+        _worklist: &BTreeSet<Self::Node>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn after_analysis(
+        &self,
+        _metadata: &mut Self::Metadata,
+        _state: &Self::AnalysisState,
+        _worklist: &BTreeSet<Self::Node>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error>;
     fn next_nodes(
@@ -61,9 +96,19 @@ pub fn analysis<
 ) -> Result<A, E> {
     let mut analysis_state = analyser.initialise_analysis_state()?;
 
+    let mut analysis_metadata = analyser.initialise_analysis_metadata()?;
+
     let mut worklist = BTreeSet::from_iter(analyser.entry_nodes()?);
 
-    while let Some(node) = worklist.pop_first() {
+    analyser.before_analysis(&mut analysis_metadata, &analysis_state, &worklist)?;
+
+    loop {
+        analyser.before_iteration(&mut analysis_metadata, &analysis_state, &worklist)?;
+
+        let Some(node) = worklist.pop_first() else {
+            break;
+        };
+
         let abstract_state = analyser.analyse_node(&analysis_state, node.clone())?;
 
         for next_node in analyser.next_nodes(&node)? {
@@ -103,7 +148,11 @@ pub fn analysis<
                 worklist.insert(next_node.clone());
             }
         }
+
+        analyser.after_iteration(&mut analysis_metadata, &analysis_state, &worklist)?;
     }
+
+    analyser.after_analysis(&mut analysis_metadata, &analysis_state, &worklist)?;
 
     Ok(analysis_state)
 }
