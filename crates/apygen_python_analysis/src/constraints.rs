@@ -314,6 +314,12 @@ impl QualifiedLocation {
         locations.push_back(location);
         Self::new(self.module_name.clone(), locations)
     }
+
+    pub fn at_parent_location(&self) -> Option<Self> {
+        let mut locations = self.locations.clone();
+        locations.pop_back()?;
+        Some(Self::new(self.module_name.clone(), locations))
+    }
 }
 
 impl Display for QualifiedLocation {
