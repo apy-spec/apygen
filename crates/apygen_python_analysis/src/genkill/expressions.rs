@@ -206,6 +206,7 @@ pub fn gen_bool_value(ty: &Type) -> Option<bool> {
         Type::Never => None,
         Type::NoReturn => None,
         Type::Instance { .. } => None,
+        Type::Instance2(_) => None,
         Type::Union(_) => None,
         Type::Intersection(_) => None,
         Type::Literal(literal_value) => type_literal::as_boolean(literal_value.as_ref()),
@@ -426,6 +427,7 @@ pub fn as_type_instances(ty: &Type) -> Vec<TypeInstance> {
         Type::Never => vec![TypeInstance::typing("Never")],
         Type::NoReturn => vec![TypeInstance::typing("NoReturn")],
         Type::Instance(type_instance) => vec![type_instance.clone()],
+        Type::Instance2(_) => vec![],
         Type::Union(union) => union
             .types()
             .iter()
@@ -557,6 +559,7 @@ pub fn gen_unary_op(
     let ty = match target_ty {
         Type::Any => Type::Any,
         Type::Instance { .. } => Type::Any,
+        Type::Instance2(_) => Type::Any,
         Type::Union(_) => Type::Any,
         Type::Intersection(_) => Type::Any,
         Type::Literal(type_literal) => {

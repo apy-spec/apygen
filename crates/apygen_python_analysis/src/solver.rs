@@ -1,12 +1,12 @@
 use crate::abstract_environment::{
     ClassType, Completeness, FunctionType, LiteralClass, LiteralFunction, RaisedExceptions, Type,
-    TypeLiteral,
+    TypeInstance2, TypeLiteral,
 };
 use crate::constraints::{
     AbstractEnvironmentSpecification, ConstraintGraph, ConstraintNode, DependentGraph, Expression,
-    ExpressionBinary, ExpressionClass, ExpressionFunction, ExpressionVariable, IncludeConstraint,
-    LatticeMap, ModuleNode, ProgramAnalysis, ProgramEntity, ProgramEntityNode, QualifiedLocation,
-    VariableName,
+    ExpressionAnnotated, ExpressionBinary, ExpressionClass, ExpressionFunction, ExpressionVariable,
+    IncludeConstraint, LatticeMap, ModuleNode, ProgramAnalysis, ProgramEntity, ProgramEntityNode,
+    QualifiedLocation, VariableName,
 };
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::is_type_unreachable;
@@ -198,6 +198,20 @@ impl<'a> ConstraintSolver<'a> {
         PyTypeEval::with_default_effects(ty.value.clone())
     }
 
+    pub fn evaluate_expression_annotated(
+        &self,
+        abstract_state: &EvaluationState,
+        expression_annotated: &ExpressionAnnotated,
+    ) -> PyTypeEval {
+        let annotation_eval =
+            self.evaluate_expression(abstract_state, &expression_annotated.annotation);
+
+        PyTypeEval::with_default_effects(Type::Instance2(TypeInstance2 {
+            base: Arc::new(annotation_eval.value.clone()),
+            arguments: imbl::Vector::new(),
+        }))
+    }
+
     pub fn evaluate_expression_function(
         &self,
         abstract_state: &EvaluationState,
@@ -288,7 +302,9 @@ impl<'a> ConstraintSolver<'a> {
             Expression::Variable(expression_variable) => {
                 self.evaluate_expression_variable(abstract_state, expression_variable)
             }
-            Expression::Annotated(_) => PyTypeEval::with_default_effects(Type::Never),
+            Expression::Annotated(expression_annotated) => {
+                self.evaluate_expression_annotated(abstract_state, expression_annotated)
+            }
             Expression::Override(_) => PyTypeEval::with_default_effects(Type::Never),
             Expression::Function(expression_function) => {
                 self.evaluate_expression_function(abstract_state, expression_function)
@@ -827,7 +843,7 @@ mod tests {
             result@{module[4:0]} = Never
             #return = Never
         module[1:4]:
-            a@{module[1:12]} = Never
+            a@{module[1:12]} = builtins.type
             b@{module[1:20]} = Never
             #return = Never
         "##},

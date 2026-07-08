@@ -1212,6 +1212,37 @@ impl Display for TypeInstance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TypeInstance2 {
+    pub base: Arc<Type>,
+    pub arguments: imbl::Vector<Arc<Type>>,
+}
+
+impl StructuralDepth for TypeInstance2 {
+    fn depth(&self) -> usize {
+        self.base.depth().max(self.arguments.depth())
+    }
+}
+
+impl Display for TypeInstance2 {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.base)?;
+
+        if !self.arguments.is_empty() {
+            write!(f, "[")?;
+            for (i, argument) in self.arguments.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", argument)?;
+            }
+            write!(f, "]")?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypeUnion {
     types: imbl::OrdSet<Arc<Type>>,
 }
@@ -1289,6 +1320,7 @@ pub enum Type {
     Never,
     NoReturn,
     Instance(TypeInstance),
+    Instance2(TypeInstance2),
     Union(TypeUnion),
     Intersection(imbl::OrdSet<Arc<Type>>),
     Literal(Arc<TypeLiteral>),
@@ -1352,6 +1384,7 @@ impl Lattice for Type {
             Type::Never => false,
             Type::NoReturn => false,
             Type::Instance { .. } => true,
+            Type::Instance2(type_instance2) => true,
             Type::Union(type_union) => {
                 if let Type::Union(other_type_union) = other {
                     other_type_union.types().is_subset(type_union.types())
@@ -1391,6 +1424,7 @@ impl StructuralDepth for Type {
         match self {
             Type::Any | Type::Never | Type::NoReturn => 0,
             Type::Instance(type_instance) => type_instance.depth(),
+            Type::Instance2(type_instance2) => type_instance2.depth(),
             Type::Union(type_union) => type_union.depth(),
             Type::Intersection(type_intersection) => type_intersection.depth(),
             Type::Literal(type_literal) => type_literal.depth(),
@@ -1405,6 +1439,7 @@ impl Display for Type {
             Type::Never => write!(f, "Never"),
             Type::NoReturn => write!(f, "NoReturn"),
             Type::Instance(type_instance) => write!(f, "{}", type_instance),
+            Type::Instance2(type_instance2) => write!(f, "{}", type_instance2),
             Type::Union(type_union) => write!(f, "{}", type_union),
             Type::Intersection(_) => write!(f, "Intersection"),
             Type::Literal(type_literal) => write!(f, "{}", type_literal),
