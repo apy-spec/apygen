@@ -8,6 +8,7 @@ use crate::abstract_environment::{
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{EdgeData, nodes};
 use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
+use crate::constraints::QualifiedLocation;
 use crate::genkill::annotations::gen_annotation;
 use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::calls::BoundArguments;
@@ -506,6 +507,10 @@ pub fn gen_function_def(
         value: Arc::new(FunctionType {
             name: identifier.clone(),
             location: location.clone(),
+            qualified_location: QualifiedLocation::new(
+                location.namespace_location.module.clone(),
+                Default::default(),
+            ),
             generics: imbl::OrdMap::new(),
             is_async: stmt_function_def.is_async,
             parameters,

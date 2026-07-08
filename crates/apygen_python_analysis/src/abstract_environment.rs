@@ -14,6 +14,7 @@ use std::hash::Hash;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 use std::sync::Arc;
 use thiserror::Error;
+use crate::constraints::QualifiedLocation;
 
 pub const BUILTINS_MODULE: &str = "builtins";
 pub const TYPES_MODULE: &str = "types";
@@ -268,6 +269,8 @@ pub struct FunctionType {
     pub name: Arc<Identifier>,
 
     pub location: Location<QualifiedName>,
+
+    pub qualified_location: QualifiedLocation,
 
     pub generics: imbl::OrdMap<String, GenericType>,
 

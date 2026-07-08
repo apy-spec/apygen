@@ -4,11 +4,16 @@ use crate::abstract_environment::{
 };
 use crate::constraints::{
     AbstractEnvironmentSpecification, ConstraintGraph, ConstraintNode, DependentGraph, Expression,
-    ExpressionAnnotated, ExpressionBinary, ExpressionClass, ExpressionFunction, ExpressionVariable,
-    IncludeConstraint, LatticeMap, ModuleNode, ProgramAnalysis, ProgramEntity, ProgramEntityNode,
-    QualifiedLocation, VariableName,
+    ExpressionAnnotated, ExpressionBinary, ExpressionCall, ExpressionClass, ExpressionFunction,
+    ExpressionVariable, IncludeConstraint, LatticeMap, ModuleNode, ProgramAnalysis, ProgramEntity,
+    ProgramEntityNode, QualifiedLocation, VariableName,
 };
-use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
+use crate::genkill::assignment::AssignmentTarget;
+use crate::genkill::calls::Arguments;
+use crate::genkill::expressions::{
+    PyEffects, PyTypeEval, PyValueEval, gen_arguments, gen_expr, literal_class, literal_function,
+    type_literal,
+};
 use crate::is_type_unreachable;
 use crate::{pytype_consume_or_return, pytype_return_unreachable};
 use apy::v1::{Identifier, QualifiedName};
@@ -226,6 +231,7 @@ impl<'a> ConstraintSolver<'a> {
                             QualifiedName::parse("todo"),
                         )),
                     ),
+                    qualified_location: expression_function.location.clone(),
                     generics: Default::default(),
                     parameters: Default::default(),
                     is_async: expression_function.is_async,
@@ -253,6 +259,65 @@ impl<'a> ConstraintSolver<'a> {
                 is_abstract: false,
             }),
         })))
+    }
+
+    pub fn evaluate_expression_call(
+        &self,
+        abstract_state: &EvaluationState,
+        expression_call: &ExpressionCall,
+    ) -> PyTypeEval {
+        let mut effects = PyEffects::new();
+
+        let literal_ty = pytype_consume_or_return!(
+            effects,
+            self.evaluate_expression(abstract_state, &expression_call.target)
+        );
+
+        let Type::Literal(literal) = literal_ty else {
+            return PyTypeEval::unknown().extend_effects(&effects);
+        };
+
+        let mut arguments = Arguments::new();
+
+        for argument in &expression_call.positional_arguments {
+            let argument_ty = pytype_consume_or_return!(
+                effects,
+                self.evaluate_expression(abstract_state, &argument)
+            );
+
+            arguments.positional.push(Arc::new(argument_ty));
+        }
+        for keyword_argument in &expression_call.keyword_arguments {
+            if let Some(name) = &keyword_argument.name {
+                let keyword_argument_ty = pytype_consume_or_return!(
+                    effects,
+                    self.evaluate_expression(abstract_state, &keyword_argument.value)
+                );
+
+                arguments
+                    .keyword
+                    .insert(name.clone(), Arc::new(keyword_argument_ty));
+            }
+        }
+
+        match literal.as_ref() {
+            TypeLiteral::Function(literal_function) => self
+                .state
+                .get(&literal_function.value.qualified_location)
+                .map(|exit_states| {
+                    PyTypeEval::new(
+                        exit_states.type_evaluation_state.return_value.clone(),
+                        PyEffects::new().with_exceptions(
+                            exit_states
+                                .exception_evaluation_state
+                                .raised_exceptions
+                                .clone(),
+                        ),
+                    )
+                })
+                .unwrap_or_else(|| PyTypeEval::unknown().extend_effects(&effects)),
+            _ => PyTypeEval::unknown().extend_effects(&effects),
+        }
     }
 
     pub fn evaluate_expression_binary(
@@ -315,7 +380,9 @@ impl<'a> ConstraintSolver<'a> {
             Expression::Import(_) => PyTypeEval::with_default_effects(Type::Never),
             Expression::Attribute(_) => PyTypeEval::with_default_effects(Type::Never),
             Expression::Subscript(_) => PyTypeEval::with_default_effects(Type::Never),
-            Expression::Call(_) => PyTypeEval::with_default_effects(Type::Never),
+            Expression::Call(expression_call) => {
+                self.evaluate_expression_call(abstract_state, expression_call)
+            }
             Expression::Unary(_) => PyTypeEval::with_default_effects(Type::Never),
             Expression::Binary(expression_binary) => {
                 self.evaluate_expression_binary(abstract_state, expression_binary)
@@ -840,7 +907,7 @@ mod tests {
             #return = Never
         module:
             add_two@{module[1:4]} = types.FunctionType
-            result@{module[4:0]} = Never
+            result@{module[4:0]} = Any
             #return = Never
         module[1:4]:
             a@{module[1:12]} = builtins.type
