@@ -1,13 +1,18 @@
-use crate::abstract_environment::{Completeness, RaisedExceptions, Type, TypeLiteral};
+use crate::abstract_environment::{
+    ClassType, Completeness, FunctionType, LiteralClass, LiteralFunction, RaisedExceptions, Type,
+    TypeLiteral,
+};
 use crate::constraints::{
     AbstractEnvironmentSpecification, ConstraintGraph, ConstraintNode, DependentGraph, Expression,
-    ExpressionBinary, ExpressionVariable, IncludeConstraint, LatticeMap, LatticeSet, ModuleNode,
-    ProgramAnalysis, ProgramEntityNode, QualifiedLocation, VariableName,
+    ExpressionBinary, ExpressionClass, ExpressionFunction, ExpressionVariable, IncludeConstraint,
+    LatticeMap, LatticeSet, ModuleNode, ProgramAnalysis, ProgramEntityNode, QualifiedLocation,
+    VariableName,
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::is_type_unreachable;
 use crate::{pytype_consume_or_return, pytype_return_unreachable};
+use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::lattice::Lattice;
 use apygen_analysis::{GraphAnalyser, analysis};
 use std::convert::Infallible;
@@ -115,6 +120,49 @@ impl<'a> ConstraintSolver<'a> {
         }
     }
 
+    pub fn evaluate_expression_function(
+        &self,
+        abstract_state: &EvaluationState,
+        expression_function: &ExpressionFunction,
+    ) -> PyTypeEval {
+        PyTypeEval::with_default_effects(Type::new_literal(TypeLiteral::Function(
+            LiteralFunction {
+                value: Arc::new(FunctionType {
+                    name: Arc::new(Identifier::parse("todo")),
+                    location: apygen_analysis::namespace::Location::at_exit(
+                        apygen_analysis::namespace::NamespaceLocation::from(Arc::new(
+                            QualifiedName::parse("todo"),
+                        )),
+                    ),
+                    generics: Default::default(),
+                    parameters: Default::default(),
+                    is_async: expression_function.is_async,
+                }),
+            },
+        )))
+    }
+
+    pub fn evaluate_expression_class(
+        &self,
+        abstract_state: &EvaluationState,
+        expression_class: &ExpressionClass,
+    ) -> PyTypeEval {
+        PyTypeEval::with_default_effects(Type::new_literal(TypeLiteral::Class(LiteralClass {
+            value: Arc::new(ClassType {
+                name: Arc::new(Identifier::parse("todo")),
+                location: apygen_analysis::namespace::Location::at_exit(
+                    apygen_analysis::namespace::NamespaceLocation::from(Arc::new(
+                        QualifiedName::parse("todo"),
+                    )),
+                ),
+                generics: Default::default(),
+                bases: Default::default(),
+                keyword_arguments: Default::default(),
+                is_abstract: false,
+            }),
+        })))
+    }
+
     pub fn evaluate_expression_binary(
         &self,
         abstract_state: &EvaluationState,
@@ -165,8 +213,12 @@ impl<'a> ConstraintSolver<'a> {
             ),
             Expression::Annotated(_) => PyTypeEval::with_default_effects(Type::Never),
             Expression::Override(_) => PyTypeEval::with_default_effects(Type::Never),
-            Expression::Function(_) => PyTypeEval::with_default_effects(Type::Never),
-            Expression::Class(_) => PyTypeEval::with_default_effects(Type::Never),
+            Expression::Function(expression_function) => {
+                self.evaluate_expression_function(abstract_state, expression_function)
+            }
+            Expression::Class(expression_class) => {
+                self.evaluate_expression_class(abstract_state, expression_class)
+            }
             Expression::Import(_) => PyTypeEval::with_default_effects(Type::Never),
             Expression::Attribute(_) => PyTypeEval::with_default_effects(Type::Never),
             Expression::Subscript(_) => PyTypeEval::with_default_effects(Type::Never),
@@ -764,13 +816,13 @@ mod tests {
         indoc! {r##"
         Module(builtins):
             ModuleEntity(builtins):
-                int@{builtins[1:6]} = Never
+                int@{builtins[1:6]} = builtins.type
                 #return = Never
             ClassEntity(builtins[1:6]):
                 #return = Never
         Module(module):
             ModuleEntity(module):
-                add_two@{module[1:4]} = Never
+                add_two@{module[1:4]} = types.FunctionType
                 result@{module[4:0]} = Never
                 #return = Never
             FunctionEntity(module[1:4]):
