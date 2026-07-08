@@ -61,7 +61,7 @@ impl EvaluationState {
         self.defined_variables
             .names
             .iter()
-            .map(|(variable, locations)| {
+            .flat_map(|(variable, locations)| {
                 locations.iter().map(|location| {
                     let expression_variable =
                         ExpressionVariable::new(variable.clone(), location.clone());
@@ -75,7 +75,6 @@ impl EvaluationState {
                     )
                 })
             })
-            .flatten()
     }
 }
 
