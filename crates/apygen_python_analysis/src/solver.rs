@@ -1,9 +1,10 @@
 use crate::abstract_environment::{Completeness, RaisedExceptions, Type, TypeLiteral};
 use crate::constraints::{
     AbstractEnvironmentSpecification, ConstraintGraph, ConstraintNode, DependentGraph, Expression,
-    ExpressionBinary, ExpressionVariable, IncludeConstraint, LatticeMap, ModuleNode,
+    ExpressionBinary, ExpressionVariable, IncludeConstraint, LatticeMap, LatticeSet, ModuleNode,
     ProgramAnalysis, ProgramEntityNode, QualifiedLocation, VariableName,
 };
+use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::is_type_unreachable;
 use crate::{pytype_consume_or_return, pytype_return_unreachable};
@@ -162,8 +163,10 @@ impl<'a> ConstraintSolver<'a> {
                 Type::Never,
                 PyEffects::new().with_completeness(Completeness::Partial),
             ),
+            Expression::Annotated(_) => PyTypeEval::with_default_effects(Type::Never),
             Expression::Override(_) => PyTypeEval::with_default_effects(Type::Never),
             Expression::Function(_) => PyTypeEval::with_default_effects(Type::Never),
+            Expression::Class(_) => PyTypeEval::with_default_effects(Type::Never),
             Expression::Import(_) => PyTypeEval::with_default_effects(Type::Never),
             Expression::Attribute(_) => PyTypeEval::with_default_effects(Type::Never),
             Expression::Subscript(_) => PyTypeEval::with_default_effects(Type::Never),
@@ -745,10 +748,15 @@ mod tests {
         }
     }
 
+    const TEST_BUILTINS: &str = indoc! {r##"
+        class int:
+            pass
+    "##};
+
     #[rstest]
     #[case::simple_function_definition(
         indoc! {r##"
-        def add_two(a, b):
+        def add_two(a: int, b):
             return a + b
 
         result = add_two(42, 67)
@@ -756,6 +764,9 @@ mod tests {
         indoc! {r##"
         Module(builtins):
             ModuleEntity(builtins):
+                int@{builtins[1:6]} = Never
+                #return = Never
+            ClassEntity(builtins[1:6]):
                 #return = Never
         Module(module):
             ModuleEntity(module):
@@ -764,7 +775,7 @@ mod tests {
                 #return = Never
             FunctionEntity(module[1:4]):
                 a@{module[1:12]} = Never
-                b@{module[1:15]} = Never
+                b@{module[1:20]} = Never
                 #return = Never
         "##},
     )]
@@ -777,7 +788,7 @@ mod tests {
                 (module_name.clone(), cfg),
                 (
                     Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                    Cfg::parse("").expect("Should build CFG"),
+                    Cfg::parse(TEST_BUILTINS).expect("Should build CFG"),
                 ),
             ]),
         };

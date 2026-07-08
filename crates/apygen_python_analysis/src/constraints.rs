@@ -353,6 +353,23 @@ impl Display for ExpressionVariable {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExpressionAnnotated {
+    pub annotation: Arc<Expression>,
+}
+
+impl ExpressionAnnotated {
+    pub fn new(annotation: Arc<Expression>) -> Self {
+        Self { annotation }
+    }
+}
+
+impl Display for ExpressionAnnotated {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#annotated({})", self.annotation)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionOverride {
     pub previous: Arc<Expression>,
     pub new: Arc<Expression>,
@@ -390,6 +407,23 @@ impl Display for ExpressionFunction {
             "#function(location={}, async={})",
             self.location, self.is_async
         )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExpressionClass {
+    pub location: QualifiedLocation,
+}
+
+impl ExpressionClass {
+    pub fn new(location: QualifiedLocation) -> Self {
+        Self { location }
+    }
+}
+
+impl Display for ExpressionClass {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#class(location={})", self.location)
     }
 }
 
@@ -625,8 +659,10 @@ impl Display for ExpressionUnary {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Expression {
     Variable(ExpressionVariable),
+    Annotated(ExpressionAnnotated),
     Override(ExpressionOverride),
     Function(ExpressionFunction),
+    Class(ExpressionClass),
     Import(ExpressionImport),
     Attribute(ExpressionAttribute),
     Subscript(ExpressionSubscript),
@@ -663,8 +699,10 @@ impl Display for Expression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Expression::Variable(expression_variable) => write!(f, "{}", expression_variable),
+            Expression::Annotated(expression_annotated) => write!(f, "{}", expression_annotated),
             Expression::Override(expression_override) => write!(f, "{}", expression_override),
             Expression::Function(expression_function) => write!(f, "{}", expression_function),
+            Expression::Class(expression_class) => write!(f, "{}", expression_class),
             Expression::Import(expression_import) => write!(f, "{}", expression_import),
             Expression::Attribute(expression_attribute) => {
                 write!(f, "{}", expression_attribute)
@@ -1161,6 +1199,35 @@ impl<'a> ProgramEntityAbstractParentState<'a> {
             parent,
         }
     }
+
+    pub fn previous_locations(
+        &self,
+        entity: &ProgramEntity,
+        variable_name: &VariableName,
+    ) -> Option<&LatticeSet<QualifiedLocation>> {
+        let variable_locations = match self.entity.kind {
+            ProgramEntityKind::Module | ProgramEntityKind::Function => {
+                &self.state.variable_locations
+            }
+            ProgramEntityKind::Class => {
+                &self
+                    .state
+                    .sub_program_entities
+                    .get(entity)?
+                    .variable_locations
+            }
+        };
+
+        if let Some(locations) = variable_locations.get(variable_name) {
+            return Some(locations);
+        }
+
+        if let Some(parent) = &self.parent {
+            return parent.previous_locations(self.entity, variable_name);
+        }
+
+        None
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1223,6 +1290,22 @@ impl<'a> ConstraintsBuilder<'a> {
         }
     }
 
+    pub fn previous_locations<'l>(
+        &'l self,
+        variable_locations: &'l LatticeMap<VariableName, LatticeSet<QualifiedLocation>>,
+        variable_name: &VariableName,
+    ) -> Option<&'l LatticeSet<QualifiedLocation>> {
+        if let Some(previous_locations) = variable_locations.get(variable_name) {
+            return Some(previous_locations);
+        }
+
+        if let Some(parent) = &self.abstract_parent_state {
+            return parent.previous_locations(self.entity, variable_name);
+        }
+
+        None
+    }
+
     pub fn create_used_variables_constraints(
         &self,
         abstract_environment: &mut ProgramEntityAbstractEnvironment,
@@ -1235,9 +1318,8 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut current_nodes: LatticeMap<ConstraintNode, Guard> = LatticeMap::default();
 
         for (used_variable_name, used_locations) in used_variables.names.as_ref() {
-            if let Some(previous_locations) = abstract_environment
-                .variable_locations
-                .get(used_variable_name)
+            if let Some(previous_locations) = self
+                .previous_locations(&abstract_environment.variable_locations, used_variable_name)
             {
                 for previous_location in previous_locations.as_ref() {
                     for used_location in used_locations.as_ref() {
@@ -1264,6 +1346,9 @@ impl<'a> ConstraintsBuilder<'a> {
                 abstract_environment
                     .variable_locations
                     .insert(used_variable_name.clone(), used_locations.clone());
+            } else {
+                current_nodes.extend(abstract_environment.current_nodes.values.clone());
+                // TODO: add support for forward references
             }
         }
 
@@ -1435,13 +1520,24 @@ impl<'a> ConstraintsBuilder<'a> {
     {
         let parameter_name = self.gen_variable_name(program_point, &parameter.name)?;
 
-        if let Some(annotation) = &parameter.annotation {
-            // TODO: add support for annotations
-        }
+        let annotation = if let Some(annotation) = &parameter.annotation {
+            Some(
+                self.evaluate_expr(
+                    &ProgramEntityAnalysisState::default(),
+                    program_point,
+                    &annotation,
+                )?
+                .map(|expression| {
+                    Expression::Annotated(ExpressionAnnotated::new(Arc::new(expression)))
+                }),
+            )
+        } else {
+            None
+        };
 
         Ok((
             ExpressionVariable::new(parameter_name, self.gen_qualified_location(parameter.range)),
-            None,
+            annotation,
         ))
     }
 
@@ -1945,6 +2041,39 @@ impl<'a> ConstraintsBuilder<'a> {
         Ok(target_abstract_environment)
     }
 
+    pub fn evaluate_stmt_class_def(
+        &self,
+        namespace: &ProgramEntityAnalysisState,
+        program_point: ProgramPoint,
+        stmt_class_def: &nodes::StmtClassDef,
+    ) -> Result<ProgramEntityAbstractEnvironment, ConstraintsBuilderError> {
+        let mut target_abstract_environment =
+            namespace.clone_abstract_environment_or_default(program_point);
+
+        let location = self.gen_qualified_location(stmt_class_def.name.range);
+
+        self.assign_variable(
+            &mut target_abstract_environment,
+            location.clone(),
+            self.gen_variable_name(program_point, &stmt_class_def.name)?,
+            Arc::new(Expression::Class(ExpressionClass::new(location.clone()))),
+        );
+
+        target_abstract_environment.sub_program_entities.insert(
+            ProgramEntity::new(location, program_point, ProgramEntityKind::Class),
+            SubProgramEntityContext::new(
+                AbstractEnvironmentSpecification {
+                    arguments: LatticeMap::default(),
+                    return_type: LatticeSet::default(),
+                    exceptions: LatticeSet::default(),
+                },
+                target_abstract_environment.variable_locations.clone(),
+            ),
+        );
+
+        Ok(target_abstract_environment)
+    }
+
     pub fn evaluate_stmt_return(
         &self,
         namespace: &ProgramEntityAnalysisState,
@@ -2275,8 +2404,8 @@ impl<'a> ConstraintsBuilder<'a> {
             nodes::Stmt::FunctionDef(stmt_function_def) => {
                 self.evaluate_stmt_function_def(namespace, program_point, stmt_function_def)
             }
-            nodes::Stmt::ClassDef(_) => {
-                Ok(namespace.clone_abstract_environment_or_default(program_point))
+            nodes::Stmt::ClassDef(stmt_class_def) => {
+                self.evaluate_stmt_class_def(namespace, program_point, stmt_class_def)
             }
             nodes::Stmt::Return(stmt_return) => {
                 self.evaluate_stmt_return(namespace, program_point, stmt_return)
