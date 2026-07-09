@@ -151,66 +151,28 @@ impl Lattice for EvaluationState {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct SolverState {
-    pub evaluation_states: LatticeMap<ConstraintNode, EvaluationState>,
+    pub states: LatticeMap<ConstraintNode, EvaluationState>,
 }
 
 impl SolverState {
-    pub fn new(evaluation_states: LatticeMap<ConstraintNode, EvaluationState>) -> Self {
-        Self { evaluation_states }
+    pub fn new(evaluations: LatticeMap<ConstraintNode, EvaluationState>) -> Self {
+        Self {
+            states: evaluations,
+        }
     }
 
     pub fn clone_abstract_state_or_default(&self, node: &ConstraintNode) -> EvaluationState {
-        self.evaluation_states
-            .get(node)
-            .cloned()
-            .unwrap_or_default()
+        self.states.get(node).cloned().unwrap_or_default()
     }
 }
 
 impl Lattice for SolverState {
     fn includes(&self, other: &Self) -> bool {
-        self.evaluation_states.includes(&other.evaluation_states)
+        self.states.includes(&other.states)
     }
 
     fn join(&self, other: &Self) -> Self {
-        Self::new(self.evaluation_states.join(&other.evaluation_states))
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct ExitEvaluationStates {
-    pub type_evaluation_state: EvaluationState,
-    pub exception_evaluation_state: EvaluationState,
-}
-
-impl Display for ExitEvaluationStates {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "(type: {}, exception: {})",
-            self.type_evaluation_state, self.exception_evaluation_state
-        )
-    }
-}
-
-impl Lattice for ExitEvaluationStates {
-    fn includes(&self, other: &Self) -> bool {
-        self.type_evaluation_state
-            .includes(&other.type_evaluation_state)
-            && self
-                .exception_evaluation_state
-                .includes(&other.exception_evaluation_state)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self {
-            type_evaluation_state: self
-                .type_evaluation_state
-                .join(&other.type_evaluation_state),
-            exception_evaluation_state: self
-                .exception_evaluation_state
-                .join(&other.exception_evaluation_state),
-        }
+        Self::new(self.states.join(&other.states))
     }
 }
 
@@ -218,7 +180,7 @@ pub struct ConstraintSolver<'a> {
     pub program_entity: &'a ProgramEntity,
     pub specification: &'a AbstractEnvironmentSpecification,
     pub graph: &'a ConstraintGraph,
-    pub state: &'a LatticeMap<QualifiedLocation, ExitEvaluationStates>,
+    pub program_evaluation: &'a ProgramEvaluation,
 }
 
 impl<'a> ConstraintSolver<'a> {
@@ -226,13 +188,13 @@ impl<'a> ConstraintSolver<'a> {
         program_entity: &'a ProgramEntity,
         specification: &'a AbstractEnvironmentSpecification,
         graph: &'a ConstraintGraph,
-        state: &'a LatticeMap<QualifiedLocation, ExitEvaluationStates>,
+        program_evaluation: &'a ProgramEvaluation,
     ) -> Self {
         Self {
             program_entity,
             specification,
             graph,
-            state,
+            program_evaluation,
         }
     }
 
@@ -245,23 +207,18 @@ impl<'a> ConstraintSolver<'a> {
             return None;
         }
 
-        let exit_states = self.state.get(&QualifiedLocation::new(
+        let evaluation_state = self.program_evaluation.states.get(&QualifiedLocation::new(
             module_name.clone(),
             imbl::Vector::new(),
         ))?;
 
-        let locations = exit_states
-            .type_evaluation_state
-            .defined_variables
-            .names
-            .get(name)?;
+        let locations = evaluation_state.defined_variables.names.get(name)?;
 
         let mut base = Type::Never;
 
         for location in locations {
             base = base.join(
-                &exit_states
-                    .type_evaluation_state
+                &evaluation_state
                     .evaluations
                     .get(&Expression::Variable(ExpressionVariable::new(
                         name.clone(),
@@ -377,10 +334,11 @@ impl<'a> ConstraintSolver<'a> {
         let parent_location = expression_variable.location.at_parent_location().unwrap();
 
         let state = if self.program_entity.location != parent_location {
-            let Some(exit_evaluation_states) = self.state.get(&parent_location) else {
+            let Some(evaluation_state) = self.program_evaluation.states.get(&parent_location)
+            else {
                 return None;
             };
-            &exit_evaluation_states.type_evaluation_state
+            evaluation_state
         } else {
             &abstract_state
         };
@@ -522,33 +480,26 @@ impl<'a> ConstraintSolver<'a> {
 
         match literal.as_ref() {
             TypeLiteral::Function(literal_function) => self
-                .state
+                .program_evaluation
+                .states
                 .get(&literal_function.value.qualified_location)
-                .map(|exit_states| {
-                    let ty = exit_states
-                        .type_evaluation_state
-                        .return_value
-                        .iter()
-                        .try_fold(Type::Never, |acc, expression| {
-                            let expression_eval = exit_states
-                                .type_evaluation_state
-                                .evaluations
-                                .get(expression)?;
+                .map(|evaluation_state| {
+                    let ty = evaluation_state.return_value.iter().try_fold(
+                        Type::Never,
+                        |acc, expression| {
+                            let expression_eval = evaluation_state.evaluations.get(expression)?;
 
                             if expression_eval.deferred.is_empty() {
                                 None
                             } else {
                                 Some(acc.join(&expression_eval.type_eval.value))
                             }
-                        })?;
+                        },
+                    )?;
                     Some(PyTypeEval::new(
                         ty,
-                        PyEffects::new().with_exceptions(
-                            exit_states
-                                .exception_evaluation_state
-                                .raised_exceptions
-                                .clone(),
-                        ),
+                        PyEffects::new()
+                            .with_exceptions(evaluation_state.raised_exceptions.clone()),
                     ))
                 })
                 .unwrap_or_default(),
@@ -848,7 +799,7 @@ impl GraphAnalyser for ConstraintSolver<'_> {
         analysis_state: &'a Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Option<&'a Self::AbstractState>, Self::Error> {
-        Ok(analysis_state.evaluation_states.get(node))
+        Ok(analysis_state.states.get(node))
     }
 
     fn set_abstract_state(
@@ -857,9 +808,7 @@ impl GraphAnalyser for ConstraintSolver<'_> {
         node: &Self::Node,
         abstract_state: Self::AbstractState,
     ) -> Result<(), Self::Error> {
-        analysis_state
-            .evaluation_states
-            .insert(node.clone(), abstract_state);
+        analysis_state.states.insert(node.clone(), abstract_state);
         Ok(())
     }
 
@@ -916,8 +865,29 @@ impl GraphAnalyser for ConstraintSolver<'_> {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct ProgramEvaluation {
+    pub states: LatticeMap<QualifiedLocation, EvaluationState>,
+}
+
+impl ProgramEvaluation {
+    pub fn new(states: LatticeMap<QualifiedLocation, EvaluationState>) -> Self {
+        Self { states }
+    }
+}
+
+impl Lattice for ProgramEvaluation {
+    fn includes(&self, other: &Self) -> bool {
+        self.states.includes(&other.states)
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        Self::new(self.states.join(&other.states))
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct ProgramEntitySolverState {
-    pub states: LatticeMap<ProgramEntityNode, LatticeMap<QualifiedLocation, ExitEvaluationStates>>,
+    pub states: LatticeMap<ProgramEntityNode, ProgramEvaluation>,
 }
 
 impl Lattice for ProgramEntitySolverState {
@@ -935,26 +905,26 @@ impl Lattice for ProgramEntitySolverState {
 pub struct ProgramEntityConstraintSolver<'a> {
     pub module_node: &'a ModuleNode,
     pub graph: &'a DependentGraph<ProgramEntityNode, ProgramAnalysis>,
-    pub state: &'a LatticeMap<QualifiedLocation, ExitEvaluationStates>,
+    pub program_evaluation: &'a ProgramEvaluation,
 }
 
 impl<'a> ProgramEntityConstraintSolver<'a> {
     pub fn new(
         module_node: &'a ModuleNode,
         graph: &'a DependentGraph<ProgramEntityNode, ProgramAnalysis>,
-        state: &'a LatticeMap<QualifiedLocation, ExitEvaluationStates>,
+        program_evaluation: &'a ProgramEvaluation,
     ) -> Self {
         Self {
             module_node,
             graph,
-            state,
+            program_evaluation,
         }
     }
 }
 
 impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
     type Node = ProgramEntityNode;
-    type AbstractState = LatticeMap<QualifiedLocation, ExitEvaluationStates>;
+    type AbstractState = ProgramEvaluation;
     type AnalysisState = ProgramEntitySolverState;
     type Error = Infallible;
 
@@ -1004,25 +974,37 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
                 &entity,
                 &abstract_environment.specification,
                 &abstract_environment.constraint_graph,
-                &previous_state.clone().union(self.state.clone()),
+                &ProgramEvaluation::new(
+                    previous_state
+                        .states
+                        .clone()
+                        .union(self.program_evaluation.states.clone()),
+                ),
             ),
             &mut LogAnalysisObserver::with_prefix(node.to_string()),
         )?;
 
-        Ok(previous_state.update(
-            entity.location.clone(),
-            ExitEvaluationStates {
-                type_evaluation_state: solver_state
-                    .evaluation_states
-                    .get(&ConstraintNode::TypeExit)
-                    .cloned()
-                    .unwrap_or_default(),
-                exception_evaluation_state: solver_state
-                    .evaluation_states
-                    .get(&ConstraintNode::ExceptionExit)
-                    .cloned()
-                    .unwrap_or_default(),
-            },
+        let mut evaluation_state = solver_state
+            .states
+            .get(&ConstraintNode::TypeExit)
+            .cloned()
+            .unwrap_or_default();
+
+        if let Some(exception_evaluation_state) =
+            solver_state.states.get(&ConstraintNode::ExceptionExit)
+        {
+            evaluation_state.evaluations = evaluation_state
+                .evaluations
+                .join(&exception_evaluation_state.evaluations);
+            evaluation_state.raised_exceptions = evaluation_state
+                .raised_exceptions
+                .join(&exception_evaluation_state.raised_exceptions);
+        }
+
+        Ok(ProgramEvaluation::new(
+            previous_state
+                .states
+                .update(entity.location.clone(), evaluation_state),
         ))
     }
 
@@ -1067,7 +1049,7 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
 
 #[derive(Debug, Default, Clone)]
 pub struct ModuleSolverState {
-    pub solver_states: LatticeMap<ModuleNode, LatticeMap<QualifiedLocation, ExitEvaluationStates>>,
+    pub evaluations: LatticeMap<ModuleNode, ProgramEvaluation>,
 }
 
 pub struct ModuleConstraintSolver<'a> {
@@ -1084,7 +1066,7 @@ impl<'a> ModuleConstraintSolver<'a> {
 
 impl GraphAnalyser for ModuleConstraintSolver<'_> {
     type Node = ModuleNode;
-    type AbstractState = LatticeMap<QualifiedLocation, ExitEvaluationStates>;
+    type AbstractState = ProgramEvaluation;
     type AnalysisState = ModuleSolverState;
     type Error = Infallible;
 
@@ -1118,18 +1100,19 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
         debug!("Analysing {}", node);
 
         let mut previous_state = analysis_state
-            .solver_states
+            .evaluations
             .get(&node)
             .cloned()
             .unwrap_or_default();
 
         if let Some(dependent_graph) = self.graph.nodes.get(&node) {
-            previous_state.extend(
+            previous_state.states.extend(
                 analysis(
                     &ProgramEntityConstraintSolver::new(&node, dependent_graph, &previous_state),
                     &mut LogAnalysisObserver::with_prefix(node.to_string()),
                 )?
                 .states[&ProgramEntityNode::Exit]
+                    .states
                     .values
                     .clone(),
             );
@@ -1153,7 +1136,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
         analysis_state: &'a Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Option<&'a Self::AbstractState>, Self::Error> {
-        Ok(analysis_state.solver_states.get(node))
+        Ok(analysis_state.evaluations.get(node))
     }
 
     fn set_abstract_state(
@@ -1163,7 +1146,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
         abstract_state: Self::AbstractState,
     ) -> Result<(), Self::Error> {
         analysis_state
-            .solver_states
+            .evaluations
             .insert(node.clone(), abstract_state);
         Ok(())
     }
@@ -1301,21 +1284,18 @@ mod tests {
 
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-        let state = analysis(&solver, &mut LogAnalysisObserver::default())
+        let program_evaluation = analysis(&solver, &mut LogAnalysisObserver::default())
             .expect("analysis should work")
-            .solver_states[&ModuleNode::Exit]
+            .evaluations[&ModuleNode::Exit]
             .clone();
 
         let mut actual_types = String::new();
-        for (node, abstract_state) in state.as_ref() {
+        for (node, abstract_state) in program_evaluation.states.as_ref() {
             actual_types.push_str(&format!("{}:\n", node));
-            for (variable, ty) in abstract_state.type_evaluation_state.variables() {
+            for (variable, ty) in abstract_state.variables() {
                 actual_types.push_str(&format!("    {} = {}\n", variable, ty));
             }
-            actual_types.push_str(&format!(
-                "    #return = {}\n",
-                abstract_state.type_evaluation_state.return_value
-            ));
+            actual_types.push_str(&format!("    #return = {}\n", abstract_state.return_value));
         }
 
         assert_eq!(expected_types, actual_types, "{actual_types}");
