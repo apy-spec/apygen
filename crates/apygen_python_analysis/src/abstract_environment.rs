@@ -998,7 +998,7 @@ pub struct LiteralFunction {
 
 impl Display for LiteralFunction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#function({})", self.value.qualified_location)
+        write!(f, "function({})", self.value.qualified_location)
     }
 }
 
@@ -1018,11 +1018,11 @@ impl Display for LiteralOverloadedFunction {
         if let Some(target) = &self.value.target {
             write!(
                 f,
-                "#overloaded_function({})",
+                "overloaded_function({})",
                 target.value.qualified_location
             )
         } else {
-            write!(f, "#overloaded_function")
+            write!(f, "overloaded_function")
         }
     }
 }
@@ -1040,7 +1040,7 @@ pub struct LiteralClass {
 
 impl Display for LiteralClass {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#class({})", self.value.qualified_location)
+        write!(f, "class({})", self.value.qualified_location)
     }
 }
 
@@ -1057,7 +1057,7 @@ pub struct LiteralTypeAlias {
 
 impl Display for LiteralTypeAlias {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#type_alias({})", self.value.location)
+        write!(f, "type_alias({})", self.value.location)
     }
 }
 
@@ -1074,7 +1074,7 @@ pub struct LiteralGeneric {
 
 impl Display for LiteralGeneric {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#generic({})", self.value.location)
+        write!(f, "generic({})", self.value.location)
     }
 }
 
@@ -1091,7 +1091,7 @@ pub struct LiteralImportedModule {
 
 impl Display for LiteralImportedModule {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#import({})", self.value.location)
+        write!(f, "import({})", self.value.location)
     }
 }
 
@@ -1263,7 +1263,7 @@ impl StructuralDepth for TypeInstance {
 
 impl Display for TypeInstance {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({}).{}", self.origin, self.name)?;
+        write!(f, "@({}).{}", self.origin, self.name)?;
 
         if !self.arguments.is_empty() {
             write!(f, "[")?;
@@ -1294,7 +1294,7 @@ impl StructuralDepth for TypeInstance2 {
 
 impl Display for TypeInstance2 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.base)?;
+        write!(f, "@{}", self.base)?;
 
         if !self.arguments.is_empty() {
             write!(f, "[")?;

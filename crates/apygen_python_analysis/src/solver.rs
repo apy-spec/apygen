@@ -1038,16 +1038,16 @@ mod tests {
         "##},
         indoc! {r##"
         builtins:
-            int@{builtins[1:6]} = #class(builtins[1:6])
+            int@{builtins[1:6]} = class(builtins[1:6])
             #return = Never
         builtins[1:6]:
             #return = Never
         module:
-            add_two@{module[1:4]} = #function(module[1:4])
+            add_two@{module[1:4]} = function(module[1:4])
             result@{module[4:0]} = Any
             #return = Never
         module[1:4]:
-            a@{module[1:12]} = #class(builtins[1:6])
+            a@{module[1:12]} = @class(builtins[1:6])
             b@{module[1:20]} = Never
             #return = Never
         "##},
