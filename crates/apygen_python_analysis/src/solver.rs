@@ -900,7 +900,7 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                             _ => Type::Any,
                         };
                     }
-                    println!("here 2 {eval}");
+
                     if eval.type_eval.value.depth() > DEPTH_LIMIT {
                         eval.type_eval.value = Type::Any;
                     }
