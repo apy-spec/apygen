@@ -35,7 +35,7 @@ use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::sync::Arc;
 
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PyEffects {
     pub exceptions: RaisedExceptions,
     pub pureness: Pureness,
@@ -74,7 +74,7 @@ impl Display for PyEffects {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{{exceptions: {}, pureness: {}, completeness: {}}}",
+            "({} - {} - {})",
             self.exceptions, self.pureness, self.completeness
         )
     }
@@ -96,7 +96,7 @@ impl Lattice for PyEffects {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PyValueEval<T> {
     pub value: T,
     pub effects: PyEffects,
@@ -126,7 +126,7 @@ impl<T> PyValueEval<T> {
 
 impl<T: Display> Display for PyValueEval<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{value: {}, effects: {}}}", self.value, self.effects)
+        write!(f, "({} ➤ {})", self.value, self.effects)
     }
 }
 
@@ -195,6 +195,19 @@ macro_rules! pytype_consume_or_return {
         let ty = $effects.consume($eval);
 
         pytype_return_unreachable!($effects, ty);
+
+        ty
+    }};
+}
+
+#[macro_export]
+macro_rules! pytype_consume_or_return_option {
+    ($effects:expr, $eval:expr) => {{
+        let ty = $effects.consume($eval);
+
+        if is_type_unreachable!(ty) {
+            return Some(PyTypeEval::new(ty, $effects));
+        }
 
         ty
     }};

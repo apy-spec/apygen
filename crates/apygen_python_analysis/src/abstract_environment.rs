@@ -1877,7 +1877,7 @@ pub fn resolve_local_attribute<'a>(
     Err(err)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub struct RaisedExceptions {
     pub exceptions: imbl::OrdSet<Exception>,
 }

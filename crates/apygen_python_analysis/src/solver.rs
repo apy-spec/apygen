@@ -1,31 +1,26 @@
 use crate::abstract_environment::{
-    ClassType, Completeness, FunctionType, LiteralClass, LiteralFunction, RaisedExceptions, Type,
-    TypeInstance2, TypeLiteral,
+    ClassType, FunctionType, LiteralClass, LiteralFunction, RaisedExceptions, Type, TypeInstance2,
+    TypeLiteral,
 };
 use crate::constraints::{
     AbstractEnvironmentSpecification, ConstraintGraph, ConstraintNode, DependentGraph, Expression,
     ExpressionAnnotated, ExpressionBinary, ExpressionCall, ExpressionClass, ExpressionFunction,
-    ExpressionVariable, IncludeConstraint, LatticeMap, ModuleNode, ProgramAnalysis, ProgramEntity,
-    ProgramEntityNode, QualifiedLocation, VariableName,
+    ExpressionVariable, IncludeConstraint, LatticeMap, LatticeSet, ModuleNode, ProgramAnalysis,
+    ProgramEntity, ProgramEntityNode, QualifiedLocation, VariableName,
 };
-use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::{
-    PyEffects, PyTypeEval, PyValueEval, gen_arguments, gen_expr, literal_class, literal_function,
-    type_literal,
+    PyEffects, PyTypeEval, gen_expr, literal_class, literal_function, type_literal,
 };
-use crate::is_type_unreachable;
-use crate::{pytype_consume_or_return, pytype_return_unreachable};
+use crate::{is_type_unreachable, pytype_consume_or_return_option};
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::lattice::Lattice;
 use apygen_analysis::log::LogAnalysisObserver;
-use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
-use log::{debug, info};
-use std::collections::BTreeSet;
+use apygen_analysis::{GraphAnalyser, analysis};
+use log::debug;
 use std::convert::Infallible;
 use std::fmt::Display;
 use std::sync::Arc;
-use std::time::Instant;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DefinedVariables {
@@ -58,33 +53,64 @@ impl Lattice for DefinedVariables {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct ExpressionEval {
+    type_eval: PyTypeEval,
+    deferred: LatticeSet<Arc<Expression>>,
+}
+
+impl ExpressionEval {
+    pub fn new(type_eval: PyTypeEval, deferred: LatticeSet<Arc<Expression>>) -> Self {
+        Self {
+            type_eval,
+            deferred,
+        }
+    }
+}
+
+impl Display for ExpressionEval {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.deferred.is_empty() {
+            write!(f, "{}", self.type_eval)
+        } else {
+            write!(f, "{} ⊔ #deferred{}", self.type_eval, self.deferred)
+        }
+    }
+}
+
+impl Lattice for ExpressionEval {
+    fn includes(&self, other: &Self) -> bool {
+        self.type_eval.includes(&other.type_eval) && self.deferred.includes(&other.deferred)
+    }
+
+    fn join(&self, other: &Self) -> Self {
+        Self::new(
+            self.type_eval.join(&other.type_eval),
+            self.deferred.join(&other.deferred),
+        )
+    }
+}
+
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct EvaluationState {
-    pub evaluations: LatticeMap<Arc<Expression>, PyTypeEval>,
-    pub return_value: Type,
+    pub evaluations: LatticeMap<Arc<Expression>, ExpressionEval>,
+    pub return_value: LatticeSet<Arc<Expression>>,
     pub raised_exceptions: RaisedExceptions,
     pub defined_variables: DefinedVariables,
 }
 
 impl Display for EvaluationState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "(variables: {{")?;
-        for (i, (expression_variable, ty)) in self.variables().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{} = {}", expression_variable, ty)?;
-        }
         write!(
             f,
-            "}}, #return = {}, #raised = {})",
-            self.return_value, self.raised_exceptions
+            "(evaluations: {}, return = {}, raised = {}, defined_variables = {:?})",
+            self.evaluations, self.return_value, self.raised_exceptions, self.defined_variables
         )
     }
 }
 
 impl EvaluationState {
-    pub fn variables(&self) -> impl Iterator<Item = (ExpressionVariable, Type)> {
+    pub fn variables(&self) -> impl Iterator<Item = (ExpressionVariable, ExpressionEval)> {
         self.defined_variables
             .names
             .iter()
@@ -97,7 +123,7 @@ impl EvaluationState {
                         expression_variable.clone(),
                         self.evaluations
                             .get(&Expression::Variable(expression_variable))
-                            .map(|eval| eval.value.clone())
+                            .cloned()
                             .unwrap_or_default(),
                     )
                 })
@@ -189,7 +215,7 @@ impl Lattice for ExitEvaluationStates {
 }
 
 pub struct ConstraintSolver<'a> {
-    pub program_entity_node: &'a ProgramEntityNode,
+    pub program_entity: &'a ProgramEntity,
     pub specification: &'a AbstractEnvironmentSpecification,
     pub graph: &'a ConstraintGraph,
     pub state: &'a LatticeMap<QualifiedLocation, ExitEvaluationStates>,
@@ -197,68 +223,101 @@ pub struct ConstraintSolver<'a> {
 
 impl<'a> ConstraintSolver<'a> {
     pub fn new(
-        program_entity_node: &'a ProgramEntityNode,
+        program_entity: &'a ProgramEntity,
         specification: &'a AbstractEnvironmentSpecification,
         graph: &'a ConstraintGraph,
         state: &'a LatticeMap<QualifiedLocation, ExitEvaluationStates>,
     ) -> Self {
         Self {
-            program_entity_node,
+            program_entity,
             specification,
             graph,
             state,
         }
     }
 
+    pub fn resolve_expression_evaluations(
+        &self,
+        abstract_state: &EvaluationState,
+        done_expressions: LatticeSet<&Expression>,
+        evaluation: &ExpressionEval,
+    ) -> Option<PyTypeEval> {
+        let mut ty = evaluation.type_eval.clone();
+
+        for deferred in evaluation.deferred.as_ref() {
+            ty = ty.join(&self.evaluate_expression(
+                abstract_state,
+                done_expressions.clone(),
+                deferred,
+            )?)
+        }
+
+        Some(ty)
+    }
+
     pub fn evaluate_expression_variable(
         &self,
         abstract_state: &EvaluationState,
+        done_expressions: LatticeSet<&Expression>,
         expression_variable: &ExpressionVariable,
-    ) -> PyTypeEval {
-        let Some(exit_evaluation_states) = self
-            .state
-            .get(&expression_variable.location.at_parent_location().unwrap())
-        else {
-            return PyTypeEval::new(
-                Type::Never,
-                PyEffects::new().with_completeness(Completeness::Partial),
-            );
+    ) -> Option<PyTypeEval> {
+        let parent_location = expression_variable.location.at_parent_location().unwrap();
+
+        let state = if self.program_entity.location != parent_location {
+            let Some(exit_evaluation_states) = self.state.get(&parent_location) else {
+                return None;
+            };
+            &exit_evaluation_states.type_evaluation_state
+        } else {
+            &abstract_state
         };
-        let Some(ty) = exit_evaluation_states
-            .type_evaluation_state
+
+        let Some(evaluation) = state
             .evaluations
             .get(&Expression::Variable(expression_variable.clone()))
         else {
-            return PyTypeEval::new(
-                Type::Never,
-                PyEffects::new().with_completeness(Completeness::Partial),
-            );
+            return if abstract_state
+                .defined_variables
+                .names
+                .contains_key(&expression_variable.name)
+            {
+                Some(PyTypeEval::with_default_effects(Type::Never))
+            } else {
+                Some(PyTypeEval::with_default_effects(Type::Never)) // TODO: Add exceptions
+            };
         };
 
-        PyTypeEval::with_default_effects(ty.value.clone())
+        Some(self.resolve_expression_evaluations(abstract_state, done_expressions, evaluation)?)
     }
 
     pub fn evaluate_expression_annotated(
         &self,
         abstract_state: &EvaluationState,
+        done_expressions: LatticeSet<&Expression>,
         expression_annotated: &ExpressionAnnotated,
-    ) -> PyTypeEval {
-        let annotation_eval =
-            self.evaluate_expression(abstract_state, &expression_annotated.annotation);
+    ) -> Option<PyTypeEval> {
+        let annotation_eval = self.evaluate_expression(
+            abstract_state,
+            done_expressions,
+            &expression_annotated.annotation,
+        )?;
 
-        PyTypeEval::with_default_effects(Type::Instance2(TypeInstance2 {
-            base: Arc::new(annotation_eval.value.clone()),
-            arguments: imbl::Vector::new(),
-        }))
+        Some(PyTypeEval::with_default_effects(Type::Instance2(
+            TypeInstance2 {
+                base: Arc::new(annotation_eval.value.clone()),
+                arguments: imbl::Vector::new(),
+            },
+        )))
     }
 
     pub fn evaluate_expression_function(
         &self,
         abstract_state: &EvaluationState,
+        done_expressions: LatticeSet<&Expression>,
         expression_function: &ExpressionFunction,
-    ) -> PyTypeEval {
-        PyTypeEval::with_default_effects(Type::new_literal(TypeLiteral::Function(
-            LiteralFunction {
+    ) -> Option<PyTypeEval> {
+        Some(PyTypeEval::with_default_effects(Type::new_literal(
+            TypeLiteral::Function(LiteralFunction {
                 value: Arc::new(FunctionType {
                     name: Arc::new(Identifier::parse("todo")),
                     location: apygen_analysis::namespace::Location::at_exit(
@@ -271,63 +330,75 @@ impl<'a> ConstraintSolver<'a> {
                     parameters: Default::default(),
                     is_async: expression_function.is_async,
                 }),
-            },
+            }),
         )))
     }
 
     pub fn evaluate_expression_class(
         &self,
         abstract_state: &EvaluationState,
+        done_expressions: LatticeSet<&Expression>,
         expression_class: &ExpressionClass,
-    ) -> PyTypeEval {
-        PyTypeEval::with_default_effects(Type::new_literal(TypeLiteral::Class(LiteralClass {
-            value: Arc::new(ClassType {
-                name: Arc::new(Identifier::parse("todo")),
-                location: apygen_analysis::namespace::Location::at_exit(
-                    apygen_analysis::namespace::NamespaceLocation::from(Arc::new(
-                        QualifiedName::parse("todo"),
-                    )),
-                ),
-                qualified_location: expression_class.location.clone(),
-                generics: Default::default(),
-                bases: Default::default(),
-                keyword_arguments: Default::default(),
-                is_abstract: false,
+    ) -> Option<PyTypeEval> {
+        Some(PyTypeEval::with_default_effects(Type::new_literal(
+            TypeLiteral::Class(LiteralClass {
+                value: Arc::new(ClassType {
+                    name: Arc::new(Identifier::parse("todo")),
+                    location: apygen_analysis::namespace::Location::at_exit(
+                        apygen_analysis::namespace::NamespaceLocation::from(Arc::new(
+                            QualifiedName::parse("todo"),
+                        )),
+                    ),
+                    qualified_location: expression_class.location.clone(),
+                    generics: Default::default(),
+                    bases: Default::default(),
+                    keyword_arguments: Default::default(),
+                    is_abstract: false,
+                }),
             }),
-        })))
+        )))
     }
 
     pub fn evaluate_expression_call(
         &self,
         abstract_state: &EvaluationState,
+        done_expressions: LatticeSet<&Expression>,
         expression_call: &ExpressionCall,
-    ) -> PyTypeEval {
+    ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
 
-        let literal_ty = pytype_consume_or_return!(
+        let literal_ty = pytype_consume_or_return_option!(
             effects,
-            self.evaluate_expression(abstract_state, &expression_call.target)
+            self.evaluate_expression(
+                abstract_state,
+                done_expressions.clone(),
+                &expression_call.target
+            )?
         );
 
         let Type::Literal(literal) = literal_ty else {
-            return PyTypeEval::unknown().extend_effects(&effects);
+            return None; // TODO: add support for unions, etc
         };
 
         let mut arguments = Arguments::new();
 
         for argument in &expression_call.positional_arguments {
-            let argument_ty = pytype_consume_or_return!(
+            let argument_ty = pytype_consume_or_return_option!(
                 effects,
-                self.evaluate_expression(abstract_state, &argument)
+                self.evaluate_expression(abstract_state, done_expressions.clone(), &argument)?
             );
 
             arguments.positional.push(Arc::new(argument_ty));
         }
         for keyword_argument in &expression_call.keyword_arguments {
             if let Some(name) = &keyword_argument.name {
-                let keyword_argument_ty = pytype_consume_or_return!(
+                let keyword_argument_ty = pytype_consume_or_return_option!(
                     effects,
-                    self.evaluate_expression(abstract_state, &keyword_argument.value)
+                    self.evaluate_expression(
+                        abstract_state,
+                        done_expressions.clone(),
+                        &keyword_argument.value
+                    )?
                 );
 
                 arguments
@@ -341,38 +412,59 @@ impl<'a> ConstraintSolver<'a> {
                 .state
                 .get(&literal_function.value.qualified_location)
                 .map(|exit_states| {
-                    PyTypeEval::new(
-                        exit_states.type_evaluation_state.return_value.clone(),
+                    let ty = exit_states
+                        .type_evaluation_state
+                        .return_value
+                        .iter()
+                        .try_fold(Type::Never, |acc, expression| {
+                            let expression_eval = exit_states
+                                .type_evaluation_state
+                                .evaluations
+                                .get(expression)?;
+
+                            if expression_eval.deferred.is_empty() {
+                                None
+                            } else {
+                                Some(acc.join(&expression_eval.type_eval.value))
+                            }
+                        })?;
+                    Some(PyTypeEval::new(
+                        ty,
                         PyEffects::new().with_exceptions(
                             exit_states
                                 .exception_evaluation_state
                                 .raised_exceptions
                                 .clone(),
                         ),
-                    )
+                    ))
                 })
-                .unwrap_or_else(|| PyTypeEval::unknown().extend_effects(&effects)),
-            _ => PyTypeEval::unknown().extend_effects(&effects),
+                .unwrap_or_default(),
+            _ => None, // TODO: add support for classes, etc
         }
     }
 
     pub fn evaluate_expression_binary(
         &self,
         abstract_state: &EvaluationState,
+        done_expressions: LatticeSet<&Expression>,
         type_expression: &ExpressionBinary,
-    ) -> PyTypeEval {
+    ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
 
-        let left_ty = pytype_consume_or_return!(
+        let left_ty = pytype_consume_or_return_option!(
             effects,
-            self.evaluate_expression(abstract_state, &type_expression.left)
+            self.evaluate_expression(
+                abstract_state,
+                done_expressions.clone(),
+                &type_expression.left
+            )?
         );
-        let right_ty = pytype_consume_or_return!(
+        let right_ty = pytype_consume_or_return_option!(
             effects,
-            self.evaluate_expression(abstract_state, &type_expression.right)
+            self.evaluate_expression(abstract_state, done_expressions, &type_expression.right)?
         );
 
-        let ty = pytype_consume_or_return!(
+        let ty = pytype_consume_or_return_option!(
             effects,
             match (left_ty, right_ty) {
                 (Type::Literal(left), Type::Literal(right)) => {
@@ -383,70 +475,91 @@ impl<'a> ConstraintSolver<'a> {
                     )
                 }
                 (Type::Any, _) | (_, Type::Any) => PyTypeEval::unknown(),
-                _ => PyTypeEval::unknown(),
+                _ => return None, // TODO: add support for unions, etc
             }
         );
 
-        PyTypeEval::new(ty, effects)
+        Some(PyTypeEval::new(ty, effects))
     }
 
     pub fn evaluate_expression(
         &self,
         abstract_state: &EvaluationState,
-        expression: &Expression,
-    ) -> PyTypeEval {
-        if let Some(eval) = abstract_state.evaluations.values.get(expression) {
-            return eval.clone();
+        done_expressions: LatticeSet<&Expression>,
+        expression: &Arc<Expression>,
+    ) -> Option<PyTypeEval> {
+        if done_expressions.contains(&expression.as_ref()) {
+            return None;
         }
 
-        match expression {
-            Expression::Variable(expression_variable) => {
-                self.evaluate_expression_variable(abstract_state, expression_variable)
-            }
-            Expression::Annotated(expression_annotated) => {
-                self.evaluate_expression_annotated(abstract_state, expression_annotated)
-            }
-            Expression::Override(_) => PyTypeEval::with_default_effects(Type::Never),
-            Expression::Function(expression_function) => {
-                self.evaluate_expression_function(abstract_state, expression_function)
-            }
-            Expression::Class(expression_class) => {
-                self.evaluate_expression_class(abstract_state, expression_class)
-            }
-            Expression::Import(_) => PyTypeEval::with_default_effects(Type::Never),
-            Expression::Attribute(_) => PyTypeEval::with_default_effects(Type::Never),
-            Expression::Subscript(_) => PyTypeEval::with_default_effects(Type::Never),
+        let new_done_expressions = done_expressions.update(expression);
+
+        if let Some(eval) = abstract_state.evaluations.values.get(expression) {
+            return self.resolve_expression_evaluations(
+                abstract_state,
+                new_done_expressions,
+                &eval,
+            );
+        }
+
+        match expression.as_ref() {
+            Expression::Variable(expression_variable) => self.evaluate_expression_variable(
+                abstract_state,
+                new_done_expressions,
+                expression_variable,
+            ),
+            Expression::Annotated(expression_annotated) => self.evaluate_expression_annotated(
+                abstract_state,
+                new_done_expressions,
+                expression_annotated,
+            ),
+            Expression::Override(_) => None,
+            Expression::Function(expression_function) => self.evaluate_expression_function(
+                abstract_state,
+                new_done_expressions,
+                expression_function,
+            ),
+            Expression::Class(expression_class) => self.evaluate_expression_class(
+                abstract_state,
+                new_done_expressions,
+                expression_class,
+            ),
+            Expression::Import(_) => None,
+            Expression::Attribute(_) => None,
+            Expression::Subscript(_) => None,
             Expression::Call(expression_call) => {
-                self.evaluate_expression_call(abstract_state, expression_call)
+                self.evaluate_expression_call(abstract_state, new_done_expressions, expression_call)
             }
-            Expression::Unary(_) => PyTypeEval::with_default_effects(Type::Never),
-            Expression::Binary(expression_binary) => {
-                self.evaluate_expression_binary(abstract_state, expression_binary)
-            }
-            Expression::LiteralInteger(literal_integer) => {
-                PyTypeEval::with_default_effects(Type::new_integer_literal(literal_integer.clone()))
-            }
-            Expression::LiteralFloat(literal_float) => {
-                PyTypeEval::with_default_effects(Type::new_float_literal(literal_float.clone()))
-            }
-            Expression::LiteralComplex(literal_complex) => {
-                PyTypeEval::with_default_effects(Type::new_complex_literal(literal_complex.clone()))
-            }
-            Expression::LiteralString(literal_string) => {
-                PyTypeEval::with_default_effects(Type::new_string_literal(literal_string.clone()))
-            }
-            Expression::LiteralBytes(literal_bytes) => {
-                PyTypeEval::with_default_effects(Type::new_bytes_literal(literal_bytes.clone()))
-            }
-            Expression::LiteralBoolean(literal_boolean) => {
-                PyTypeEval::with_default_effects(Type::new_boolean_literal(literal_boolean.clone()))
-            }
-            Expression::LiteralNone => {
-                PyTypeEval::with_default_effects(Type::new_literal(TypeLiteral::None))
-            }
-            Expression::LiteralEllipsis => {
-                PyTypeEval::with_default_effects(Type::new_literal(TypeLiteral::Ellipsis))
-            }
+            Expression::Unary(_) => None,
+            Expression::Binary(expression_binary) => self.evaluate_expression_binary(
+                abstract_state,
+                new_done_expressions,
+                expression_binary,
+            ),
+            Expression::LiteralInteger(literal_integer) => Some(PyTypeEval::with_default_effects(
+                Type::new_integer_literal(literal_integer.clone()),
+            )),
+            Expression::LiteralFloat(literal_float) => Some(PyTypeEval::with_default_effects(
+                Type::new_float_literal(literal_float.clone()),
+            )),
+            Expression::LiteralComplex(literal_complex) => Some(PyTypeEval::with_default_effects(
+                Type::new_complex_literal(literal_complex.clone()),
+            )),
+            Expression::LiteralString(literal_string) => Some(PyTypeEval::with_default_effects(
+                Type::new_string_literal(literal_string.clone()),
+            )),
+            Expression::LiteralBytes(literal_bytes) => Some(PyTypeEval::with_default_effects(
+                Type::new_bytes_literal(literal_bytes.clone()),
+            )),
+            Expression::LiteralBoolean(literal_boolean) => Some(PyTypeEval::with_default_effects(
+                Type::new_boolean_literal(literal_boolean.clone()),
+            )),
+            Expression::LiteralNone => Some(PyTypeEval::with_default_effects(Type::new_literal(
+                TypeLiteral::None,
+            ))),
+            Expression::LiteralEllipsis => Some(PyTypeEval::with_default_effects(
+                Type::new_literal(TypeLiteral::Ellipsis),
+            )),
         }
     }
 
@@ -459,14 +572,25 @@ impl<'a> ConstraintSolver<'a> {
             .evaluations
             .values
             .get(&type_constraint.right);
-        let new_eval = self.evaluate_expression(abstract_state, &type_constraint.left);
+
+        let expression_eval = match self.evaluate_expression(
+            abstract_state,
+            LatticeSet::default(),
+            &type_constraint.left,
+        ) {
+            Some(type_eval) => ExpressionEval::new(type_eval, LatticeSet::default()),
+            None => ExpressionEval::new(
+                PyTypeEval::never(),
+                LatticeSet::unit(type_constraint.left.clone()),
+            ),
+        };
 
         abstract_state.evaluations.values.insert(
             type_constraint.right.clone(),
             if let Some(previous_eval) = previous_eval {
-                previous_eval.join(&new_eval)
+                previous_eval.join(&expression_eval)
             } else {
-                new_eval
+                expression_eval
             },
         );
     }
@@ -504,40 +628,54 @@ impl GraphAnalyser for ConstraintSolver<'_> {
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
-        debug!("[{}] Analysing {}", self.program_entity_node, node);
+        debug!("[{}] Analysing {}", self.program_entity, node);
 
         let mut abstract_state = analysis_state.clone_abstract_state_or_default(&node);
 
         match &node {
             ConstraintNode::Entry => {
                 for (variable, expressions) in self.specification.arguments.as_ref() {
-                    let mut ty = PyTypeEval::never();
-
-                    for expression in expressions.as_ref() {
-                        ty = ty.join(&self.evaluate_expression(&mut abstract_state, expression));
-                    }
+                    let expression_evals =
+                        expressions
+                            .iter()
+                            .fold(ExpressionEval::default(), |acc, expression| {
+                                acc.join(&match self.evaluate_expression(
+                                    &abstract_state,
+                                    LatticeSet::default(),
+                                    &Arc::new(expression.clone()),
+                                ) {
+                                    Some(type_eval) => {
+                                        ExpressionEval::new(type_eval, LatticeSet::default())
+                                    }
+                                    None => ExpressionEval::new(
+                                        PyTypeEval::never(),
+                                        LatticeSet::unit(Arc::new(expression.clone())),
+                                    ),
+                                })
+                            });
 
                     abstract_state.defined_variables.names.insert(
                         variable.name.clone(),
                         imbl::OrdSet::unit(variable.location.clone()),
                     );
-                    abstract_state
-                        .evaluations
-                        .insert(Arc::new(Expression::Variable(variable.clone())), ty);
+
+                    abstract_state.evaluations.insert(
+                        Arc::new(Expression::Variable(variable.clone())),
+                        expression_evals,
+                    );
                 }
             }
             ConstraintNode::TypeConstraint(constraint) => {
                 self.evaluate_type_constraint(&mut abstract_state, constraint)
             }
-            ConstraintNode::DefinedVariableConstraint(constraint) => {
+            ConstraintNode::DefinedVariableConstraint(expression) => {
                 abstract_state.defined_variables.names.insert(
-                    constraint.name.clone(),
-                    imbl::OrdSet::unit(constraint.location.clone()),
+                    expression.name.clone(),
+                    imbl::OrdSet::unit(expression.location.clone()),
                 );
             }
-            ConstraintNode::ReturnConstraint(constraint) => {
-                let return_eval = self.evaluate_expression(&abstract_state, constraint.as_ref());
-                abstract_state.return_value = return_eval.value;
+            ConstraintNode::ReturnConstraint(expression) => {
+                abstract_state.return_value = LatticeSet::unit(expression.clone());
             }
             _ => {}
         }
@@ -672,7 +810,7 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
 
         let solver_state = analysis(
             &ConstraintSolver::new(
-                &node,
+                &entity,
                 &abstract_environment.specification,
                 &abstract_environment.constraint_graph,
                 &previous_state.clone().union(self.state.clone()),
@@ -855,13 +993,13 @@ mod tests {
     use super::*;
     use crate::abstract_environment::BUILTINS_MODULE;
     use crate::constraints::{
-        CfgImporter, ConstraintsBuilder, ExpressionVariable, ModuleName, ProgramEntity,
-        ProgramEntityKind, QualifiedLocation, analyse_program,
+        CfgImporter, ConstraintsBuilder, ModuleName, ProgramEntity, ProgramEntityKind,
+        QualifiedLocation, analyse_program,
     };
     use apy::v1::QualifiedName;
-    use apygen_analysis::analysis;
     use apygen_analysis::cfg::{Cfg, ProgramPoint};
     use apygen_analysis::log::LogAnalysisObserver;
+    use apygen_analysis::{DummyAnalysisObserver, analysis};
     use indoc::indoc;
     use rstest::rstest;
     use std::collections::{HashMap, HashSet};
@@ -883,10 +1021,10 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        a@{module[4:4]} = 42
-        a@{module[6:4]} = 67
-        b@{module[8:0]} = Union[42, 67]
-        x@{module[1:0]} = True
+        a@{module[4:4]} = (42 ➤ ({} - Pure - Total))
+        a@{module[6:4]} = (67 ➤ ({} - Pure - Total))
+        b@{module[8:0]} = (Union[42, 67] ➤ ({} - Pure - Total))
+        x@{module[1:0]} = (True ➤ ({} - Pure - Total))
         "##},
     )]
     #[case::simple_while_statement(
@@ -899,9 +1037,9 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        a@{module[1:0]} = 0
-        a@{module[4:4]} = Any
-        b@{module[6:0]} = Any
+        a@{module[1:0]} = (0 ➤ ({} - Pure - Total))
+        a@{module[4:4]} = (1 ➤ ({} - Pure - Total)) ⊔ #deferred{(a@{module[4:8]}) + (1)}
+        b@{module[6:0]} = (Union[0, 1] ➤ ({} - Pure - Total)) ⊔ #deferred{a@{module[6:4]}}
         "##},  // TODO: fix this when operations are implemented
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
@@ -917,26 +1055,25 @@ mod tests {
 
         let constraints_builder = ConstraintsBuilder::new(&cfg, &entity, None);
 
-        let analysis_state = analysis(&constraints_builder, &mut LogAnalysisObserver::default())
+        let analysis_state = analysis(&constraints_builder, &mut DummyAnalysisObserver)
             .expect("Should build constraints");
 
         let exit_state = &analysis_state.abstract_states[&ProgramPoint::Exit];
-
-        let program_entity_node = ProgramEntityNode::Entity(entity);
 
         let specification = AbstractEnvironmentSpecification::default();
 
         let state = LatticeMap::default();
 
         let solver = ConstraintSolver::new(
-            &program_entity_node,
+            &entity,
             &specification,
             &exit_state.constraint_graph,
             &state,
         );
 
-        let types = analysis(&solver, &mut DummyAnalysisObserver).expect("analysis should work");
-
+        let types =
+            analysis(&solver, &mut LogAnalysisObserver::default()).expect("analysis should work");
+        println!("{}", types.evaluation_states[&ConstraintNode::TypeExit]);
         let actual_types: String = types.evaluation_states[&ConstraintNode::TypeExit]
             .variables()
             .map(|(expression_variable, ty)| format!("{} = {}\n", expression_variable.clone(), ty))
@@ -970,18 +1107,18 @@ mod tests {
         "##},
         indoc! {r##"
         builtins:
-            int@{builtins[1:6]} = class(builtins[1:6])
-            #return = Never
+            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
+            #return = {}
         builtins[1:6]:
-            #return = Never
+            #return = {}
         module:
-            add_two@{module[1:4]} = function(module[1:4])
-            result@{module[4:0]} = Any
-            #return = Never
+            add_two@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
+            result@{module[4:0]} = (Never ➤ ({} - Pure - Total)) ⊔ #deferred{(add_two@{module[4:9]})(42, 67)}
+            #return = {}
         module[1:4]:
-            a@{module[1:12]} = @class(builtins[1:6])
-            b@{module[1:20]} = Never
-            #return = Never
+            a@{module[1:12]} = (@class(builtins[1:6]) ➤ ({} - Pure - Total))
+            b@{module[1:20]} = (Never ➤ ({} - Pure - Total))
+            #return = {(a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]})}
         "##},
     )]
     fn test_program_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
