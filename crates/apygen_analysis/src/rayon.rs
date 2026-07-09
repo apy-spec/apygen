@@ -1,4 +1,4 @@
-use crate::GraphAnalyser;
+use crate::{AnalysisObserver, GraphAnalyser};
 use rayon::prelude::*;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -9,19 +9,19 @@ pub fn par_analysis<
     A: Sync,
     E: Send,
     T: Send + Sync + GraphAnalyser<Node = N, AbstractState = S, AnalysisState = A, Error = E>,
+    O: AnalysisObserver<N, A>,
 >(
     analyser: &T,
+    observer: &mut O,
 ) -> Result<A, E> {
     let mut analysis_state = analyser.initialise_analysis_state()?;
 
-    let mut analysis_metadata = analyser.initialise_analysis_metadata()?;
-
     let mut worklist = BTreeSet::from_iter(analyser.entry_nodes()?);
 
-    analyser.before_analysis(&mut analysis_metadata, &analysis_state, &worklist)?;
+    observer.before_analysis(&analysis_state, &worklist);
 
     loop {
-        analyser.before_iteration(&mut analysis_metadata, &analysis_state, &worklist)?;
+        observer.before_iteration(&analysis_state, &worklist);
 
         if worklist.is_empty() {
             break;
@@ -32,13 +32,13 @@ pub fn par_analysis<
             .map(|node| {
                 let mut new_abstract_states = BTreeMap::new();
 
-                let abstract_state = analyser.analyse_node(&analysis_state, node.clone())?;
+                let abstract_state = analyser.analyse_node(&analysis_state, &node)?;
 
                 for next_node in analyser.next_nodes(&node)? {
                     let Some(updated_abstract_state) = analyser.update_abstract_state(
                         &analysis_state,
-                        node.clone(),
-                        next_node.clone(),
+                        &node,
+                        &next_node,
                         &abstract_state,
                     )?
                     else {
@@ -46,11 +46,11 @@ pub fn par_analysis<
                     };
 
                     let (should_update, new_abstract_state) =
-                        match analyser.get_abstract_state(&analysis_state, &next_node)? {
+                        match analyser.get_abstract_state(&analysis_state, next_node)? {
                             Some(next_node_abstract_state) => {
                                 let new_abstract_state = analyser.merge(
                                     &analysis_state,
-                                    next_node.clone(),
+                                    &next_node,
                                     &next_node_abstract_state,
                                     &updated_abstract_state,
                                 )?;
@@ -81,7 +81,7 @@ pub fn par_analysis<
                                 let entry = entry.into_mut();
                                 *entry = analyser.merge(
                                     &analysis_state,
-                                    next_node.clone(),
+                                    &next_node,
                                     entry,
                                     &new_state,
                                 )?
@@ -94,18 +94,14 @@ pub fn par_analysis<
 
         worklist = BTreeSet::new();
         for (next_node, new_abstract_state) in new_states {
-            analyser.set_abstract_state(
-                &mut analysis_state,
-                next_node.clone(),
-                new_abstract_state,
-            )?;
+            analyser.set_abstract_state(&mut analysis_state, &next_node, new_abstract_state)?;
             worklist.insert(next_node.clone());
         }
 
-        analyser.after_iteration(&mut analysis_metadata, &analysis_state, &worklist)?;
+        observer.after_iteration(&analysis_state, &worklist);
     }
 
-    analyser.after_analysis(&mut analysis_metadata, &analysis_state, &worklist)?;
+    observer.after_analysis(&analysis_state, &worklist);
 
     Ok(analysis_state)
 }

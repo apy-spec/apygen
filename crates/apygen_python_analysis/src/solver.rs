@@ -18,7 +18,8 @@ use crate::is_type_unreachable;
 use crate::{pytype_consume_or_return, pytype_return_unreachable};
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::lattice::Lattice;
-use apygen_analysis::{GraphAnalyser, analysis};
+use apygen_analysis::log::LogAnalysisObserver;
+use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use log::{debug, info};
 use std::collections::BTreeSet;
 use std::convert::Infallible;
@@ -447,42 +448,7 @@ impl GraphAnalyser for ConstraintSolver<'_> {
     type Node = ConstraintNode;
     type AbstractState = EvaluationState;
     type AnalysisState = SolverState;
-    type Metadata = (usize, Instant);
     type Error = Infallible;
-
-    fn initialise_analysis_metadata(&self) -> Result<Self::Metadata, Self::Error> {
-        Ok((0, Instant::now()))
-    }
-    fn before_iteration(
-        &self,
-        metadata: &mut Self::Metadata,
-        _state: &Self::AnalysisState,
-        worklist: &BTreeSet<Self::Node>,
-    ) -> Result<(), Self::Error> {
-        info!(
-            "[{}] Iteration {} (Worklist size: {})",
-            self.program_entity_node,
-            metadata.0,
-            worklist.len(),
-        );
-        Ok(())
-    }
-    fn after_iteration(
-        &self,
-        metadata: &mut Self::Metadata,
-        _state: &Self::AnalysisState,
-        _worklist: &BTreeSet<Self::Node>,
-    ) -> Result<(), Self::Error> {
-        debug!(
-            "[{}] Iteration {} done  (after {:?})",
-            self.program_entity_node,
-            metadata.0,
-            metadata.1.elapsed()
-        );
-        metadata.0 += 1;
-        metadata.1 = Instant::now();
-        Ok(())
-    }
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
         Ok(std::iter::once(ConstraintNode::Entry))
@@ -508,7 +474,7 @@ impl GraphAnalyser for ConstraintSolver<'_> {
     fn analyse_node(
         &self,
         analysis_state: &Self::AnalysisState,
-        node: Self::Node,
+        node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
         debug!("[{}] Analysing {}", self.program_entity_node, node);
 
@@ -553,9 +519,9 @@ impl GraphAnalyser for ConstraintSolver<'_> {
 
     fn update_abstract_state(
         &self,
-        analysis_state: &Self::AnalysisState,
-        from: Self::Node,
-        to: Self::Node,
+        _analysis_state: &Self::AnalysisState,
+        _from: &Self::Node,
+        _to: &Self::Node,
         abstract_state: &Self::AbstractState,
     ) -> Result<Option<Self::AbstractState>, Self::Error> {
         Ok(Some(abstract_state.clone()))
@@ -572,19 +538,19 @@ impl GraphAnalyser for ConstraintSolver<'_> {
     fn set_abstract_state(
         &self,
         analysis_state: &mut Self::AnalysisState,
-        node: Self::Node,
+        node: &Self::Node,
         abstract_state: Self::AbstractState,
     ) -> Result<(), Self::Error> {
         analysis_state
             .evaluation_states
-            .insert(node, abstract_state);
+            .insert(node.clone(), abstract_state);
         Ok(())
     }
 
     fn merge(
         &self,
-        analysis_state: &Self::AnalysisState,
-        node: Self::Node,
+        _analysis_state: &Self::AnalysisState,
+        _node: &Self::Node,
         left: &Self::AbstractState,
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
@@ -633,42 +599,7 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
     type Node = ProgramEntityNode;
     type AbstractState = LatticeMap<QualifiedLocation, ExitEvaluationStates>;
     type AnalysisState = ProgramEntitySolverState;
-    type Metadata = (usize, Instant);
     type Error = Infallible;
-
-    fn initialise_analysis_metadata(&self) -> Result<Self::Metadata, Self::Error> {
-        Ok((0, Instant::now()))
-    }
-    fn before_iteration(
-        &self,
-        metadata: &mut Self::Metadata,
-        _state: &Self::AnalysisState,
-        worklist: &BTreeSet<Self::Node>,
-    ) -> Result<(), Self::Error> {
-        info!(
-            "[{}] Iteration {} (Worklist size: {})",
-            self.module_node,
-            metadata.0,
-            worklist.len()
-        );
-        Ok(())
-    }
-    fn after_iteration(
-        &self,
-        metadata: &mut Self::Metadata,
-        _state: &Self::AnalysisState,
-        _worklist: &BTreeSet<Self::Node>,
-    ) -> Result<(), Self::Error> {
-        debug!(
-            "[{}] Iteration {} done (after {:?})",
-            self.module_node,
-            metadata.0,
-            metadata.1.elapsed()
-        );
-        metadata.0 += 1;
-        metadata.1 = Instant::now();
-        Ok(())
-    }
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
         Ok(std::iter::once(ProgramEntityNode::Entry))
@@ -695,7 +626,7 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
     fn analyse_node(
         &self,
         analysis_state: &Self::AnalysisState,
-        node: Self::Node,
+        node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
         debug!("[{}] Analysing {}", self.module_node, node);
 
@@ -711,12 +642,15 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
 
         let abstract_environment = self.graph.nodes.get(&node).unwrap();
 
-        let solver_state = analysis(&ConstraintSolver::new(
-            &node,
-            &abstract_environment.specification,
-            &abstract_environment.constraint_graph,
-            &previous_state.clone().union(self.state.clone()),
-        ))?;
+        let solver_state = analysis(
+            &ConstraintSolver::new(
+                &node,
+                &abstract_environment.specification,
+                &abstract_environment.constraint_graph,
+                &previous_state.clone().union(self.state.clone()),
+            ),
+            &mut LogAnalysisObserver::with_prefix(node.to_string()),
+        )?;
 
         Ok(previous_state.update(
             entity.location.clone(),
@@ -737,9 +671,9 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
 
     fn update_abstract_state(
         &self,
-        analysis_state: &Self::AnalysisState,
-        from: Self::Node,
-        to: Self::Node,
+        _analysis_state: &Self::AnalysisState,
+        _from: &Self::Node,
+        _to: &Self::Node,
         abstract_state: &Self::AbstractState,
     ) -> Result<Option<Self::AbstractState>, Self::Error> {
         Ok(Some(abstract_state.clone()))
@@ -756,17 +690,17 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
     fn set_abstract_state(
         &self,
         analysis_state: &mut Self::AnalysisState,
-        node: Self::Node,
+        node: &Self::Node,
         abstract_state: Self::AbstractState,
     ) -> Result<(), Self::Error> {
-        analysis_state.states.insert(node, abstract_state);
+        analysis_state.states.insert(node.clone(), abstract_state);
         Ok(())
     }
 
     fn merge(
         &self,
-        analysis_state: &Self::AnalysisState,
-        node: Self::Node,
+        _analysis_state: &Self::AnalysisState,
+        _node: &Self::Node,
         left: &Self::AbstractState,
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
@@ -795,40 +729,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
     type Node = ModuleNode;
     type AbstractState = LatticeMap<QualifiedLocation, ExitEvaluationStates>;
     type AnalysisState = ModuleSolverState;
-    type Metadata = (usize, Instant);
     type Error = Infallible;
-
-    fn initialise_analysis_metadata(&self) -> Result<Self::Metadata, Self::Error> {
-        Ok((0, Instant::now()))
-    }
-    fn before_iteration(
-        &self,
-        metadata: &mut Self::Metadata,
-        _state: &Self::AnalysisState,
-        worklist: &BTreeSet<Self::Node>,
-    ) -> Result<(), Self::Error> {
-        info!(
-            "Iteration {} (Worklist size: {})",
-            metadata.0,
-            worklist.len()
-        );
-        Ok(())
-    }
-    fn after_iteration(
-        &self,
-        metadata: &mut Self::Metadata,
-        _state: &Self::AnalysisState,
-        _worklist: &BTreeSet<Self::Node>,
-    ) -> Result<(), Self::Error> {
-        debug!(
-            "Iteration {} done (after {:?})",
-            metadata.0,
-            metadata.1.elapsed()
-        );
-        metadata.0 += 1;
-        metadata.1 = Instant::now();
-        Ok(())
-    }
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
         Ok(std::iter::once(ModuleNode::Entry))
@@ -855,7 +756,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
     fn analyse_node(
         &self,
         analysis_state: &Self::AnalysisState,
-        node: Self::Node,
+        node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
         debug!("Analysing {}", node);
 
@@ -867,11 +768,10 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 
         if let Some(dependent_graph) = self.graph.nodes.get(&node) {
             previous_state.extend(
-                analysis(&ProgramEntityConstraintSolver::new(
-                    &node,
-                    dependent_graph,
-                    &previous_state,
-                ))?
+                analysis(
+                    &ProgramEntityConstraintSolver::new(&node, dependent_graph, &previous_state),
+                    &mut LogAnalysisObserver::with_prefix(node.to_string()),
+                )?
                 .states[&ProgramEntityNode::Exit]
                     .values
                     .clone(),
@@ -883,9 +783,9 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 
     fn update_abstract_state(
         &self,
-        analysis_state: &Self::AnalysisState,
-        from: Self::Node,
-        to: Self::Node,
+        _analysis_state: &Self::AnalysisState,
+        _from: &Self::Node,
+        _to: &Self::Node,
         abstract_state: &Self::AbstractState,
     ) -> Result<Option<Self::AbstractState>, Self::Error> {
         Ok(Some(abstract_state.clone()))
@@ -902,17 +802,19 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
     fn set_abstract_state(
         &self,
         analysis_state: &mut Self::AnalysisState,
-        node: Self::Node,
+        node: &Self::Node,
         abstract_state: Self::AbstractState,
     ) -> Result<(), Self::Error> {
-        analysis_state.solver_states.insert(node, abstract_state);
+        analysis_state
+            .solver_states
+            .insert(node.clone(), abstract_state);
         Ok(())
     }
 
     fn merge(
         &self,
-        analysis_state: &Self::AnalysisState,
-        node: Self::Node,
+        _analysis_state: &Self::AnalysisState,
+        _node: &Self::Node,
         left: &Self::AbstractState,
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
@@ -931,6 +833,7 @@ mod tests {
     use apy::v1::QualifiedName;
     use apygen_analysis::analysis;
     use apygen_analysis::cfg::{Cfg, ProgramPoint};
+    use apygen_analysis::log::LogAnalysisObserver;
     use indoc::indoc;
     use rstest::rstest;
     use std::collections::{HashMap, HashSet};
@@ -986,7 +889,8 @@ mod tests {
 
         let constraints_builder = ConstraintsBuilder::new(&cfg, &entity, None);
 
-        let analysis_state = analysis(&constraints_builder).expect("Should build constraints");
+        let analysis_state = analysis(&constraints_builder, &mut LogAnalysisObserver::default())
+            .expect("Should build constraints");
 
         let exit_state = &analysis_state.abstract_states[&ProgramPoint::Exit];
 
@@ -1003,7 +907,7 @@ mod tests {
             &state,
         );
 
-        let types = analysis(&solver).expect("analysis should work");
+        let types = analysis(&solver, &mut DummyAnalysisObserver).expect("analysis should work");
 
         let actual_types: String = types.evaluation_states[&ConstraintNode::TypeExit]
             .variables()
@@ -1071,7 +975,7 @@ mod tests {
 
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-        let state = analysis(&solver)
+        let state = analysis(&solver, &mut LogAnalysisObserver::default())
             .expect("analysis should work")
             .solver_states[&ModuleNode::Exit]
             .clone();

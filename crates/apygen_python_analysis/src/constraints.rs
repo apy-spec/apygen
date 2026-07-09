@@ -9,7 +9,7 @@ use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
 use apygen_analysis::cfg::nodes::Number;
 use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint, Ranged, TextRange, nodes};
 use apygen_analysis::lattice::Lattice;
-use apygen_analysis::{GraphAnalyser, analysis};
+use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use apygen_finder::filesystem::Filesystem;
 use apygen_finder::pathfinder::FinderSpec;
 use imbl::ordmap::Entry;
@@ -2488,31 +2488,24 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
     type Node = ProgramPoint;
     type AbstractState = ProgramEntityAbstractEnvironment;
     type AnalysisState = ProgramEntityAnalysisState;
-    type Metadata = ();
     type Error = ConstraintsBuilderError;
-
-    fn initialise_analysis_metadata(&self) -> Result<Self::Metadata, Self::Error> {
-        Ok(())
-    }
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
         Ok(std::iter::once(ProgramPoint::Entry))
     }
-    fn next_nodes(
-        &self,
-        program_point: &ProgramPoint,
-    ) -> Result<impl Iterator<Item = &ProgramPoint>, ConstraintsBuilderError> {
-        match self.cfg.successors(program_point) {
+    fn next_nodes<'a>(
+        &'a self,
+        node: &'a Self::Node,
+    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
+        match self.cfg.successors(node) {
             Some(successors) => Ok(successors),
             None => Err(ConstraintsBuilderError::InvalidProgramPoint {
-                program_point: program_point.clone(),
+                program_point: *node,
             }),
         }
     }
 
-    fn initialise_analysis_state(
-        &self,
-    ) -> Result<ProgramEntityAnalysisState, ConstraintsBuilderError> {
+    fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
         let mut analysis_state = ProgramEntityAnalysisState::new();
 
         let mut entry_state = ProgramEntityAbstractEnvironment::default();
@@ -2541,28 +2534,28 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 
     fn analyse_node(
         &self,
-        namespace: &ProgramEntityAnalysisState,
-        program_point: ProgramPoint,
-    ) -> Result<ProgramEntityAbstractEnvironment, ConstraintsBuilderError> {
-        if let Some(NodeData::Statement(statement_data)) = self.cfg.node_data(&program_point) {
-            self.evaluate_stmt(namespace, program_point, statement_data.statement())
+        analysis_state: &Self::AnalysisState,
+        node: &Self::Node,
+    ) -> Result<Self::AbstractState, Self::Error> {
+        if let Some(NodeData::Statement(statement_data)) = self.cfg.node_data(node) {
+            self.evaluate_stmt(analysis_state, *node, statement_data.statement())
         } else {
-            Ok(namespace.clone_abstract_environment_or_default(program_point))
+            Ok(analysis_state.clone_abstract_environment_or_default(*node))
         }
     }
 
     fn update_abstract_state(
         &self,
-        _namespace: &ProgramEntityAnalysisState,
-        from: ProgramPoint,
-        to: ProgramPoint,
-        abstract_environment: &ProgramEntityAbstractEnvironment,
-    ) -> Result<Option<ProgramEntityAbstractEnvironment>, ConstraintsBuilderError> {
-        let Some(edge_datas) = self.cfg.edge_data(from, to) else {
+        _analysis_state: &Self::AnalysisState,
+        from: &Self::Node,
+        to: &Self::Node,
+        abstract_state: &Self::AbstractState,
+    ) -> Result<Option<Self::AbstractState>, Self::Error> {
+        let Some(edge_datas) = self.cfg.edge_data(*from, *to) else {
             return Ok(None);
         };
 
-        let mut target_abstract_environment = abstract_environment.clone();
+        let mut target_abstract_environment = abstract_state.clone();
 
         target_abstract_environment.current_nodes = target_abstract_environment
             .current_nodes
@@ -2576,7 +2569,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
             })
             .collect();
 
-        if to == ProgramPoint::Exit {
+        if *to == ProgramPoint::Exit {
             for (from, guard) in target_abstract_environment.current_nodes.as_ref() {
                 match guard {
                     Guard::Raise { .. } if edge_datas.contains(&EdgeData::UnhandledException) => {
@@ -2618,31 +2611,29 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 
     fn get_abstract_state<'a>(
         &self,
-        namespace: &'a ProgramEntityAnalysisState,
-        program_point: &ProgramPoint,
-    ) -> Result<Option<&'a ProgramEntityAbstractEnvironment>, ConstraintsBuilderError> {
-        Ok(namespace.abstract_states.get(program_point))
+        analysis_state: &'a Self::AnalysisState,
+        node: &Self::Node,
+    ) -> Result<Option<&'a Self::AbstractState>, Self::Error> {
+        Ok(analysis_state.abstract_states.get(node))
     }
 
     fn set_abstract_state(
         &self,
-        namespace: &mut ProgramEntityAnalysisState,
-        program_point: ProgramPoint,
-        abstract_environment: ProgramEntityAbstractEnvironment,
-    ) -> Result<(), ConstraintsBuilderError> {
-        namespace
-            .abstract_states
-            .insert(program_point, abstract_environment);
+        analysis_state: &mut Self::AnalysisState,
+        node: &Self::Node,
+        abstract_state: Self::AbstractState,
+    ) -> Result<(), Self::Error> {
+        analysis_state.abstract_states.insert(*node, abstract_state);
         Ok(())
     }
 
     fn merge(
         &self,
-        _namespace: &ProgramEntityAnalysisState,
-        _program_point: ProgramPoint,
-        left: &ProgramEntityAbstractEnvironment,
-        right: &ProgramEntityAbstractEnvironment,
-    ) -> Result<ProgramEntityAbstractEnvironment, ConstraintsBuilderError> {
+        _analysis_state: &Self::AnalysisState,
+        _node: &Self::Node,
+        left: &Self::AbstractState,
+        right: &Self::AbstractState,
+    ) -> Result<Self::AbstractState, Self::Error> {
         Ok(left.join(right))
     }
 }
@@ -2840,8 +2831,8 @@ pub fn analyse_cfg<'a>(
     let constraint_builder =
         ConstraintsBuilder::new(cfg, entity, program_entity_analysis_parent_state);
 
-    let program_entity_analysis_state =
-        analysis(&constraint_builder).expect("constraint builder should work");
+    let program_entity_analysis_state = analysis(&constraint_builder, &mut DummyAnalysisObserver)
+        .expect("constraint builder should work");
 
     let program_entity_node = ProgramEntityNode::Entity(entity.clone());
     let program_entity_exit_abstract_state =
@@ -3892,8 +3883,8 @@ mod tests {
 
         let constraints_builder = ConstraintsBuilder::new(&cfg, &entity, None);
 
-        let analysis_state =
-            analysis(&constraints_builder).expect("constraint builder should work");
+        let analysis_state = analysis(&constraints_builder, &mut DummyAnalysisObserver)
+            .expect("constraint builder should work");
 
         let exit_state = analysis_state
             .abstract_states
