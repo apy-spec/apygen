@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 
 pub mod lattice;
 pub mod namespace;
+pub mod rayon;
 
 pub trait GraphAnalyser {
     type Node;

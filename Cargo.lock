@@ -112,6 +112,7 @@ name = "apygen_analysis"
 version = "0.1.0"
 dependencies = [
  "apygen_cfg",
+ "rayon",
 ]
 
 [[package]]
