@@ -1,5 +1,6 @@
 use crate::analysis::lattice::ContextualLattice;
 use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
+use crate::constraints::QualifiedLocation;
 pub use apy::OneOrMany;
 pub use apy::v1::{GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName};
 use apygen_analysis::lattice::{Lattice, OrdLattice};
@@ -14,7 +15,6 @@ use std::hash::Hash;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 use std::sync::Arc;
 use thiserror::Error;
-use crate::constraints::QualifiedLocation;
 
 pub const BUILTINS_MODULE: &str = "builtins";
 pub const TYPES_MODULE: &str = "types";
@@ -346,6 +346,8 @@ pub struct ClassType {
     pub name: Arc<Identifier>,
 
     pub location: Location<QualifiedName>,
+
+    pub qualified_location: QualifiedLocation,
 
     pub generics: imbl::OrdMap<String, GenericType>,
 
@@ -824,7 +826,7 @@ impl LiteralString {
 
 impl Display for LiteralString {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.value)
+        write!(f, "\"{}\"", self.value)
     }
 }
 
@@ -835,9 +837,14 @@ pub struct LiteralBytes {
 
 impl Display for LiteralBytes {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        for element in &self.value {
-            write!(f, "{:02X}", element)?;
+        write!(f, "b\"")?;
+        for (i, element) in self.value.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "\\x{:02X}", element)?;
         }
+        write!(f, "\"")?;
         Ok(())
     }
 }
@@ -845,6 +852,19 @@ impl Display for LiteralBytes {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralList {
     pub value: imbl::Vector<Arc<TypeLiteral>>,
+}
+
+impl Display for LiteralList {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[")?;
+        for (i, element) in self.value.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", element)?;
+        }
+        write!(f, "]")
+    }
 }
 
 impl StructuralDepth for LiteralList {
@@ -858,6 +878,15 @@ pub struct LiteralTuple {
     pub value: imbl::Vector<Arc<TypeLiteral>>,
 }
 
+impl Display for LiteralTuple {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(")?;
+        for element in &self.value {
+            write!(f, "{},", element)?;
+        }
+        write!(f, ")")
+    }
+}
 impl StructuralDepth for LiteralTuple {
     fn depth(&self) -> usize {
         1 + self.value.depth()
@@ -884,6 +913,28 @@ pub enum TypeLiteralKey {
     TypeAlias(LiteralTypeAlias),
     Generic(LiteralGeneric),
     ImportedModule(LiteralImportedModule),
+}
+
+impl Display for TypeLiteralKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeLiteralKey::Integer(literal) => write!(f, "{}", literal),
+            TypeLiteralKey::Boolean(literal) => write!(f, "{}", literal),
+            TypeLiteralKey::Float(literal) => write!(f, "{}", literal),
+            TypeLiteralKey::Complex(literal) => write!(f, "{}", literal),
+            TypeLiteralKey::String(literal) => write!(f, "{}", literal),
+            TypeLiteralKey::Bytes(literal) => write!(f, "{}", literal),
+            TypeLiteralKey::None => write!(f, "None"),
+            TypeLiteralKey::Ellipsis => write!(f, "..."),
+            TypeLiteralKey::Tuple(literal) => write!(f, "{}", literal),
+            TypeLiteralKey::Function(literal) => write!(f, "{}", literal),
+            TypeLiteralKey::OverloadedFunction(literal) => write!(f, "{}", literal),
+            TypeLiteralKey::Class(literal) => write!(f, "{}", literal),
+            TypeLiteralKey::TypeAlias(literal) => write!(f, "{}", literal),
+            TypeLiteralKey::Generic(literal) => write!(f, "{}", literal),
+            TypeLiteralKey::ImportedModule(literal) => write!(f, "{}", literal),
+        }
+    }
 }
 
 impl StructuralDepth for TypeLiteralKey {
@@ -915,6 +966,20 @@ pub struct LiteralDict {
     pub values: imbl::Vector<(Arc<TypeLiteralKey>, Arc<TypeLiteral>)>,
 }
 
+impl Display for LiteralDict {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{")?;
+        for (i, (key, value)) in self.values.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+
+            write!(f, "{}: {}", key, value)?;
+        }
+        write!(f, "}}")
+    }
+}
+
 impl StructuralDepth for LiteralDict {
     fn depth(&self) -> usize {
         1 + self
@@ -931,6 +996,12 @@ pub struct LiteralFunction {
     pub value: Arc<FunctionType>,
 }
 
+impl Display for LiteralFunction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#function({})", self.value.qualified_location)
+    }
+}
+
 impl StructuralDepth for LiteralFunction {
     fn depth(&self) -> usize {
         self.value.depth()
@@ -940,6 +1011,20 @@ impl StructuralDepth for LiteralFunction {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralOverloadedFunction {
     pub value: Arc<OverloadedFunctionType>,
+}
+
+impl Display for LiteralOverloadedFunction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if let Some(target) = &self.value.target {
+            write!(
+                f,
+                "#overloaded_function({})",
+                target.value.qualified_location
+            )
+        } else {
+            write!(f, "#overloaded_function")
+        }
+    }
 }
 
 impl StructuralDepth for LiteralOverloadedFunction {
@@ -953,6 +1038,12 @@ pub struct LiteralClass {
     pub value: Arc<ClassType>,
 }
 
+impl Display for LiteralClass {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#class({})", self.value.qualified_location)
+    }
+}
+
 impl StructuralDepth for LiteralClass {
     fn depth(&self) -> usize {
         self.value.depth()
@@ -962,6 +1053,12 @@ impl StructuralDepth for LiteralClass {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralTypeAlias {
     pub value: Arc<TypeAliasType>,
+}
+
+impl Display for LiteralTypeAlias {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#type_alias({})", self.value.location)
+    }
 }
 
 impl StructuralDepth for LiteralTypeAlias {
@@ -975,6 +1072,12 @@ pub struct LiteralGeneric {
     pub value: Arc<GenericType>,
 }
 
+impl Display for LiteralGeneric {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#generic({})", self.value.location)
+    }
+}
+
 impl StructuralDepth for LiteralGeneric {
     fn depth(&self) -> usize {
         self.value.depth()
@@ -984,6 +1087,12 @@ impl StructuralDepth for LiteralGeneric {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralImportedModule {
     pub value: Arc<ImportedModuleType>,
+}
+
+impl Display for LiteralImportedModule {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#import({})", self.value.location)
+    }
 }
 
 impl StructuralDepth for LiteralImportedModule {
@@ -1046,86 +1155,43 @@ impl Display for TypeLiteral {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             TypeLiteral::Integer(literal_integer) => {
-                write!(f, "builtins.Literal[{}]", literal_integer)
+                write!(f, "{}", literal_integer)
             }
             TypeLiteral::Boolean(literal_boolean) => {
-                write!(f, "builtins.Literal[{}]", literal_boolean.value)
+                write!(f, "{}", literal_boolean)
             }
             TypeLiteral::Float(literal_float) => {
-                write!(f, "builtins.Literal[{}]", literal_float.value)
+                write!(f, "{}", literal_float)
             }
             TypeLiteral::Complex(literal_complex) => {
-                if literal_complex.value.im >= 0.0 {
-                    write!(
-                        f,
-                        "apy_extensions.Literal[{}+{}j]",
-                        literal_complex.value.re, literal_complex.value.im
-                    )
-                } else {
-                    write!(
-                        f,
-                        "apy_extensions.Literal[{}{}j]",
-                        literal_complex.value.re, literal_complex.value.im
-                    )
-                }
+                write!(f, "{}", literal_complex)
             }
             TypeLiteral::String(literal_string) => {
-                write!(f, "builtins.Literal[\"{}\"]", literal_string.value)
+                write!(f, "{}", literal_string)
             }
-            TypeLiteral::Bytes(literal_bytes) => write!(
-                f,
-                "apy_extensions.Literal[b\"{}\"]",
-                String::from_utf8_lossy(&literal_bytes.value.iter().cloned().collect::<Vec<u8>>())
-            ),
-            TypeLiteral::None => write!(f, "types.NoneType"),
-            TypeLiteral::Ellipsis => write!(f, "types.EllipsisType"),
-            TypeLiteral::List(literal_list) => write!(
-                f,
-                "apy_extensions.Literal[[{}]]",
-                literal_list
-                    .value
-                    .iter()
-                    .map(|element| element.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            TypeLiteral::Tuple(literal_tuple) => write!(
-                f,
-                "apy_extensions.Literal[({})]",
-                literal_tuple
-                    .value
-                    .iter()
-                    .map(|element| element.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            TypeLiteral::Dict(literal_dict) => write!(
-                f,
-                "apy_extensions.Literal[{{{}}}]",
-                literal_dict
-                    .values
-                    .iter()
-                    .map(|(key, value)| format!("{:?}: {}", key, value))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            TypeLiteral::Function(_) => {
-                write!(f, "types.FunctionType")
+            TypeLiteral::Bytes(literal_bytes) => write!(f, "{}", literal_bytes),
+            TypeLiteral::None => write!(f, "None"),
+            TypeLiteral::Ellipsis => write!(f, "..."),
+            TypeLiteral::List(literal_list) => write!(f, "{}", literal_list),
+            TypeLiteral::Tuple(literal_tuple) => write!(f, "{}", literal_tuple),
+            TypeLiteral::Dict(literal_dict) => write!(f, "{}", literal_dict),
+            TypeLiteral::Function(literal_function) => {
+                write!(f, "{}", literal_function)
             }
-            TypeLiteral::OverloadedFunction(_) => {
-                write!(f, "types.FunctionType")
+            TypeLiteral::OverloadedFunction(literal_overloaded_function) => {
+                write!(f, "{}", literal_overloaded_function)
             }
-            TypeLiteral::Class(_) => {
-                write!(f, "builtins.type")
+            TypeLiteral::Class(literal_class) => {
+                write!(f, "{}", literal_class)
             }
-            TypeLiteral::TypeAlias(_) => {
-                write!(f, "builtins.type")
+            TypeLiteral::TypeAlias(literal_type_alias) => {
+                write!(f, "{}", literal_type_alias)
             }
-            TypeLiteral::Generic(_) => {
-                write!(f, "builtins.type")
+            TypeLiteral::Generic(literal_generic) => {
+                write!(f, "{}", literal_generic)
             }
-            TypeLiteral::ImportedModule(_) => {
-                write!(f, "types.ModuleType")
+            TypeLiteral::ImportedModule(literal_imported_module) => {
+                write!(f, "{}", literal_imported_module)
             }
         }
     }

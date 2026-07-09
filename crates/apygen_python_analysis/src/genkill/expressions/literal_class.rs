@@ -255,6 +255,7 @@ mod tests {
         AbstractEnvironment, Attribute, ClassType, LiteralClass, LocalAttribute, Sourced, Type,
         TypeLiteral,
     };
+    use crate::constraints::QualifiedLocation;
     use crate::genkill::expressions::literal_class::method_resolution_order;
     use apy::v1::{Identifier, QualifiedName};
     use apygen_analysis::cfg::ProgramPoint;
@@ -325,6 +326,10 @@ mod tests {
                                 namespace_location: namespace_location.clone(),
                                 program_point: current_point,
                             },
+                            qualified_location: QualifiedLocation::new(
+                                namespace_location.module.clone(),
+                                Default::default(),
+                            ),
                             generics: OrdMap::new(),
                             bases: bases
                                 .iter()

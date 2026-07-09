@@ -259,6 +259,7 @@ impl<'a> ConstraintSolver<'a> {
                         QualifiedName::parse("todo"),
                     )),
                 ),
+                qualified_location: expression_class.location.clone(),
                 generics: Default::default(),
                 bases: Default::default(),
                 keyword_arguments: Default::default(),
@@ -951,10 +952,10 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        a@{module[4:4]} = builtins.Literal[42]
-        a@{module[6:4]} = builtins.Literal[67]
-        b@{module[8:0]} = Union[builtins.Literal[42], builtins.Literal[67]]
-        x@{module[1:0]} = builtins.Literal[true]
+        a@{module[4:4]} = 42
+        a@{module[6:4]} = 67
+        b@{module[8:0]} = Union[42, 67]
+        x@{module[1:0]} = True
         "##},
     )]
     #[case::simple_while_statement(
@@ -967,7 +968,7 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        a@{module[1:0]} = builtins.Literal[0]
+        a@{module[1:0]} = 0
         a@{module[4:4]} = Any
         b@{module[6:0]} = Any
         "##},  // TODO: fix this when operations are implemented
@@ -1037,16 +1038,16 @@ mod tests {
         "##},
         indoc! {r##"
         builtins:
-            int@{builtins[1:6]} = builtins.type
+            int@{builtins[1:6]} = #class(builtins[1:6])
             #return = Never
         builtins[1:6]:
             #return = Never
         module:
-            add_two@{module[1:4]} = types.FunctionType
+            add_two@{module[1:4]} = #function(module[1:4])
             result@{module[4:0]} = Any
             #return = Never
         module[1:4]:
-            a@{module[1:12]} = builtins.type
+            a@{module[1:12]} = #class(builtins[1:6])
             b@{module[1:20]} = Never
             #return = Never
         "##},

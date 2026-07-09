@@ -625,6 +625,10 @@ pub fn gen_class_def(
                     value: Arc::new(ClassType {
                         name: identifier,
                         location: location.clone(),
+                        qualified_location: QualifiedLocation::new(
+                            location.namespace_location.module.clone(),
+                            Default::default(),
+                        ),
                         generics: imbl::OrdMap::new(),
                         bases,
                         is_abstract: false,
