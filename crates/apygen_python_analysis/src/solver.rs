@@ -23,6 +23,7 @@ use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use log::{debug, info};
 use std::collections::BTreeSet;
 use std::convert::Infallible;
+use std::fmt::Display;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -63,6 +64,23 @@ pub struct EvaluationState {
     pub return_value: Type,
     pub raised_exceptions: RaisedExceptions,
     pub defined_variables: DefinedVariables,
+}
+
+impl Display for EvaluationState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(variables: {{")?;
+        for (i, (expression_variable, ty)) in self.variables().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{} = {}", expression_variable, ty)?;
+        }
+        write!(
+            f,
+            "}}, #return = {}, #raised = {})",
+            self.return_value, self.raised_exceptions
+        )
+    }
 }
 
 impl EvaluationState {
@@ -137,6 +155,16 @@ impl Lattice for SolverState {
 pub struct ExitEvaluationStates {
     pub type_evaluation_state: EvaluationState,
     pub exception_evaluation_state: EvaluationState,
+}
+
+impl Display for ExitEvaluationStates {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "(type: {}, exception: {})",
+            self.type_evaluation_state, self.exception_evaluation_state
+        )
+    }
 }
 
 impl Lattice for ExitEvaluationStates {
