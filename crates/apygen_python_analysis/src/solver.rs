@@ -1,17 +1,17 @@
 use crate::abstract_environment::{
-    ClassType, FunctionType, LiteralClass, LiteralFunction, RaisedExceptions, Type, TypeInstance2,
-    TypeLiteral,
+    BUILTINS_MODULE, ClassType, DEPTH_LIMIT, FunctionType, LiteralClass, LiteralFunction,
+    RaisedExceptions, StructuralDepth, StructuralWidth, TYPES_MODULE, Type, TypeInstance2,
+    TypeLiteral, TypeUnion, WIDTH_LIMIT,
 };
 use crate::constraints::{
-    AbstractEnvironmentSpecification, ConstraintGraph, ConstraintNode, DependentGraph, Expression,
-    ExpressionAnnotated, ExpressionBinary, ExpressionCall, ExpressionClass, ExpressionFunction,
-    ExpressionVariable, IncludeConstraint, LatticeMap, LatticeSet, ModuleNode, ProgramAnalysis,
-    ProgramEntity, ProgramEntityNode, QualifiedLocation, VariableName,
+    AbstractEnvironmentSpecification, BinaryOperator, ConstraintGraph, ConstraintNode,
+    DependentGraph, Expression, ExpressionAnnotated, ExpressionBinary, ExpressionCall,
+    ExpressionClass, ExpressionFunction, ExpressionVariable, IncludeConstraint, LatticeMap,
+    LatticeSet, ModuleName, ModuleNode, ProgramAnalysis, ProgramEntity, ProgramEntityNode,
+    QualifiedLocation, VariableName,
 };
 use crate::genkill::calls::Arguments;
-use crate::genkill::expressions::{
-    PyEffects, PyTypeEval, gen_expr, literal_class, literal_function, type_literal,
-};
+use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::{is_type_unreachable, pytype_consume_or_return_option};
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::lattice::Lattice;
@@ -236,6 +236,119 @@ impl<'a> ConstraintSolver<'a> {
         }
     }
 
+    pub fn get_variable_type(
+        &self,
+        module_name: &ModuleName,
+        name: &VariableName,
+    ) -> Option<TypeInstance2> {
+        if self.program_entity.location.module_name == *module_name {
+            return None;
+        }
+
+        let exit_states = self.state.get(&QualifiedLocation::new(
+            module_name.clone(),
+            imbl::Vector::new(),
+        ))?;
+
+        let locations = exit_states
+            .type_evaluation_state
+            .defined_variables
+            .names
+            .get(name)?;
+
+        let mut base = Type::Never;
+
+        for location in locations {
+            base = base.join(
+                &exit_states
+                    .type_evaluation_state
+                    .evaluations
+                    .get(&Expression::Variable(ExpressionVariable::new(
+                        name.clone(),
+                        location.clone(),
+                    )))?
+                    .type_eval
+                    .value,
+            );
+        }
+
+        if base == Type::Never {
+            return None;
+        }
+
+        Some(TypeInstance2 {
+            base: Arc::new(base),
+            arguments: imbl::Vector::new(),
+        })
+    }
+
+    pub fn as_type_instance(&self, ty: &TypeLiteral) -> Option<TypeInstance2> {
+        match ty {
+            TypeLiteral::Integer(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                &Arc::new(Identifier::parse("int")),
+            ),
+            TypeLiteral::Boolean(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                &Arc::new(Identifier::parse("bool")),
+            ),
+            TypeLiteral::Float(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                &Arc::new(Identifier::parse("float")),
+            ),
+            TypeLiteral::Complex(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                &Arc::new(Identifier::parse("complex")),
+            ),
+            TypeLiteral::String(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                &Arc::new(Identifier::parse("str")),
+            ),
+            TypeLiteral::Bytes(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                &Arc::new(Identifier::parse("bytes")),
+            ),
+            TypeLiteral::None => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+                &Arc::new(Identifier::parse("NoneType")),
+            ),
+            TypeLiteral::Ellipsis => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+                &Arc::new(Identifier::parse("EllipsisType")),
+            ),
+            TypeLiteral::List(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                &Arc::new(Identifier::parse("list")),
+            ),
+            TypeLiteral::Tuple(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                &Arc::new(Identifier::parse("tuple")),
+            ),
+            TypeLiteral::Dict(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                &Arc::new(Identifier::parse("dict")),
+            ),
+            TypeLiteral::Function(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+                &Arc::new(Identifier::parse("FunctionType")),
+            ),
+            TypeLiteral::OverloadedFunction(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+                &Arc::new(Identifier::parse("FunctionType")),
+            ),
+            TypeLiteral::Class(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                &Arc::new(Identifier::parse("type")),
+            ),
+            TypeLiteral::TypeAlias(_) => None,
+            TypeLiteral::Generic(_) => None,
+            TypeLiteral::ImportedModule(_) => self.get_variable_type(
+                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+                &Arc::new(Identifier::parse("ModuleType")),
+            ),
+        }
+    }
+
     pub fn resolve_expression_evaluations(
         &self,
         abstract_state: &EvaluationState,
@@ -447,7 +560,7 @@ impl<'a> ConstraintSolver<'a> {
         &self,
         abstract_state: &EvaluationState,
         done_expressions: LatticeSet<&Expression>,
-        type_expression: &ExpressionBinary,
+        expression_binary: &ExpressionBinary,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
 
@@ -456,27 +569,64 @@ impl<'a> ConstraintSolver<'a> {
             self.evaluate_expression(
                 abstract_state,
                 done_expressions.clone(),
-                &type_expression.left
+                &expression_binary.left
             )?
         );
         let right_ty = pytype_consume_or_return_option!(
             effects,
-            self.evaluate_expression(abstract_state, done_expressions, &type_expression.right)?
+            self.evaluate_expression(abstract_state, done_expressions, &expression_binary.right)?
         );
+
+        pub fn evaluate_binary_operation(
+            left_ty: &Type,
+            operator: BinaryOperator,
+            right_ty: &Type,
+        ) -> Option<PyTypeEval> {
+            match (left_ty, right_ty) {
+                (Type::Literal(left), Type::Literal(right)) => Some(type_literal::call_binary_op(
+                    left.as_ref(),
+                    operator,
+                    right.as_ref(),
+                )),
+                (Type::Union(left_type_union), Type::Union(right_type_union)) => {
+                    let mut type_eval = PyTypeEval::never();
+                    for ty in left_type_union.types() {
+                        type_eval =
+                            type_eval.join(&evaluate_binary_operation(ty, operator, right_ty)?);
+                    }
+                    for ty in right_type_union.types() {
+                        type_eval =
+                            type_eval.join(&evaluate_binary_operation(left_ty, operator, ty)?);
+                    }
+                    Some(type_eval)
+                }
+                (Type::Union(left_type_union), _) => {
+                    let mut type_eval = PyTypeEval::never();
+                    for ty in left_type_union.types() {
+                        type_eval =
+                            type_eval.join(&evaluate_binary_operation(ty, operator, right_ty)?);
+                    }
+                    Some(type_eval)
+                }
+                (_, Type::Union(right_type_union)) => {
+                    let mut type_eval = PyTypeEval::never();
+                    for ty in right_type_union.types() {
+                        type_eval =
+                            type_eval.join(&evaluate_binary_operation(left_ty, operator, ty)?);
+                    }
+                    Some(type_eval)
+                }
+                (Type::Any, _) | (_, Type::Any) => Some(PyTypeEval::unknown()),
+                (Type::Never, _) | (_, Type::Never) | (Type::NoReturn, _) | (_, Type::NoReturn) => {
+                    unreachable!()
+                }
+                _ => None, // TODO: add support for the rest
+            }
+        }
 
         let ty = pytype_consume_or_return_option!(
             effects,
-            match (left_ty, right_ty) {
-                (Type::Literal(left), Type::Literal(right)) => {
-                    type_literal::call_binary_op(
-                        left.as_ref(),
-                        type_expression.operator,
-                        right.as_ref(),
-                    )
-                }
-                (Type::Any, _) | (_, Type::Any) => PyTypeEval::unknown(),
-                _ => return None, // TODO: add support for unions, etc
-            }
+            evaluate_binary_operation(&left_ty, expression_binary.operator, &right_ty)?
         );
 
         Some(PyTypeEval::new(ty, effects))
@@ -720,7 +870,48 @@ impl GraphAnalyser for ConstraintSolver<'_> {
         left: &Self::AbstractState,
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
-        Ok(left.join(right))
+        Ok(EvaluationState {
+            evaluations: LatticeMap::new(left.evaluations.values.clone().union_with(
+                right.evaluations.values.clone(),
+                |left, right| {
+                    let mut eval = left.join(&right);
+
+                    while eval.type_eval.value.width() > WIDTH_LIMIT {
+                        eval.type_eval.value = match eval.type_eval.value {
+                            Type::Union(type_union) => {
+                                let mut new_type_union = TypeUnion::new();
+                                for ty in type_union.types() {
+                                    new_type_union.add_type(
+                                        if let Type::Literal(type_literal) = ty.as_ref() {
+                                            Arc::new(
+                                                self.as_type_instance(type_literal)
+                                                    .map(|type_instance| {
+                                                        Type::Instance2(type_instance)
+                                                    })
+                                                    .unwrap_or(Type::Any),
+                                            )
+                                        } else {
+                                            ty.clone()
+                                        },
+                                    );
+                                }
+                                new_type_union.simplify().as_ref().clone()
+                            }
+                            _ => Type::Any,
+                        };
+                    }
+                    println!("here 2 {eval}");
+                    if eval.type_eval.value.depth() > DEPTH_LIMIT {
+                        eval.type_eval.value = Type::Any;
+                    }
+
+                    eval
+                },
+            )),
+            return_value: left.return_value.join(&right.return_value),
+            raised_exceptions: left.raised_exceptions.join(&right.raised_exceptions),
+            defined_variables: left.defined_variables.join(&right.defined_variables),
+        })
     }
 }
 
@@ -992,94 +1183,17 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 mod tests {
     use super::*;
     use crate::abstract_environment::BUILTINS_MODULE;
-    use crate::constraints::{
-        CfgImporter, ConstraintsBuilder, ModuleName, ProgramEntity, ProgramEntityKind,
-        QualifiedLocation, analyse_program,
-    };
+    use crate::constraints::{CfgImporter, ModuleName, analyse_program};
     use apy::v1::QualifiedName;
-    use apygen_analysis::cfg::{Cfg, ProgramPoint};
+    use apygen_analysis::analysis;
+    use apygen_analysis::cfg::Cfg;
     use apygen_analysis::log::LogAnalysisObserver;
-    use apygen_analysis::{DummyAnalysisObserver, analysis};
     use indoc::indoc;
     use rstest::rstest;
     use std::collections::{HashMap, HashSet};
 
     fn init_logger() {
         let _ = env_logger::builder().is_test(true).try_init();
-    }
-
-    #[rstest]
-    #[case::simple_if_statement(
-        indoc! {r##"
-        x = True
-
-        if x:
-            a = 42
-        else:
-            a = 67
-
-        b = a
-        "##},
-        indoc! {r##"
-        a@{module[4:4]} = (42 ➤ ({} - Pure - Total))
-        a@{module[6:4]} = (67 ➤ ({} - Pure - Total))
-        b@{module[8:0]} = (Union[42, 67] ➤ ({} - Pure - Total))
-        x@{module[1:0]} = (True ➤ ({} - Pure - Total))
-        "##},
-    )]
-    #[case::simple_while_statement(
-        indoc! {r##"
-        a = 0
-
-        while a < 5:
-            a = a + 1
-
-        b = a
-        "##},
-        indoc! {r##"
-        a@{module[1:0]} = (0 ➤ ({} - Pure - Total))
-        a@{module[4:4]} = (1 ➤ ({} - Pure - Total)) ⊔ #deferred{(a@{module[4:8]}) + (1)}
-        b@{module[6:0]} = (Union[0, 1] ➤ ({} - Pure - Total)) ⊔ #deferred{a@{module[6:4]}}
-        "##},  // TODO: fix this when operations are implemented
-    )]
-    fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
-        init_logger();
-
-        let cfg = Cfg::parse(source).expect("Should build CFG");
-
-        let entity = ProgramEntity::new(
-            QualifiedLocation::from(Arc::new(QualifiedName::parse("module"))),
-            ProgramPoint::Entry,
-            ProgramEntityKind::Module,
-        );
-
-        let constraints_builder = ConstraintsBuilder::new(&cfg, &entity, None);
-
-        let analysis_state = analysis(&constraints_builder, &mut DummyAnalysisObserver)
-            .expect("Should build constraints");
-
-        let exit_state = &analysis_state.abstract_states[&ProgramPoint::Exit];
-
-        let specification = AbstractEnvironmentSpecification::default();
-
-        let state = LatticeMap::default();
-
-        let solver = ConstraintSolver::new(
-            &entity,
-            &specification,
-            &exit_state.constraint_graph,
-            &state,
-        );
-
-        let types =
-            analysis(&solver, &mut LogAnalysisObserver::default()).expect("analysis should work");
-        println!("{}", types.evaluation_states[&ConstraintNode::TypeExit]);
-        let actual_types: String = types.evaluation_states[&ConstraintNode::TypeExit]
-            .variables()
-            .map(|(expression_variable, ty)| format!("{} = {}\n", expression_variable.clone(), ty))
-            .collect();
-
-        assert_eq!(expected_types, actual_types, "{actual_types}");
     }
 
     pub struct TestCfgImporter {
@@ -1098,6 +1212,53 @@ mod tests {
     "##};
 
     #[rstest]
+    #[case::simple_if_statement(
+        indoc! {r##"
+        x = True
+
+        if x:
+            a = 42
+        else:
+            a = 67
+
+        b = a
+        "##},
+        indoc! {r##"
+        builtins:
+            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
+            #return = {}
+        builtins[1:6]:
+            #return = {}
+        module:
+            a@{module[4:4]} = (42 ➤ ({} - Pure - Total))
+            a@{module[6:4]} = (67 ➤ ({} - Pure - Total))
+            b@{module[8:0]} = (Union[42, 67] ➤ ({} - Pure - Total))
+            x@{module[1:0]} = (True ➤ ({} - Pure - Total))
+            #return = {}
+        "##},
+    )]
+    #[case::simple_while_statement(
+        indoc! {r##"
+        a = 0
+
+        while a < 5:
+            a = a + 1
+
+        b = a
+        "##},
+        indoc! {r##"
+        builtins:
+            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
+            #return = {}
+        builtins[1:6]:
+            #return = {}
+        module:
+            a@{module[1:0]} = (0 ➤ ({} - Pure - Total))
+            a@{module[4:4]} = (Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] ➤ ({} - Pure - Total)) ⊔ #deferred{(a@{module[4:8]}) + (1)}
+            b@{module[6:0]} = (@class(builtins[1:6]) ➤ ({} - Pure - Total)) ⊔ #deferred{a@{module[6:4]}}
+            #return = {}
+        "##},  // TODO: fix this when operations are implemented
+    )]
     #[case::simple_function_definition(
         indoc! {r##"
         def add_two(a: int, b):
@@ -1121,7 +1282,7 @@ mod tests {
             #return = {(a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]})}
         "##},
     )]
-    fn test_program_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
+    fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
         init_logger();
 
         let module_name = Arc::new(QualifiedName::parse("module"));

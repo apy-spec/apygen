@@ -22,6 +22,7 @@ pub const TYPING_MODULE: &str = "typing";
 pub const TYPING_EXTENSIONS_MODULE: &str = "typing_extensions";
 pub const ABC_MODULE: &str = "abc";
 pub const DEPTH_LIMIT: usize = 20;
+pub const WIDTH_LIMIT: usize = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Source {
@@ -160,6 +161,41 @@ impl<S: StructuralDepth + Ord> StructuralDepth for imbl::OrdSet<S> {
     }
 }
 
+fn iter_width<'a, S: StructuralWidth + 'a>(iter: impl Iterator<Item = &'a S>) -> usize {
+    iter.map(|item| item.width()).sum()
+}
+
+pub trait StructuralWidth {
+    fn width(&self) -> usize;
+}
+
+impl<S: StructuralWidth> StructuralWidth for Arc<S> {
+    fn width(&self) -> usize {
+        self.as_ref().width()
+    }
+}
+
+impl<S: StructuralWidth> StructuralWidth for Option<S> {
+    fn width(&self) -> usize {
+        match self {
+            None => 0,
+            Some(value) => value.width(),
+        }
+    }
+}
+
+impl<S: StructuralWidth> StructuralWidth for imbl::Vector<S> {
+    fn width(&self) -> usize {
+        iter_width(self.iter())
+    }
+}
+
+impl<S: StructuralWidth + Ord> StructuralWidth for imbl::OrdSet<S> {
+    fn width(&self) -> usize {
+        iter_width(self.iter())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Parameter {
     pub name: Arc<Identifier>,
@@ -173,7 +209,13 @@ pub struct Parameter {
 
 impl StructuralDepth for Parameter {
     fn depth(&self) -> usize {
-        0
+        1
+    }
+}
+
+impl StructuralWidth for Parameter {
+    fn width(&self) -> usize {
+        1
     }
 }
 
@@ -198,7 +240,17 @@ pub struct GenericType {
 
 impl StructuralDepth for GenericType {
     fn depth(&self) -> usize {
-        self.bound.depth() + self.constraints.depth() + self.default.depth()
+        1 + self
+            .bound
+            .depth()
+            .max(self.constraints.depth())
+            .max(self.default.depth())
+    }
+}
+
+impl StructuralWidth for GenericType {
+    fn width(&self) -> usize {
+        self.bound.width() + self.constraints.width() + self.default.width()
     }
 }
 
@@ -281,7 +333,16 @@ pub struct FunctionType {
 
 impl StructuralDepth for FunctionType {
     fn depth(&self) -> usize {
-        1 + self.parameters.depth() + iter_depth(self.generics.values())
+        1 + self
+            .parameters
+            .depth()
+            .max(iter_depth(self.generics.values()))
+    }
+}
+
+impl StructuralWidth for FunctionType {
+    fn width(&self) -> usize {
+        self.parameters.width() + iter_width(self.generics.values())
     }
 }
 
@@ -311,7 +372,13 @@ impl OverloadedFunctionType {
 
 impl StructuralDepth for OverloadedFunctionType {
     fn depth(&self) -> usize {
-        1 + self.overloads.depth() + self.target.depth()
+        1 + self.overloads.depth().max(self.target.depth())
+    }
+}
+
+impl StructuralWidth for OverloadedFunctionType {
+    fn width(&self) -> usize {
+        self.overloads.width() + self.target.width()
     }
 }
 
@@ -337,7 +404,13 @@ pub struct TypeAliasType {
 
 impl StructuralDepth for TypeAliasType {
     fn depth(&self) -> usize {
-        1 + self.alias.depth() + iter_depth(self.generics.values())
+        1 + self.alias.depth().max(iter_depth(self.generics.values()))
+    }
+}
+
+impl StructuralWidth for TypeAliasType {
+    fn width(&self) -> usize {
+        self.alias.width() + iter_width(self.generics.values())
     }
 }
 
@@ -361,7 +434,15 @@ pub struct ClassType {
 impl StructuralDepth for ClassType {
     fn depth(&self) -> usize {
         1 + iter_depth(self.generics.values())
-            + self.bases.depth()
+            .max(self.bases.depth())
+            .max(iter_depth(self.keyword_arguments.values()))
+    }
+}
+
+impl StructuralWidth for ClassType {
+    fn width(&self) -> usize {
+        iter_width(self.generics.values())
+            + self.bases.width()
             + iter_depth(self.keyword_arguments.values())
     }
 }
@@ -873,6 +954,12 @@ impl StructuralDepth for LiteralList {
     }
 }
 
+impl StructuralWidth for LiteralList {
+    fn width(&self) -> usize {
+        self.value.width()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralTuple {
     pub value: imbl::Vector<Arc<TypeLiteral>>,
@@ -890,6 +977,12 @@ impl Display for LiteralTuple {
 impl StructuralDepth for LiteralTuple {
     fn depth(&self) -> usize {
         1 + self.value.depth()
+    }
+}
+
+impl StructuralWidth for LiteralTuple {
+    fn width(&self) -> usize {
+        self.value.width()
     }
 }
 
@@ -948,7 +1041,7 @@ impl StructuralDepth for TypeLiteralKey {
             | TypeLiteralKey::Bytes(_)
             | TypeLiteralKey::None
             | TypeLiteralKey::Ellipsis
-            | TypeLiteralKey::ImportedModule(_) => 0,
+            | TypeLiteralKey::ImportedModule(_) => 1,
             TypeLiteralKey::Tuple(literal_tuple) => literal_tuple.depth(),
             TypeLiteralKey::Function(literal_function) => literal_function.value.depth(),
             TypeLiteralKey::OverloadedFunction(literal_overloaded_function) => {
@@ -957,6 +1050,30 @@ impl StructuralDepth for TypeLiteralKey {
             TypeLiteralKey::Class(literal_class) => literal_class.value.depth(),
             TypeLiteralKey::TypeAlias(literal_type_alias) => literal_type_alias.value.depth(),
             TypeLiteralKey::Generic(literal_generic) => literal_generic.value.depth(),
+        }
+    }
+}
+
+impl StructuralWidth for TypeLiteralKey {
+    fn width(&self) -> usize {
+        match self {
+            TypeLiteralKey::Integer(_)
+            | TypeLiteralKey::Boolean(_)
+            | TypeLiteralKey::Float(_)
+            | TypeLiteralKey::Complex(_)
+            | TypeLiteralKey::String(_)
+            | TypeLiteralKey::Bytes(_)
+            | TypeLiteralKey::None
+            | TypeLiteralKey::Ellipsis
+            | TypeLiteralKey::ImportedModule(_) => 1,
+            TypeLiteralKey::Tuple(literal_tuple) => literal_tuple.width(),
+            TypeLiteralKey::Function(literal_function) => literal_function.value.width(),
+            TypeLiteralKey::OverloadedFunction(literal_overloaded_function) => {
+                literal_overloaded_function.value.width()
+            }
+            TypeLiteralKey::Class(literal_class) => literal_class.value.width(),
+            TypeLiteralKey::TypeAlias(literal_type_alias) => literal_type_alias.value.width(),
+            TypeLiteralKey::Generic(literal_generic) => literal_generic.value.width(),
         }
     }
 }
@@ -991,6 +1108,12 @@ impl StructuralDepth for LiteralDict {
     }
 }
 
+impl StructuralWidth for LiteralDict {
+    fn width(&self) -> usize {
+        self.values.iter().map(|(k, v)| k.width() + v.width()).sum()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralFunction {
     pub value: Arc<FunctionType>,
@@ -1005,6 +1128,12 @@ impl Display for LiteralFunction {
 impl StructuralDepth for LiteralFunction {
     fn depth(&self) -> usize {
         self.value.depth()
+    }
+}
+
+impl StructuralWidth for LiteralFunction {
+    fn width(&self) -> usize {
+        self.value.width()
     }
 }
 
@@ -1033,6 +1162,12 @@ impl StructuralDepth for LiteralOverloadedFunction {
     }
 }
 
+impl StructuralWidth for LiteralOverloadedFunction {
+    fn width(&self) -> usize {
+        self.value.width()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralClass {
     pub value: Arc<ClassType>,
@@ -1047,6 +1182,12 @@ impl Display for LiteralClass {
 impl StructuralDepth for LiteralClass {
     fn depth(&self) -> usize {
         self.value.depth()
+    }
+}
+
+impl StructuralWidth for LiteralClass {
+    fn width(&self) -> usize {
+        self.value.width()
     }
 }
 
@@ -1067,6 +1208,12 @@ impl StructuralDepth for LiteralTypeAlias {
     }
 }
 
+impl StructuralWidth for LiteralTypeAlias {
+    fn width(&self) -> usize {
+        self.value.width()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralGeneric {
     pub value: Arc<GenericType>,
@@ -1084,6 +1231,12 @@ impl StructuralDepth for LiteralGeneric {
     }
 }
 
+impl StructuralWidth for LiteralGeneric {
+    fn width(&self) -> usize {
+        self.value.width()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralImportedModule {
     pub value: Arc<ImportedModuleType>,
@@ -1097,7 +1250,13 @@ impl Display for LiteralImportedModule {
 
 impl StructuralDepth for LiteralImportedModule {
     fn depth(&self) -> usize {
-        0
+        1
+    }
+}
+
+impl StructuralWidth for LiteralImportedModule {
+    fn width(&self) -> usize {
+        1
     }
 }
 
@@ -1147,6 +1306,32 @@ impl StructuralDepth for TypeLiteral {
             TypeLiteral::TypeAlias(literal_type_alias) => literal_type_alias.depth(),
             TypeLiteral::Generic(literal_generic) => literal_generic.depth(),
             TypeLiteral::ImportedModule(literal_imported_module) => literal_imported_module.depth(),
+        }
+    }
+}
+
+impl StructuralWidth for TypeLiteral {
+    fn width(&self) -> usize {
+        match self {
+            TypeLiteral::Integer(_)
+            | TypeLiteral::Boolean(_)
+            | TypeLiteral::Float(_)
+            | TypeLiteral::Complex(_)
+            | TypeLiteral::String(_)
+            | TypeLiteral::Bytes(_)
+            | TypeLiteral::None
+            | TypeLiteral::Ellipsis => 1,
+            TypeLiteral::List(literal_list) => literal_list.width(),
+            TypeLiteral::Tuple(literal_tuple) => literal_tuple.width(),
+            TypeLiteral::Dict(literal_dict) => literal_dict.width(),
+            TypeLiteral::Function(literal_function) => literal_function.width(),
+            TypeLiteral::OverloadedFunction(literal_overloaded_function) => {
+                literal_overloaded_function.width()
+            }
+            TypeLiteral::Class(literal_class) => literal_class.width(),
+            TypeLiteral::TypeAlias(literal_type_alias) => literal_type_alias.width(),
+            TypeLiteral::Generic(literal_generic) => literal_generic.width(),
+            TypeLiteral::ImportedModule(literal_imported_module) => literal_imported_module.width(),
         }
     }
 }
@@ -1261,6 +1446,12 @@ impl StructuralDepth for TypeInstance {
     }
 }
 
+impl StructuralWidth for TypeInstance {
+    fn width(&self) -> usize {
+        self.arguments.width()
+    }
+}
+
 impl Display for TypeInstance {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "@({}).{}", self.origin, self.name)?;
@@ -1289,6 +1480,12 @@ pub struct TypeInstance2 {
 impl StructuralDepth for TypeInstance2 {
     fn depth(&self) -> usize {
         self.base.depth().max(self.arguments.depth())
+    }
+}
+
+impl StructuralWidth for TypeInstance2 {
+    fn width(&self) -> usize {
+        self.base.width() + self.arguments.width()
     }
 }
 
@@ -1365,7 +1562,13 @@ impl TypeUnion {
 
 impl StructuralDepth for TypeUnion {
     fn depth(&self) -> usize {
-        1 + self.types.depth()
+        self.types.depth()
+    }
+}
+
+impl StructuralWidth for TypeUnion {
+    fn width(&self) -> usize {
+        self.types.width()
     }
 }
 
@@ -1491,12 +1694,25 @@ impl Lattice for Type {
 impl StructuralDepth for Type {
     fn depth(&self) -> usize {
         match self {
-            Type::Any | Type::Never | Type::NoReturn => 0,
+            Type::Any | Type::Never | Type::NoReturn => 1,
             Type::Instance(type_instance) => type_instance.depth(),
             Type::Instance2(type_instance2) => type_instance2.depth(),
             Type::Union(type_union) => type_union.depth(),
             Type::Intersection(type_intersection) => type_intersection.depth(),
             Type::Literal(type_literal) => type_literal.depth(),
+        }
+    }
+}
+
+impl StructuralWidth for Type {
+    fn width(&self) -> usize {
+        match self {
+            Type::Any | Type::Never | Type::NoReturn => 1,
+            Type::Instance(type_instance) => type_instance.width(),
+            Type::Instance2(type_instance2) => type_instance2.width(),
+            Type::Union(type_union) => type_union.width(),
+            Type::Intersection(type_intersection) => type_intersection.width(),
+            Type::Literal(type_literal) => type_literal.width(),
         }
     }
 }
