@@ -1294,7 +1294,7 @@ impl StructuralDepth for TypeLiteral {
             | TypeLiteral::String(_)
             | TypeLiteral::Bytes(_)
             | TypeLiteral::None
-            | TypeLiteral::Ellipsis => 0,
+            | TypeLiteral::Ellipsis => 1,
             TypeLiteral::List(literal_list) => literal_list.depth(),
             TypeLiteral::Tuple(literal_tuple) => literal_tuple.depth(),
             TypeLiteral::Dict(literal_dict) => literal_dict.depth(),
