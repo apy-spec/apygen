@@ -6,6 +6,7 @@ pub mod lattice;
 pub mod log;
 pub mod namespace;
 pub mod rayon;
+pub mod fmt;
 
 pub trait GraphAnalyser {
     type Node;
