@@ -30,12 +30,12 @@ use apygen_analysis::cfg::nodes::{
     Expr, ExprAttribute, ExprBinOp, ExprBoolOp, ExprCall, ExprName, ExprSubscript, ExprUnaryOp,
     Operator,
 };
-use apygen_analysis::lattice::Lattice;
+use apygen_analysis::lattice::Join;
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::sync::Arc;
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
 pub struct PyEffects {
     pub exceptions: RaisedExceptions,
     pub pureness: Pureness,
@@ -80,23 +80,7 @@ impl Display for PyEffects {
     }
 }
 
-impl Lattice for PyEffects {
-    fn includes(&self, other: &Self) -> bool {
-        self.exceptions.includes(&other.exceptions)
-            && self.pureness.includes(&other.pureness)
-            && self.completeness.includes(&other.completeness)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        PyEffects {
-            exceptions: self.exceptions.join(&other.exceptions),
-            pureness: self.pureness.join(&other.pureness),
-            completeness: self.completeness.join(&other.completeness),
-        }
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
 pub struct PyValueEval<T> {
     pub value: T,
     pub effects: PyEffects,
@@ -127,19 +111,6 @@ impl<T> PyValueEval<T> {
 impl<T: Display> Display for PyValueEval<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "({} ➤ {})", self.value, self.effects)
-    }
-}
-
-impl<L: Lattice> Lattice for PyValueEval<L> {
-    fn includes(&self, other: &Self) -> bool {
-        self.value.includes(&other.value) && self.effects.includes(&other.effects)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        PyValueEval {
-            value: self.value.join(&other.value),
-            effects: self.effects.join(&other.effects),
-        }
     }
 }
 

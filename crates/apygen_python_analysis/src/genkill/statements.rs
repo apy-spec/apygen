@@ -1,3 +1,4 @@
+use apygen_analysis::lattice::Join;
 use crate::abstract_environment::{
     AbstractEnvironment, Attribute, ClassType, Deprecation, Diagnostic, Exception, ExceptionOrigin,
     FunctionType, ImportedAttribute, ImportedModuleType, LiteralClass, LiteralFunction,
@@ -17,7 +18,6 @@ use crate::genkill::visibility::gen_visibility;
 use crate::worklist::WorklistContext;
 use apy::OneOrMany;
 use apy::v1::{Identifier, ParseIdentifierError, ParseQualifiedNameError, QualifiedName};
-use apygen_analysis::lattice::Lattice;
 use imbl::Vector;
 use std::collections::HashMap;
 use std::sync::Arc;

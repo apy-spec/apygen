@@ -1,15 +1,16 @@
 use crate::abstract_environment::{
-    BUILTINS_MODULE, LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger,
-    LiteralString,
+    LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger, LiteralString,
+    BUILTINS_MODULE,
 };
 use crate::genkill::assignment::AssignmentTarget;
 use crate::worklist::load_cfg;
-use apy::OneOrMany;
 use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
+use apy::OneOrMany;
 use apygen_analysis::cfg::nodes::Number;
-use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint, Ranged, TextRange, nodes};
-use apygen_analysis::lattice::Lattice;
-use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
+use apygen_analysis::cfg::{nodes, Cfg, EdgeData, NodeData, ProgramPoint, Ranged, TextRange};
+use apygen_analysis::fmt::{fmt_display_sequence, fmt_display_set};
+use apygen_analysis::lattice::Join;
+use apygen_analysis::{analysis, DummyAnalysisObserver, GraphAnalyser};
 use apygen_finder::filesystem::Filesystem;
 use apygen_finder::pathfinder::FinderSpec;
 use imbl::ordmap::Entry;
@@ -20,262 +21,11 @@ use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
-use std::ops::Deref;
 use std::sync::Arc;
 use thiserror::Error;
 
 pub type ModuleName = Arc<QualifiedName>;
 pub type VariableName = Arc<Identifier>;
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LatticeSet<T: Ord> {
-    pub values: imbl::OrdSet<T>,
-}
-
-impl<T: Ord> LatticeSet<T> {
-    pub fn unit(value: T) -> Self {
-        Self::new(imbl::OrdSet::unit(value))
-    }
-
-    pub fn new(values: imbl::OrdSet<T>) -> Self {
-        Self { values }
-    }
-
-    pub fn contains(&self, value: &T) -> bool {
-        self.values.contains(value)
-    }
-}
-
-impl<T: Clone + Ord> LatticeSet<T> {
-    pub fn insert(&mut self, value: T) -> Option<T> {
-        self.values.insert(value)
-    }
-
-    pub fn remove(&mut self, value: &T) -> Option<T> {
-        self.values.remove(value)
-    }
-
-    pub fn drain(&mut self, f: impl Fn(&T) -> bool) -> Self {
-        let mut drained = Self::default();
-
-        self.values = self
-            .values
-            .iter()
-            .filter(|value| {
-                if f(*value) {
-                    drained.insert((*value).clone());
-                    false
-                } else {
-                    true
-                }
-            })
-            .cloned()
-            .collect();
-
-        drained
-    }
-
-    pub fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
-        self.values.extend(iter);
-    }
-
-    pub fn update(&self, value: T) -> Self {
-        Self::new(self.values.update(value))
-    }
-
-    pub fn union(self, other: Self) -> Self {
-        Self::new(self.values.union(other.values))
-    }
-}
-
-impl<T: Clone + Ord> Lattice for LatticeSet<T> {
-    fn includes(&self, other: &Self) -> bool {
-        other.values.is_subset(&self.values)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        if self.values.is_empty() {
-            other.clone()
-        } else if other.values.is_empty() {
-            self.clone()
-        } else {
-            Self::new(self.values.clone().union(other.values.clone()))
-        }
-    }
-}
-
-impl<T: Ord> Default for LatticeSet<T> {
-    fn default() -> Self {
-        Self::new(imbl::OrdSet::default())
-    }
-}
-
-impl<T: Ord> Deref for LatticeSet<T> {
-    type Target = imbl::OrdSet<T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.values
-    }
-}
-
-impl<T: Ord> AsRef<imbl::OrdSet<T>> for LatticeSet<T> {
-    fn as_ref(&self) -> &imbl::OrdSet<T> {
-        &self.values
-    }
-}
-
-impl<T: Clone + Ord> FromIterator<T> for LatticeSet<T> {
-    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        Self::new(imbl::OrdSet::from_iter(iter))
-    }
-}
-
-impl<T: Ord + Display> Display for LatticeSet<T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{")?;
-        for (i, value) in self.values.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}", value)?;
-        }
-        write!(f, "}}")
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LatticeMap<K: Ord, V> {
-    pub values: imbl::OrdMap<K, V>,
-}
-
-impl<K: Ord, V> LatticeMap<K, V> {
-    pub fn unit(key: K, value: V) -> Self {
-        Self::new(imbl::OrdMap::unit(key, value))
-    }
-
-    pub fn new(values: imbl::OrdMap<K, V>) -> Self {
-        Self { values }
-    }
-}
-
-impl<K: Clone + Ord, V: Clone> LatticeMap<K, V> {
-    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        self.values.insert(key, value)
-    }
-
-    pub fn remove(&mut self, key: &K) -> Option<V> {
-        self.values.remove(key)
-    }
-
-    pub fn drain(&mut self, f: impl Fn(&(K, V)) -> bool) -> Self {
-        let mut drained = Self::default();
-
-        self.values = self
-            .values
-            .clone()
-            .into_iter()
-            .filter(|entry| {
-                if f(entry) {
-                    let (key, value) = entry;
-                    drained.insert(key.clone(), value.clone());
-                    false
-                } else {
-                    true
-                }
-            })
-            .collect();
-
-        drained
-    }
-
-    pub fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
-        self.values.extend(iter);
-    }
-
-    pub fn update(&self, key: K, value: V) -> Self {
-        Self::new(self.values.update(key, value))
-    }
-
-    pub fn union(self, other: Self) -> Self {
-        Self::new(self.values.union(other.values))
-    }
-}
-
-impl<K: Clone + Ord, V: Clone + Lattice> LatticeMap<K, V> {
-    pub fn update_join(self, key: K, value: V) -> Self {
-        Self::new(
-            self.values
-                .update_with(key, value, |self_value, other_value| {
-                    self_value.join(&other_value)
-                }),
-        )
-    }
-}
-
-impl<K: Clone + Ord, V: Clone + Lattice> Lattice for LatticeMap<K, V> {
-    fn includes(&self, other: &Self) -> bool {
-        other
-            .values
-            .is_submap_by(&self.values, |self_value, other_value| {
-                self_value.includes(other_value)
-            })
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        if self.values.is_empty() {
-            other.clone()
-        } else if other.values.is_empty() {
-            self.clone()
-        } else {
-            Self::new(
-                self.values
-                    .clone()
-                    .union_with(other.values.clone(), |self_value, other_value| {
-                        self_value.join(&other_value)
-                    }),
-            )
-        }
-    }
-}
-
-impl<K: Ord, V> Default for LatticeMap<K, V> {
-    fn default() -> Self {
-        Self::new(imbl::OrdMap::default())
-    }
-}
-
-impl<K: Ord, V> Deref for LatticeMap<K, V> {
-    type Target = imbl::OrdMap<K, V>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.values
-    }
-}
-
-impl<K: Ord, V> AsRef<imbl::OrdMap<K, V>> for LatticeMap<K, V> {
-    fn as_ref(&self) -> &imbl::OrdMap<K, V> {
-        &self.values
-    }
-}
-
-impl<K: Clone + Ord, V: Clone> FromIterator<(K, V)> for LatticeMap<K, V> {
-    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
-        Self::new(imbl::OrdMap::from_iter(iter))
-    }
-}
-
-impl<K: Ord + Display, V: Display> Display for LatticeMap<K, V> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{")?;
-        for (i, (key, value)) in self.values.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}: {}", key, value)?;
-        }
-        write!(f, "}}")
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Location {
@@ -476,22 +226,12 @@ pub struct ExpressionCall {
 impl Display for ExpressionCall {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "({})(", self.target)?;
-
-        for (i, arg) in self.positional_arguments.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}", arg)?;
+        fmt_display_sequence(f, self.positional_arguments.iter())?;
+        if !self.keyword_arguments.is_empty() {
+            f.write_str(", ")?;
+            fmt_display_sequence(f, self.keyword_arguments.iter())?;
         }
-
-        for (i, keyword_argument) in self.keyword_arguments.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}", keyword_argument)?;
-        }
-
-        write!(f, ")")
+        f.write_str(")")
     }
 }
 
@@ -740,7 +480,7 @@ pub enum Guard {
         expression: Arc<Expression>,
         exception: Option<Arc<Expression>>,
     },
-    Multiple(LatticeSet<Guard>),
+    Multiple(imbl::OrdSet<Guard>),
 }
 
 impl Guard {
@@ -754,24 +494,11 @@ impl Guard {
 
 impl Default for Guard {
     fn default() -> Self {
-        Guard::Multiple(LatticeSet::default())
+        Guard::Multiple(imbl::OrdSet::default())
     }
 }
 
-impl Lattice for Guard {
-    fn includes(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Guard::Multiple(self_guards), Guard::Multiple(other_guards)) => {
-                self_guards.includes(other_guards)
-            }
-            (Guard::Multiple(self_guards), _) => self_guards.contains(other),
-            (_, Guard::Multiple(other_guards)) => {
-                LatticeSet::unit(self.clone()).includes(other_guards)
-            }
-            _ => self == other,
-        }
-    }
-
+impl Join for Guard {
     fn join(&self, other: &Self) -> Self {
         if self == other {
             return self.clone();
@@ -785,7 +512,7 @@ impl Lattice for Guard {
             (_, Guard::Multiple(other_guards)) => {
                 Guard::Multiple(other_guards.update(self.clone()))
             }
-            _ => Guard::Multiple(LatticeSet::from_iter([self.clone(), other.clone()])),
+            _ => Guard::Multiple(imbl::OrdSet::from_iter([self.clone(), other.clone()])),
         }
     }
 }
@@ -803,9 +530,7 @@ impl Display for Guard {
                 Some(exception) => write!(f, "#raise({}, {})", expression, exception),
                 None => write!(f, "#raise({})", expression),
             },
-            Guard::Multiple(guards) => {
-                write!(f, "{}", guards)
-            }
+            Guard::Multiple(guards) => fmt_display_set(f, guards.iter()),
         }
     }
 }
@@ -857,22 +582,20 @@ impl Display for ConstraintNode {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ConstraintGraph {
-    pub edges: LatticeMap<ConstraintNode, LatticeMap<ConstraintNode, Guard>>,
+    pub edges: imbl::OrdMap<ConstraintNode, imbl::OrdMap<ConstraintNode, Guard>>,
 }
 
 impl ConstraintGraph {
-    pub fn new(edges: LatticeMap<ConstraintNode, LatticeMap<ConstraintNode, Guard>>) -> Self {
+    pub fn new(edges: imbl::OrdMap<ConstraintNode, imbl::OrdMap<ConstraintNode, Guard>>) -> Self {
         Self { edges }
     }
 
     pub fn add_edge(&mut self, from: ConstraintNode, to: ConstraintNode, guard: Guard) {
         self.edges
-            .values
             .entry(from.clone())
             .or_default()
-            .values
             .entry(to)
             .or_insert(guard);
     }
@@ -884,8 +607,8 @@ impl ConstraintGraph {
     pub fn dot(&self, graph_name: &str) -> String {
         let mut nodes: imbl::OrdSet<ConstraintNode> = imbl::OrdSet::new();
         let mut edges: imbl::OrdMap<(ConstraintNode, ConstraintNode), Guard> = imbl::OrdMap::new();
-        for (from, tos) in &self.edges.values {
-            for (to, guard) in &tos.values {
+        for (from, tos) in &self.edges {
+            for (to, guard) in tos {
                 nodes.insert(from.clone());
                 nodes.insert(to.clone());
                 edges.insert((from.clone(), to.clone()), guard.clone());
@@ -915,37 +638,11 @@ impl ConstraintGraph {
     }
 }
 
-impl Lattice for ConstraintGraph {
-    fn includes(&self, other: &Self) -> bool {
-        self.edges.includes(&other.edges)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self::new(self.edges.join(&other.edges))
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct AbstractEnvironmentSpecification {
-    pub arguments: LatticeMap<ExpressionVariable, LatticeSet<Expression>>,
-    pub return_type: LatticeSet<Expression>,
-    pub exceptions: LatticeSet<Expression>,
-}
-
-impl Lattice for AbstractEnvironmentSpecification {
-    fn includes(&self, other: &Self) -> bool {
-        self.arguments.includes(&other.arguments)
-            && self.return_type.includes(&other.return_type)
-            && self.exceptions.includes(&other.exceptions)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self {
-            arguments: self.arguments.join(&other.arguments),
-            return_type: self.return_type.join(&other.return_type),
-            exceptions: self.exceptions.join(&other.exceptions),
-        }
-    }
+    pub arguments: imbl::OrdMap<ExpressionVariable, imbl::OrdSet<Expression>>,
+    pub return_type: imbl::OrdSet<Expression>,
+    pub exceptions: imbl::OrdSet<Expression>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -975,16 +672,16 @@ impl Display for ProgramEntity {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct SubProgramEntityContext {
     pub specification: AbstractEnvironmentSpecification,
-    pub variable_locations: LatticeMap<VariableName, LatticeSet<QualifiedLocation>>,
+    pub variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<QualifiedLocation>>,
 }
 
 impl SubProgramEntityContext {
     pub fn new(
         specification: AbstractEnvironmentSpecification,
-        variable_locations: LatticeMap<VariableName, LatticeSet<QualifiedLocation>>,
+        variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<QualifiedLocation>>,
     ) -> Self {
         Self {
             specification,
@@ -993,69 +690,33 @@ impl SubProgramEntityContext {
     }
 }
 
-impl Lattice for SubProgramEntityContext {
-    fn includes(&self, other: &Self) -> bool {
-        self.specification.includes(&other.specification)
-            && self.variable_locations.includes(&other.variable_locations)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self::new(
-            self.specification.join(&other.specification),
-            self.variable_locations.join(&other.variable_locations),
-        )
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ProgramEntityAbstractEnvironment {
-    pub current_nodes: LatticeMap<ConstraintNode, Guard>,
-    pub variable_locations: LatticeMap<VariableName, LatticeSet<QualifiedLocation>>,
+    pub current_nodes: imbl::OrdMap<ConstraintNode, Guard>,
+    pub variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<QualifiedLocation>>,
     pub constraint_graph: ConstraintGraph,
-    pub imports: LatticeSet<ModuleName>,
-    pub sub_program_entities: LatticeMap<ProgramEntity, SubProgramEntityContext>,
+    pub imports: imbl::OrdSet<ModuleName>,
+    pub sub_program_entities: imbl::OrdMap<ProgramEntity, SubProgramEntityContext>,
 }
 
 impl Default for ProgramEntityAbstractEnvironment {
     fn default() -> Self {
         Self {
-            current_nodes: LatticeMap::unit(
+            current_nodes: imbl::OrdMap::unit(
                 ConstraintNode::Entry,
-                Guard::Multiple(LatticeSet::default()),
+                Guard::Multiple(imbl::OrdSet::default()),
             ),
-            variable_locations: LatticeMap::default(),
+            variable_locations: imbl::OrdMap::default(),
             constraint_graph: ConstraintGraph::default(),
-            imports: LatticeSet::default(),
-            sub_program_entities: LatticeMap::default(),
+            imports: imbl::OrdSet::default(),
+            sub_program_entities: imbl::OrdMap::default(),
         }
     }
 }
 
-impl Lattice for ProgramEntityAbstractEnvironment {
-    fn includes(&self, other: &Self) -> bool {
-        self.current_nodes.includes(&other.current_nodes)
-            && self.variable_locations.includes(&other.variable_locations)
-            && self.constraint_graph.includes(&other.constraint_graph)
-            && self.imports.includes(&other.imports)
-            && self
-                .sub_program_entities
-                .includes(&other.sub_program_entities)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self {
-            current_nodes: self.current_nodes.join(&other.current_nodes),
-            variable_locations: self.variable_locations.join(&other.variable_locations),
-            constraint_graph: self.constraint_graph.join(&other.constraint_graph),
-            imports: self.imports.join(&other.imports),
-            sub_program_entities: self.sub_program_entities.join(&other.sub_program_entities),
-        }
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ProgramEntityAnalysisState {
-    pub abstract_states: LatticeMap<ProgramPoint, ProgramEntityAbstractEnvironment>,
+    pub abstract_states: imbl::OrdMap<ProgramPoint, ProgramEntityAbstractEnvironment>,
 }
 
 impl ProgramEntityAnalysisState {
@@ -1078,47 +739,25 @@ impl ProgramEntityAnalysisState {
     }
 }
 
-impl Lattice for ProgramEntityAnalysisState {
-    fn includes(&self, other: &Self) -> bool {
-        self.abstract_states.includes(&other.abstract_states)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self {
-            abstract_states: self.abstract_states.join(&other.abstract_states),
-        }
-    }
-}
-
 impl Display for ProgramEntityAnalysisState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.abstract_states.fmt(f)
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct UsedVariables {
-    pub names: LatticeMap<VariableName, LatticeSet<QualifiedLocation>>,
+    pub names: imbl::OrdMap<VariableName, imbl::OrdSet<QualifiedLocation>>,
 }
 
 impl UsedVariables {
-    pub fn new(names: LatticeMap<VariableName, LatticeSet<QualifiedLocation>>) -> Self {
+    pub fn new(names: imbl::OrdMap<VariableName, imbl::OrdSet<QualifiedLocation>>) -> Self {
         Self { names }
     }
 
     pub fn consume<T>(&mut self, eval: ExpressionEval<T>) -> T {
         self.names = self.names.join(&eval.variables.names);
         eval.value
-    }
-}
-
-impl Lattice for UsedVariables {
-    fn includes(&self, other: &Self) -> bool {
-        self.names.includes(&other.names)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self::new(self.names.join(&other.names))
     }
 }
 
@@ -1210,7 +849,7 @@ impl<'a> ProgramEntityAbstractParentState<'a> {
         &self,
         entity: &ProgramEntity,
         variable_name: &VariableName,
-    ) -> Option<&LatticeSet<QualifiedLocation>> {
+    ) -> Option<&imbl::OrdSet<QualifiedLocation>> {
         let variable_locations = match self.entity.kind {
             ProgramEntityKind::Module | ProgramEntityKind::Function => {
                 &self.state.variable_locations
@@ -1234,6 +873,39 @@ impl<'a> ProgramEntityAbstractParentState<'a> {
 
         None
     }
+}
+
+pub fn drain<K: Clone + Ord, V: Clone>(
+    map: &mut imbl::OrdMap<K, V>,
+    f: impl Fn(&(K, V)) -> bool,
+) -> imbl::OrdMap<K, V> {
+    let mut drained = imbl::OrdMap::default();
+
+    *map = map
+        .clone()
+        .into_iter()
+        .filter(|entry| {
+            if f(entry) {
+                let (key, value) = entry;
+                drained.insert(key.clone(), value.clone());
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    drained
+}
+
+pub fn update_join<K: Clone + Ord, V: Clone + Join>(
+    map: imbl::OrdMap<K, V>,
+    key: K,
+    value: V,
+) -> imbl::OrdMap<K, V> {
+    map.update_with(key, value, |self_value, other_value| {
+        self_value.join(&other_value)
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -1270,18 +942,13 @@ impl<'a> ConstraintsBuilder<'a> {
                 return if guards.is_empty() {
                     Some(guard.clone())
                 } else {
-                    let mut new_guards: LatticeSet<_> = guards
+                    let mut new_guards: imbl::OrdSet<_> = guards
                         .iter()
                         .filter_map(|guard| self.filter_guard(edge_datas, guard))
                         .collect();
 
                     if new_guards.len() == 1 {
-                        Some(
-                            new_guards
-                                .values
-                                .remove_min()
-                                .expect("new_guards is not empty"),
-                        )
+                        Some(new_guards.remove_min().expect("new_guards is not empty"))
                     } else {
                         Some(Guard::Multiple(new_guards))
                     }
@@ -1298,9 +965,9 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn previous_locations<'l>(
         &'l self,
-        variable_locations: &'l LatticeMap<VariableName, LatticeSet<QualifiedLocation>>,
+        variable_locations: &'l imbl::OrdMap<VariableName, imbl::OrdSet<QualifiedLocation>>,
         variable_name: &VariableName,
-    ) -> Option<&'l LatticeSet<QualifiedLocation>> {
+    ) -> Option<&'l imbl::OrdSet<QualifiedLocation>> {
         if let Some(previous_locations) = variable_locations.get(variable_name) {
             return Some(previous_locations);
         }
@@ -1321,14 +988,14 @@ impl<'a> ConstraintsBuilder<'a> {
             return;
         }
 
-        let mut current_nodes: LatticeMap<ConstraintNode, Guard> = LatticeMap::default();
+        let mut current_nodes: imbl::OrdMap<ConstraintNode, Guard> = imbl::OrdMap::default();
 
         for (used_variable_name, used_locations) in used_variables.names.as_ref() {
             if let Some(previous_locations) = self
                 .previous_locations(&abstract_environment.variable_locations, used_variable_name)
             {
-                for previous_location in previous_locations.as_ref() {
-                    for used_location in used_locations.as_ref() {
+                for previous_location in previous_locations {
+                    for used_location in used_locations {
                         let node = ConstraintNode::TypeConstraint(IncludeConstraint::new(
                             Arc::new(Expression::Variable(ExpressionVariable::new(
                                 used_variable_name.clone(),
@@ -1353,7 +1020,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     .variable_locations
                     .insert(used_variable_name.clone(), used_locations.clone());
             } else {
-                current_nodes.extend(abstract_environment.current_nodes.values.clone());
+                current_nodes.extend(abstract_environment.current_nodes.clone());
                 // TODO: add support for forward references
             }
         }
@@ -1371,10 +1038,10 @@ impl<'a> ConstraintsBuilder<'a> {
         let node =
             ConstraintNode::TypeConstraint(IncludeConstraint::new(left.clone(), right.clone()));
 
-        let mut current_nodes = LatticeMap::unit(node.clone(), Guard::default());
+        let mut current_nodes = imbl::OrdMap::unit(node.clone(), Guard::default());
 
         if left.is_constant() {
-            for (from, guard) in abstract_environment.current_nodes.as_ref() {
+            for (from, guard) in &abstract_environment.current_nodes {
                 abstract_environment.constraint_graph.add_edge(
                     from.clone(),
                     node.clone(),
@@ -1388,9 +1055,9 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let current_empty_constraint = ConstraintNode::Empty(location);
 
-        for (from, guard) in abstract_environment.current_nodes.as_ref() {
+        for (from, guard) in &abstract_environment.current_nodes {
             let from = if guard.is_empty() {
-                from
+                &from
             } else {
                 abstract_environment.constraint_graph.add_edge(
                     from.clone(),
@@ -1405,7 +1072,8 @@ impl<'a> ConstraintsBuilder<'a> {
                 node.clone(),
                 Guard::Succeed(left.clone()),
             );
-            current_nodes = current_nodes.update_join(
+            current_nodes = update_join(
+                current_nodes,
                 from.clone(),
                 Guard::Raise {
                     expression: left.clone(),
@@ -1453,19 +1121,18 @@ impl<'a> ConstraintsBuilder<'a> {
 
         abstract_environment
             .variable_locations
-            .values
-            .insert(variable, LatticeSet::unit(location));
+            .insert(variable, imbl::OrdSet::unit(location));
     }
 
     pub fn assign_empty_constraint(
         &self,
         abstract_environment: &mut ProgramEntityAbstractEnvironment,
         location: QualifiedLocation,
-        guards: LatticeSet<Guard>,
+        guards: imbl::OrdSet<Guard>,
     ) {
         let node = ConstraintNode::Empty(location);
 
-        for (from, guard) in abstract_environment.current_nodes.as_ref() {
+        for (from, guard) in &abstract_environment.current_nodes {
             abstract_environment.constraint_graph.add_edge(
                 from.clone(),
                 node.clone(),
@@ -1473,7 +1140,7 @@ impl<'a> ConstraintsBuilder<'a> {
             );
         }
 
-        abstract_environment.current_nodes = LatticeMap::unit(node, Guard::Multiple(guards));
+        abstract_environment.current_nodes = imbl::OrdMap::unit(node, Guard::Multiple(guards));
     }
 
     pub fn gen_module_name(
@@ -1585,7 +1252,7 @@ impl<'a> ConstraintsBuilder<'a> {
         program_point: ProgramPoint,
         parameters: &nodes::Parameters,
     ) -> Result<
-        ExpressionEval<LatticeMap<ExpressionVariable, LatticeSet<Expression>>>,
+        ExpressionEval<imbl::OrdMap<ExpressionVariable, imbl::OrdSet<Expression>>>,
         ConstraintsBuilderError,
     > {
         let positional_only_parameters = parameters
@@ -1619,15 +1286,15 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let mut used_variables = UsedVariables::default();
 
-        let mut arguments = LatticeMap::default();
+        let mut arguments = imbl::OrdMap::default();
 
         for (variable_name, parameter_eval_option) in parameter_evals {
             let parameter_type_expression = if let Some(parameter_eval) = parameter_eval_option {
-                LatticeSet::unit(used_variables.consume(parameter_eval))
+                imbl::OrdSet::unit(used_variables.consume(parameter_eval))
             } else {
-                LatticeSet::default()
+                imbl::OrdSet::default()
             };
-            arguments = arguments.update_join(variable_name, parameter_type_expression);
+            arguments = update_join(arguments, variable_name, parameter_type_expression);
         }
 
         Ok(ExpressionEval::new(arguments, used_variables))
@@ -1932,7 +1599,10 @@ impl<'a> ConstraintsBuilder<'a> {
                 variable_name.clone(),
                 location.clone(),
             )),
-            UsedVariables::new(LatticeMap::unit(variable_name, LatticeSet::unit(location))),
+            UsedVariables::new(imbl::OrdMap::unit(
+                variable_name,
+                imbl::OrdSet::unit(location),
+            )),
         ))
     }
 
@@ -2037,8 +1707,8 @@ impl<'a> ConstraintsBuilder<'a> {
             SubProgramEntityContext::new(
                 AbstractEnvironmentSpecification {
                     arguments: parameters.value,
-                    return_type: LatticeSet::default(),
-                    exceptions: LatticeSet::default(),
+                    return_type: imbl::OrdSet::default(),
+                    exceptions: imbl::OrdSet::default(),
                 },
                 target_abstract_environment.variable_locations.clone(),
             ),
@@ -2069,9 +1739,9 @@ impl<'a> ConstraintsBuilder<'a> {
             ProgramEntity::new(location, program_point, ProgramEntityKind::Class),
             SubProgramEntityContext::new(
                 AbstractEnvironmentSpecification {
-                    arguments: LatticeMap::default(),
-                    return_type: LatticeSet::default(),
-                    exceptions: LatticeSet::default(),
+                    arguments: imbl::OrdMap::default(),
+                    return_type: imbl::OrdSet::default(),
+                    exceptions: imbl::OrdSet::default(),
                 },
                 target_abstract_environment.variable_locations.clone(),
             ),
@@ -2110,7 +1780,7 @@ impl<'a> ConstraintsBuilder<'a> {
             );
         }
 
-        target_abstract_environment.current_nodes = LatticeMap::unit(node, Guard::default());
+        target_abstract_environment.current_nodes = imbl::OrdMap::unit(node, Guard::default());
 
         Ok(target_abstract_environment)
     }
@@ -2124,7 +1794,7 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let mut current_nodes: LatticeSet<(ConstraintNode, Guard)> = LatticeSet::default();
+        let mut current_nodes: imbl::OrdSet<(ConstraintNode, Guard)> = imbl::OrdSet::default();
         for alias in &stmt_import.names {
             let module_name = self.gen_module_name(program_point, &alias.name)?;
 
@@ -2143,8 +1813,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
                 target_abstract_environment
                     .variable_locations
-                    .values
-                    .insert(identifier.clone(), LatticeSet::unit(location.clone()));
+                    .insert(identifier.clone(), imbl::OrdSet::unit(location.clone()));
 
                 let mut expression_option = Some(Arc::new(Expression::Variable(
                     ExpressionVariable::new(identifier, location),
@@ -2199,29 +1868,25 @@ impl<'a> ConstraintsBuilder<'a> {
                         expression_option = None;
                     }
 
-                    current_nodes.extend(
-                        target_abstract_environment
-                            .current_nodes
-                            .drain(|(_, guard)| match guard {
-                                Guard::Raise { .. } => true,
-                                _ => false,
-                            })
-                            .values,
-                    );
+                    current_nodes.extend(drain(
+                        &mut target_abstract_environment.current_nodes,
+                        |(_, guard)| match guard {
+                            Guard::Raise { .. } => true,
+                            _ => false,
+                        },
+                    ));
 
                     i = i + 1;
                 }
             };
 
-            current_nodes.extend(
-                target_abstract_environment
-                    .current_nodes
-                    .drain(|(_, guard)| match guard {
-                        Guard::Raise { .. } => true,
-                        _ => false,
-                    })
-                    .values,
-            );
+            current_nodes.extend(drain(
+                &mut target_abstract_environment.current_nodes,
+                |(_, guard)| match guard {
+                    Guard::Raise { .. } => true,
+                    _ => false,
+                },
+            ));
 
             target_abstract_environment
                 .imports
@@ -2230,7 +1895,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         target_abstract_environment
             .current_nodes
-            .extend(current_nodes.values);
+            .extend(current_nodes);
 
         Ok(target_abstract_environment)
     }
@@ -2250,7 +1915,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let type_expression = Arc::new(eval.value);
 
-        let mut current_nodes: LatticeSet<(ConstraintNode, Guard)> = LatticeSet::default();
+        let mut current_nodes: imbl::OrdSet<(ConstraintNode, Guard)> = imbl::OrdSet::default();
         for target_expr in &stmt_assign.targets {
             let Ok(target) = AssignmentTarget::try_from(target_expr) else {
                 todo!("add the right error");
@@ -2272,20 +1937,18 @@ impl<'a> ConstraintsBuilder<'a> {
                 AssignmentTarget::List(_) => todo!(),
             }
 
-            current_nodes.extend(
-                target_abstract_environment
-                    .current_nodes
-                    .drain(|(_, guard)| match guard {
-                        Guard::Raise { .. } => true,
-                        _ => false,
-                    })
-                    .values,
-            );
+            current_nodes.extend(drain(
+                &mut target_abstract_environment.current_nodes,
+                |(_, guard)| match guard {
+                    Guard::Raise { .. } => true,
+                    _ => false,
+                },
+            ));
         }
 
         target_abstract_environment
             .current_nodes
-            .extend(current_nodes.values);
+            .extend(current_nodes);
 
         Ok(target_abstract_environment)
     }
@@ -2353,7 +2016,7 @@ impl<'a> ConstraintsBuilder<'a> {
         self.assign_empty_constraint(
             &mut target_abstract_environment,
             self.gen_qualified_location(stmt_while.range),
-            LatticeSet::from_iter([
+            imbl::OrdSet::from_iter([
                 Guard::IsTrue(condition_expression.clone()),
                 Guard::IsFalse(condition_expression.clone()),
                 Guard::Raise {
@@ -2387,7 +2050,7 @@ impl<'a> ConstraintsBuilder<'a> {
         self.assign_empty_constraint(
             &mut target_abstract_environment,
             self.gen_qualified_location(stmt_if.range),
-            LatticeSet::from_iter([
+            imbl::OrdSet::from_iter([
                 Guard::IsTrue(condition_expression.clone()),
                 Guard::IsFalse(condition_expression.clone()),
                 Guard::Raise {
@@ -2519,7 +2182,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                 for argument in context.specification.arguments.keys() {
                     entry_state.variable_locations.insert(
                         argument.name.clone(),
-                        LatticeSet::unit(argument.location.clone()),
+                        imbl::OrdSet::unit(argument.location.clone()),
                     );
                 }
             }
@@ -2655,10 +2318,10 @@ impl Display for ProgramEntityNode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct DependentGraph<N: Ord, S> {
-    pub nodes: LatticeMap<N, S>,
-    pub dependents: LatticeMap<N, LatticeSet<N>>,
+    pub nodes: imbl::OrdMap<N, S>,
+    pub dependents: imbl::OrdMap<N, imbl::OrdSet<N>>,
 }
 
 impl<N: Clone + Ord, S> DependentGraph<N, S> {
@@ -2666,7 +2329,6 @@ impl<N: Clone + Ord, S> DependentGraph<N, S> {
         DependentGraph {
             nodes: self
                 .nodes
-                .values
                 .iter()
                 .map(|(node, state)| (node.clone(), f(node, state)))
                 .collect(),
@@ -2678,8 +2340,8 @@ impl<N: Clone + Ord, S> DependentGraph<N, S> {
 impl<N: Ord, S> Default for DependentGraph<N, S> {
     fn default() -> Self {
         Self {
-            nodes: LatticeMap::default(),
-            dependents: LatticeMap::default(),
+            nodes: imbl::OrdMap::default(),
+            dependents: imbl::OrdMap::default(),
         }
     }
 }
@@ -2696,11 +2358,11 @@ impl<N: Clone + Ord, S: Clone> DependentGraph<N, S> {
     }
 
     pub fn add_dependent(&mut self, from: N, to: N) {
-        self.dependents.values.entry(from).or_default().insert(to);
+        self.dependents.entry(from).or_default().insert(to);
     }
 
     pub fn remove_dependent(&mut self, from: N, to: N) {
-        if let Entry::Occupied(mut tos) = self.dependents.values.entry(from) {
+        if let Entry::Occupied(mut tos) = self.dependents.entry(from) {
             tos.get_mut().remove(&to);
         }
     }
@@ -2710,8 +2372,8 @@ impl<N: Clone + Ord, S: Clone> DependentGraph<N, S> {
         N: Display,
     {
         let mut edges: imbl::OrdSet<(N, N)> = imbl::OrdSet::new();
-        for (dependent, dependencies) in &self.dependents.values {
-            for dependency in &dependencies.values {
+        for (dependent, dependencies) in &self.dependents {
+            for dependency in dependencies {
                 edges.insert((dependent.clone(), dependency.clone()));
             }
         }
@@ -2719,7 +2381,7 @@ impl<N: Clone + Ord, S: Clone> DependentGraph<N, S> {
         let mut dot_representation = String::from("digraph \"");
         dot_representation.push_str(graph_name);
         dot_representation.push_str("\" {\n");
-        for node in self.nodes.values.keys() {
+        for node in self.nodes.keys() {
             dot_representation.push_str("    \"");
             dot_representation.push_str(&node.to_string());
             dot_representation.push_str("\";\n");
@@ -2737,21 +2399,8 @@ impl<N: Clone + Ord, S: Clone> DependentGraph<N, S> {
     }
 }
 
-impl<N: Clone + Ord, S: Clone + Lattice> Lattice for DependentGraph<N, S> {
-    fn includes(&self, other: &Self) -> bool {
-        self.nodes.includes(&other.nodes) && self.dependents.includes(&other.dependents)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self {
-            nodes: self.nodes.join(&other.nodes),
-            dependents: self.dependents.join(&other.dependents),
-        }
-    }
-}
-
 impl<N: Debug + Ord, S: Debug> Display for DependentGraph<N, S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "ApyAnalysisState {{ nodes: {:?}, dependents: {:?} }}",
@@ -2768,7 +2417,7 @@ pub enum ModuleNode {
 }
 
 impl Display for ModuleNode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ModuleNode::Entry => write!(f, "Entry"),
             ModuleNode::Module(module_name) => write!(f, "Module({})", module_name),
@@ -2803,24 +2452,10 @@ pub enum ConstraintsError {
     BuildError(#[from] ConstraintsBuilderError),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct CfgAnalysis {
     pub specification: AbstractEnvironmentSpecification,
     pub environment: ProgramEntityAbstractEnvironment,
-}
-
-impl Lattice for CfgAnalysis {
-    fn includes(&self, other: &Self) -> bool {
-        self.specification.includes(&other.specification)
-            && self.environment.includes(&other.environment)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self {
-            specification: self.specification.join(&other.specification),
-            environment: self.environment.join(&other.environment),
-        }
-    }
 }
 
 pub fn analyse_cfg<'a>(
@@ -2886,24 +2521,10 @@ pub fn analyse_cfg<'a>(
     dependent_graph
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ProgramAnalysis {
     pub specification: AbstractEnvironmentSpecification,
     pub constraint_graph: ConstraintGraph,
-}
-
-impl Lattice for ProgramAnalysis {
-    fn includes(&self, other: &Self) -> bool {
-        self.specification.includes(&other.specification)
-            && self.constraint_graph.includes(&other.constraint_graph)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self {
-            specification: self.specification.join(&other.specification),
-            constraint_graph: self.constraint_graph.join(&other.constraint_graph),
-        }
-    }
 }
 
 pub fn analyse_program<C: CfgImporter + Sync>(
@@ -2982,7 +2603,7 @@ pub fn analyse_program<C: CfgImporter + Sync>(
             dependent_graph.remove_dependent(builtins_module_node.clone(), ModuleNode::Exit);
 
             for abstract_environment in program_entity_dependency_graph.nodes.values() {
-                for import_module_name in abstract_environment.environment.imports.as_ref() {
+                for import_module_name in &abstract_environment.environment.imports {
                     let import_module_node = ModuleNode::Module(import_module_name.clone());
 
                     dependent_graph.add_dependent(import_module_node.clone(), module_node.clone());
@@ -3892,7 +3513,6 @@ mod tests {
             .expect("exit should exist");
 
         let actual_dot = exit_state.constraint_graph.dot("Constraints");
-        let actual_imports = &exit_state.imports.values;
 
         assert_eq!(expected_dot, actual_dot, "{actual_dot}");
         assert_eq!(
@@ -3900,7 +3520,7 @@ mod tests {
                 .into_iter()
                 .map(|expected_import| Arc::new(QualifiedName::parse(expected_import)))
                 .collect::<imbl::OrdSet<ModuleName>>(),
-            *actual_imports
+            exit_state.imports
         );
     }
 

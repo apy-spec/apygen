@@ -3,7 +3,7 @@ use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
 use crate::constraints::QualifiedLocation;
 pub use apy::OneOrMany;
 pub use apy::v1::{GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName};
-use apygen_analysis::lattice::{Lattice, OrdLattice};
+use apygen_analysis::lattice::{Join, LatticeOrd, OrdJoin, OrdLatticeOrd};
 use imbl;
 pub use num_bigint::BigInt;
 use num_bigint::BigUint;
@@ -31,7 +31,8 @@ pub enum Source {
     Specified,
 }
 
-impl OrdLattice for Source {}
+impl OrdJoin for Source {}
+impl OrdLatticeOrd for Source {}
 
 impl Display for Source {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -40,12 +41,12 @@ impl Display for Source {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub struct Sourced<T: Clone> {
+pub struct Sourced<T> {
     pub data: T,
     pub source: Source,
 }
 
-impl<T: Clone> Sourced<T> {
+impl<T> Sourced<T> {
     pub fn new(data: T, source: Source) -> Self {
         Sourced { data, source }
     }
@@ -58,7 +59,7 @@ impl<T: Clone> Sourced<T> {
         Sourced::new(data, Source::Specified)
     }
 
-    pub fn map<U: Clone>(self, f: impl FnOnce(T) -> U) -> Sourced<U> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Sourced<U> {
         Sourced {
             data: f(self.data),
             source: self.source,
@@ -66,16 +67,18 @@ impl<T: Clone> Sourced<T> {
     }
 }
 
-impl<T: Clone + Lattice> Lattice for Sourced<T> {
-    fn includes(&self, other: &Self) -> bool {
+impl<T: LatticeOrd + Clone> LatticeOrd for Sourced<T> {
+    fn leq(&self, other: &Self) -> bool {
         match (&self.source, &other.source) {
-            (Source::Specified, Source::Specified) => self.data.includes(&other.data),
-            (Source::Inferred, Source::Inferred) => self.data.includes(&other.data),
-            (Source::Inferred, Source::Specified) => false,
-            (Source::Specified, Source::Inferred) => true,
+            (Source::Specified, Source::Specified) => self.data.leq(&other.data),
+            (Source::Inferred, Source::Inferred) => self.data.leq(&other.data),
+            (Source::Inferred, Source::Specified) => true,
+            (Source::Specified, Source::Inferred) => false,
         }
     }
+}
 
+impl<T: Join + Clone> Join for Sourced<T> {
     fn join(&self, other: &Self) -> Self {
         match (&self.source, &other.source) {
             (Source::Specified, Source::Specified) => Sourced {
@@ -86,8 +89,8 @@ impl<T: Clone + Lattice> Lattice for Sourced<T> {
                 data: self.data.join(&other.data),
                 source: Source::Inferred,
             },
-            (Source::Inferred, Source::Specified) => other.clone(),
-            (Source::Specified, Source::Inferred) => self.clone(),
+            (Source::Inferred, Source::Specified) => self.clone(),
+            (Source::Specified, Source::Inferred) => other.clone(),
         }
     }
 }
@@ -1538,7 +1541,7 @@ impl TypeUnion {
         self.types.is_empty()
     }
 
-    pub fn contains(&self, ty: &Arc<Type>) -> bool {
+    pub fn contains(&self, ty: &Type) -> bool {
         self.types.contains(ty)
     }
 
@@ -1646,47 +1649,45 @@ impl Default for Type {
     }
 }
 
-impl Lattice for Type {
-    fn includes(&self, other: &Self) -> bool {
-        if self == other {
-            return true;
-        }
-        match self {
-            Type::Any => true,
-            Type::Never => false,
-            Type::NoReturn => false,
-            Type::Instance { .. } => true,
-            Type::Instance2(type_instance2) => true,
-            Type::Union(type_union) => {
-                if let Type::Union(other_type_union) = other {
-                    other_type_union.types().is_subset(type_union.types())
-                } else {
-                    type_union.contains(&Arc::new(other.clone()))
-                }
-            }
-            Type::Intersection(type_intersection) => {
-                if let Type::Intersection(other_type_intersection) = other {
-                    type_intersection.is_subset(other_type_intersection)
-                } else {
-                    other.includes(self)
-                }
-            }
-            Type::Literal(_) => false,
-        }
-    }
-
+impl Join for Type {
     fn join(&self, other: &Self) -> Self {
         if self == other {
             self.clone()
-        } else if self.includes(other) {
-            self.clone()
-        } else if other.includes(self) {
-            other.clone()
         } else {
             let mut type_union = TypeUnion::new();
             type_union.add_type(Arc::new(self.clone()));
             type_union.add_type(Arc::new(other.clone()));
             type_union.simplify().as_ref().clone()
+        }
+    }
+}
+
+impl LatticeOrd for Type {
+    fn leq(&self, other: &Self) -> bool {
+        if self == other {
+            return true;
+        }
+        match other {
+            Type::Any => true,
+            Type::Never => false,
+            Type::NoReturn => false,
+            Type::Instance { .. } => true,
+            Type::Instance2(_) => true,
+            Type::Union(other_type_union) => {
+                if let Type::Union(self_type_union) = self {
+                    self_type_union.types().leq(other_type_union.types())
+                } else {
+                    other_type_union.contains(self)
+                }
+            }
+            Type::Intersection(other_type_intersection) => {
+                if let Type::Intersection(self_type_intersection) = self {
+                    self_type_intersection.leq(other_type_intersection)
+                } else {
+                    other_type_intersection.contains(self)
+                }
+            }
+            Type::Literal(_) => false,
         }
     }
 }
@@ -1740,7 +1741,8 @@ pub enum Visibility {
     Internal,
 }
 
-impl OrdLattice for Visibility {}
+impl OrdJoin for Visibility {}
+impl OrdLatticeOrd for Visibility {}
 
 impl From<Visibility> for apy::v1::Visibility {
     fn from(visibility: Visibility) -> Self {
@@ -1765,7 +1767,8 @@ impl Initialisation {
     }
 }
 
-impl OrdLattice for Initialisation {}
+impl OrdLatticeOrd for Initialisation {}
+impl OrdJoin for Initialisation {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Mutability {
@@ -1780,7 +1783,8 @@ impl Mutability {
     }
 }
 
-impl OrdLattice for Mutability {}
+impl OrdLatticeOrd for Mutability {}
+impl OrdJoin for Mutability {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Finality {
@@ -1795,7 +1799,8 @@ impl Finality {
     }
 }
 
-impl OrdLattice for Finality {}
+impl OrdLatticeOrd for Finality {}
+impl OrdJoin for Finality {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Deprecation {
@@ -1810,7 +1815,8 @@ impl Deprecation {
     }
 }
 
-impl OrdLattice for Deprecation {}
+impl OrdLatticeOrd for Deprecation {}
+impl OrdJoin for Deprecation {}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LocalAttribute {
@@ -1878,12 +1884,12 @@ impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C> for
             return Ok(true);
         }
 
-        Ok(self.attribute_type.includes(&other.attribute_type)
-            && self.visibility.includes(&other.visibility)
-            && self.initialisation.includes(&other.initialisation)
-            && self.mutability.includes(&other.mutability)
-            && self.finality.includes(&other.finality)
-            && self.deprecation.includes(&other.deprecation))
+        Ok(other.attribute_type.leq(&self.attribute_type)
+            && other.visibility.leq(&self.visibility)
+            && other.initialisation.leq(&self.initialisation)
+            && other.mutability.leq(&self.mutability)
+            && other.finality.leq(&self.finality)
+            && other.deprecation.leq(&self.deprecation))
     }
 
     fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
@@ -2093,7 +2099,7 @@ pub fn resolve_local_attribute<'a>(
     Err(err)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, PartialOrd, Ord, Join, LatticeOrd)]
 pub struct RaisedExceptions {
     pub exceptions: imbl::OrdSet<Exception>,
 }
@@ -2103,18 +2109,6 @@ impl RaisedExceptions {
         RaisedExceptions {
             exceptions: imbl::OrdSet::unit(exception),
         }
-    }
-}
-
-impl Lattice for RaisedExceptions {
-    fn includes(&self, other: &Self) -> bool {
-        other.exceptions.is_subset(&self.exceptions)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        let mut exceptions = self.exceptions.clone();
-        exceptions.extend(other.exceptions.clone());
-        RaisedExceptions { exceptions }
     }
 }
 
@@ -2147,7 +2141,8 @@ impl Display for Completeness {
     }
 }
 
-impl OrdLattice for Completeness {}
+impl OrdLatticeOrd for Completeness {}
+impl OrdJoin for Completeness {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Pureness {
@@ -2165,7 +2160,8 @@ impl Display for Pureness {
     }
 }
 
-impl OrdLattice for Pureness {}
+impl OrdLatticeOrd for Pureness {}
+impl OrdJoin for Pureness {}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Diagnostic {
@@ -2244,11 +2240,11 @@ impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C>
             }
         }
 
-        Ok(self.returned_value.includes(&other.returned_value)
-            && self.raised_exceptions.includes(&other.raised_exceptions)
-            && self.completeness.includes(&other.completeness)
-            && self.pureness.includes(&other.pureness)
-            && other.diagnostics.is_subset(&self.diagnostics))
+        Ok(other.returned_value.leq(&self.returned_value)
+            && other.raised_exceptions.leq(&self.raised_exceptions)
+            && other.completeness.leq(&self.completeness)
+            && other.pureness.leq(&self.pureness)
+            && other.diagnostics.leq(&self.diagnostics))
     }
 
     fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
@@ -2267,16 +2263,13 @@ impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C>
             }
         }
 
-        let mut diagnostics = self.diagnostics.clone();
-        diagnostics.extend(other.diagnostics.clone());
-
         Ok(AbstractEnvironment {
             attributes,
             returned_value: self.returned_value.join(&other.returned_value),
             raised_exceptions: self.raised_exceptions.join(&other.raised_exceptions),
             completeness: self.completeness.join(&other.completeness),
             pureness: self.pureness.join(&other.pureness),
-            diagnostics,
+            diagnostics: self.diagnostics.join(&other.diagnostics),
         })
     }
 }

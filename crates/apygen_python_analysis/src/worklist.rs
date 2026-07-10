@@ -8,7 +8,7 @@ use apy::OneOrMany;
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint};
 pub use apygen_analysis::lattice::ContextualLattice;
-use apygen_analysis::lattice::Lattice;
+use apygen_analysis::lattice::{Join, LatticeOrd};
 use apygen_analysis::namespace::{
     Location, NamespaceLocation, NamespaceLocations, NamespaceLocationsProxy, Namespaces,
 };
@@ -535,7 +535,7 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                                         btree_map::Entry::Occupied(mut entry) => {
                                             let existing_argument_type = entry.get_mut();
 
-                                            if !existing_argument_type.includes(&argument_type) {
+                                            if !argument_type.leq(existing_argument_type) {
                                                 call_changed = true;
                                                 *existing_argument_type =
                                                     existing_argument_type.join(&argument_type);
@@ -565,7 +565,7 @@ pub fn cfg_worklist<'a, F: Filesystem>(
                             Entry::Occupied(mut entry) => {
                                 let existing_return_type = entry.get_mut();
 
-                                if !existing_return_type.includes(&return_type) {
+                                if !return_type.leq(existing_return_type) {
                                     return_changed = true;
                                     *existing_return_type = return_type
                                 }

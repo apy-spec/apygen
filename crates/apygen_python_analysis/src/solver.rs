@@ -6,15 +6,15 @@ use crate::abstract_environment::{
 use crate::constraints::{
     AbstractEnvironmentSpecification, BinaryOperator, ConstraintGraph, ConstraintNode,
     DependentGraph, Expression, ExpressionAnnotated, ExpressionBinary, ExpressionCall,
-    ExpressionClass, ExpressionFunction, ExpressionVariable, IncludeConstraint, LatticeMap,
-    LatticeSet, ModuleName, ModuleNode, ProgramAnalysis, ProgramEntity, ProgramEntityNode,
-    QualifiedLocation, VariableName,
+    ExpressionClass, ExpressionFunction, ExpressionVariable, IncludeConstraint, ModuleName,
+    ModuleNode, ProgramAnalysis, ProgramEntity, ProgramEntityNode, QualifiedLocation, VariableName,
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::{is_type_unreachable, pytype_consume_or_return_option};
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::lattice::Lattice;
+use apygen_analysis::fmt::{fmt_display_set, fmt_set};
+use apygen_analysis::lattice::Join;
 use apygen_analysis::log::LogAnalysisObserver;
 use apygen_analysis::{GraphAnalyser, analysis};
 use log::debug;
@@ -22,7 +22,7 @@ use std::convert::Infallible;
 use std::fmt::Display;
 use std::sync::Arc;
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct DefinedVariables {
     pub names: imbl::OrdMap<VariableName, imbl::OrdSet<QualifiedLocation>>,
 }
@@ -33,34 +33,23 @@ impl DefinedVariables {
     }
 }
 
-impl Lattice for DefinedVariables {
-    fn includes(&self, other: &Self) -> bool {
-        self.names
-            .is_submap_by(&other.names, |self_locations, other_locations| {
-                other_locations.is_subset(self_locations)
-            })
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self {
-            names: self
-                .names
-                .clone()
-                .intersection_with(other.names.clone(), |self_locations, other_locations| {
-                    self_locations.union(other_locations)
-                }),
-        }
+impl Display for DefinedVariables {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt_set(f, self.names.iter(), |f, (name, locations)| {
+            write!(f, "{}: ", name)?;
+            fmt_display_set(f, locations.iter())
+        })
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Join)]
 pub struct ExpressionEval {
     type_eval: PyTypeEval,
-    deferred: LatticeSet<Arc<Expression>>,
+    deferred: imbl::OrdSet<Arc<Expression>>,
 }
 
 impl ExpressionEval {
-    pub fn new(type_eval: PyTypeEval, deferred: LatticeSet<Arc<Expression>>) -> Self {
+    pub fn new(type_eval: PyTypeEval, deferred: imbl::OrdSet<Arc<Expression>>) -> Self {
         Self {
             type_eval,
             deferred,
@@ -73,38 +62,32 @@ impl Display for ExpressionEval {
         if self.deferred.is_empty() {
             write!(f, "{}", self.type_eval)
         } else {
-            write!(f, "{} ⊔ #deferred{}", self.type_eval, self.deferred)
+            write!(f, "{} ⊔ #deferred", self.type_eval)?;
+            fmt_display_set(f, self.deferred.iter())
         }
     }
 }
 
-impl Lattice for ExpressionEval {
-    fn includes(&self, other: &Self) -> bool {
-        self.type_eval.includes(&other.type_eval) && self.deferred.includes(&other.deferred)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self::new(
-            self.type_eval.join(&other.type_eval),
-            self.deferred.join(&other.deferred),
-        )
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
 pub struct EvaluationState {
-    pub evaluations: LatticeMap<Arc<Expression>, ExpressionEval>,
-    pub return_value: LatticeSet<Arc<Expression>>,
+    pub evaluations: imbl::OrdMap<Arc<Expression>, ExpressionEval>,
+    pub return_value: imbl::OrdSet<Arc<Expression>>,
     pub raised_exceptions: RaisedExceptions,
     pub defined_variables: DefinedVariables,
 }
 
 impl Display for EvaluationState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("(evaluations: ")?;
+        fmt_set(f, self.evaluations.iter(), |f, (expression, eval)| {
+            write!(f, "{}: {}", expression, eval)
+        })?;
+        f.write_str(", return: ")?;
+        fmt_display_set(f, self.return_value.iter())?;
         write!(
             f,
-            "(evaluations: {}, return = {}, raised = {}, defined_variables = {:?})",
-            self.evaluations, self.return_value, self.raised_exceptions, self.defined_variables
+            ", raised: {}, defined_variables = {})",
+            self.raised_exceptions, self.defined_variables
         )
     }
 }
@@ -131,31 +114,13 @@ impl EvaluationState {
     }
 }
 
-impl Lattice for EvaluationState {
-    fn includes(&self, other: &Self) -> bool {
-        self.evaluations.includes(&other.evaluations)
-            && self.return_value.includes(&other.return_value)
-            && self.raised_exceptions.includes(&other.raised_exceptions)
-            && self.defined_variables.includes(&other.defined_variables)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self {
-            evaluations: self.evaluations.join(&other.evaluations),
-            return_value: self.return_value.join(&other.return_value),
-            raised_exceptions: self.raised_exceptions.join(&other.raised_exceptions),
-            defined_variables: self.defined_variables.join(&other.defined_variables),
-        }
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
 pub struct SolverState {
-    pub states: LatticeMap<ConstraintNode, EvaluationState>,
+    pub states: imbl::OrdMap<ConstraintNode, EvaluationState>,
 }
 
 impl SolverState {
-    pub fn new(evaluations: LatticeMap<ConstraintNode, EvaluationState>) -> Self {
+    pub fn new(evaluations: imbl::OrdMap<ConstraintNode, EvaluationState>) -> Self {
         Self {
             states: evaluations,
         }
@@ -163,16 +128,6 @@ impl SolverState {
 
     pub fn clone_abstract_state_or_default(&self, node: &ConstraintNode) -> EvaluationState {
         self.states.get(node).cloned().unwrap_or_default()
-    }
-}
-
-impl Lattice for SolverState {
-    fn includes(&self, other: &Self) -> bool {
-        self.states.includes(&other.states)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self::new(self.states.join(&other.states))
     }
 }
 
@@ -309,12 +264,12 @@ impl<'a> ConstraintSolver<'a> {
     pub fn resolve_expression_evaluations(
         &self,
         abstract_state: &EvaluationState,
-        done_expressions: LatticeSet<&Expression>,
+        done_expressions: imbl::OrdSet<&Expression>,
         evaluation: &ExpressionEval,
     ) -> Option<PyTypeEval> {
         let mut ty = evaluation.type_eval.clone();
 
-        for deferred in evaluation.deferred.as_ref() {
+        for deferred in &evaluation.deferred {
             ty = ty.join(&self.evaluate_expression(
                 abstract_state,
                 done_expressions.clone(),
@@ -328,7 +283,7 @@ impl<'a> ConstraintSolver<'a> {
     pub fn evaluate_expression_variable(
         &self,
         abstract_state: &EvaluationState,
-        done_expressions: LatticeSet<&Expression>,
+        done_expressions: imbl::OrdSet<&Expression>,
         expression_variable: &ExpressionVariable,
     ) -> Option<PyTypeEval> {
         let parent_location = expression_variable.location.at_parent_location().unwrap();
@@ -364,7 +319,7 @@ impl<'a> ConstraintSolver<'a> {
     pub fn evaluate_expression_annotated(
         &self,
         abstract_state: &EvaluationState,
-        done_expressions: LatticeSet<&Expression>,
+        done_expressions: imbl::OrdSet<&Expression>,
         expression_annotated: &ExpressionAnnotated,
     ) -> Option<PyTypeEval> {
         let annotation_eval = self.evaluate_expression(
@@ -384,7 +339,7 @@ impl<'a> ConstraintSolver<'a> {
     pub fn evaluate_expression_function(
         &self,
         abstract_state: &EvaluationState,
-        done_expressions: LatticeSet<&Expression>,
+        done_expressions: imbl::OrdSet<&Expression>,
         expression_function: &ExpressionFunction,
     ) -> Option<PyTypeEval> {
         Some(PyTypeEval::with_default_effects(Type::new_literal(
@@ -408,7 +363,7 @@ impl<'a> ConstraintSolver<'a> {
     pub fn evaluate_expression_class(
         &self,
         abstract_state: &EvaluationState,
-        done_expressions: LatticeSet<&Expression>,
+        done_expressions: imbl::OrdSet<&Expression>,
         expression_class: &ExpressionClass,
     ) -> Option<PyTypeEval> {
         Some(PyTypeEval::with_default_effects(Type::new_literal(
@@ -433,7 +388,7 @@ impl<'a> ConstraintSolver<'a> {
     pub fn evaluate_expression_call(
         &self,
         abstract_state: &EvaluationState,
-        done_expressions: LatticeSet<&Expression>,
+        done_expressions: imbl::OrdSet<&Expression>,
         expression_call: &ExpressionCall,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -510,7 +465,7 @@ impl<'a> ConstraintSolver<'a> {
     pub fn evaluate_expression_binary(
         &self,
         abstract_state: &EvaluationState,
-        done_expressions: LatticeSet<&Expression>,
+        done_expressions: imbl::OrdSet<&Expression>,
         expression_binary: &ExpressionBinary,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -586,7 +541,7 @@ impl<'a> ConstraintSolver<'a> {
     pub fn evaluate_expression(
         &self,
         abstract_state: &EvaluationState,
-        done_expressions: LatticeSet<&Expression>,
+        done_expressions: imbl::OrdSet<&Expression>,
         expression: &Arc<Expression>,
     ) -> Option<PyTypeEval> {
         if done_expressions.contains(&expression.as_ref()) {
@@ -595,7 +550,7 @@ impl<'a> ConstraintSolver<'a> {
 
         let new_done_expressions = done_expressions.update(expression);
 
-        if let Some(eval) = abstract_state.evaluations.values.get(expression) {
+        if let Some(eval) = abstract_state.evaluations.get(expression) {
             return self.resolve_expression_evaluations(
                 abstract_state,
                 new_done_expressions,
@@ -669,24 +624,21 @@ impl<'a> ConstraintSolver<'a> {
         abstract_state: &mut EvaluationState,
         type_constraint: &IncludeConstraint<Arc<Expression>>,
     ) {
-        let previous_eval = abstract_state
-            .evaluations
-            .values
-            .get(&type_constraint.right);
+        let previous_eval = abstract_state.evaluations.get(&type_constraint.right);
 
         let expression_eval = match self.evaluate_expression(
             abstract_state,
-            LatticeSet::default(),
+            imbl::OrdSet::default(),
             &type_constraint.left,
         ) {
-            Some(type_eval) => ExpressionEval::new(type_eval, LatticeSet::default()),
+            Some(type_eval) => ExpressionEval::new(type_eval, imbl::OrdSet::default()),
             None => ExpressionEval::new(
                 PyTypeEval::never(),
-                LatticeSet::unit(type_constraint.left.clone()),
+                imbl::OrdSet::unit(type_constraint.left.clone()),
             ),
         };
 
-        abstract_state.evaluations.values.insert(
+        abstract_state.evaluations.insert(
             type_constraint.right.clone(),
             if let Some(previous_eval) = previous_eval {
                 previous_eval.join(&expression_eval)
@@ -714,10 +666,9 @@ impl GraphAnalyser for ConstraintSolver<'_> {
         Ok(self
             .graph
             .edges
-            .values
             .get(node)
             .into_iter()
-            .flat_map(|tos| tos.values.keys()))
+            .flat_map(|tos| tos.keys()))
     }
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
@@ -742,15 +693,15 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                             .fold(ExpressionEval::default(), |acc, expression| {
                                 acc.join(&match self.evaluate_expression(
                                     &abstract_state,
-                                    LatticeSet::default(),
+                                    imbl::OrdSet::default(),
                                     &Arc::new(expression.clone()),
                                 ) {
                                     Some(type_eval) => {
-                                        ExpressionEval::new(type_eval, LatticeSet::default())
+                                        ExpressionEval::new(type_eval, imbl::OrdSet::default())
                                     }
                                     None => ExpressionEval::new(
                                         PyTypeEval::never(),
-                                        LatticeSet::unit(Arc::new(expression.clone())),
+                                        imbl::OrdSet::unit(Arc::new(expression.clone())),
                                     ),
                                 })
                             });
@@ -776,7 +727,7 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                 );
             }
             ConstraintNode::ReturnConstraint(expression) => {
-                abstract_state.return_value = LatticeSet::unit(expression.clone());
+                abstract_state.return_value = imbl::OrdSet::unit(expression.clone());
             }
             _ => {}
         }
@@ -820,8 +771,8 @@ impl GraphAnalyser for ConstraintSolver<'_> {
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
         Ok(EvaluationState {
-            evaluations: LatticeMap::new(left.evaluations.values.clone().union_with(
-                right.evaluations.values.clone(),
+            evaluations: left.evaluations.clone().union_with(
+                right.evaluations.clone(),
                 |left, right| {
                     let mut eval = left.join(&right);
 
@@ -856,7 +807,7 @@ impl GraphAnalyser for ConstraintSolver<'_> {
 
                     eval
                 },
-            )),
+            ),
             return_value: left.return_value.join(&right.return_value),
             raised_exceptions: left.raised_exceptions.join(&right.raised_exceptions),
             defined_variables: left.defined_variables.join(&right.defined_variables),
@@ -864,42 +815,20 @@ impl GraphAnalyser for ConstraintSolver<'_> {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
 pub struct ProgramEvaluation {
-    pub states: LatticeMap<QualifiedLocation, EvaluationState>,
+    pub states: imbl::OrdMap<QualifiedLocation, EvaluationState>,
 }
 
 impl ProgramEvaluation {
-    pub fn new(states: LatticeMap<QualifiedLocation, EvaluationState>) -> Self {
+    pub fn new(states: imbl::OrdMap<QualifiedLocation, EvaluationState>) -> Self {
         Self { states }
     }
 }
 
-impl Lattice for ProgramEvaluation {
-    fn includes(&self, other: &Self) -> bool {
-        self.states.includes(&other.states)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self::new(self.states.join(&other.states))
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
 pub struct ProgramEntitySolverState {
-    pub states: LatticeMap<ProgramEntityNode, ProgramEvaluation>,
-}
-
-impl Lattice for ProgramEntitySolverState {
-    fn includes(&self, other: &Self) -> bool {
-        self.states.includes(&other.states)
-    }
-
-    fn join(&self, other: &Self) -> Self {
-        Self {
-            states: self.states.join(&other.states),
-        }
-    }
+    pub states: imbl::OrdMap<ProgramEntityNode, ProgramEvaluation>,
 }
 
 pub struct ProgramEntityConstraintSolver<'a> {
@@ -939,9 +868,8 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
         Ok(self
             .graph
             .dependents
-            .values
             .get(node)
-            .map(|nodes| nodes.values.iter())
+            .map(|nodes| nodes.iter())
             .into_iter()
             .flatten())
     }
@@ -1049,7 +977,7 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
 
 #[derive(Debug, Default, Clone)]
 pub struct ModuleSolverState {
-    pub evaluations: LatticeMap<ModuleNode, ProgramEvaluation>,
+    pub evaluations: imbl::OrdMap<ModuleNode, ProgramEvaluation>,
 }
 
 pub struct ModuleConstraintSolver<'a> {
@@ -1081,9 +1009,8 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
         Ok(self
             .graph
             .dependents
-            .values
             .get(node)
-            .map(|nodes| nodes.values.iter())
+            .map(|nodes| nodes.iter())
             .into_iter()
             .flatten())
     }
@@ -1113,7 +1040,6 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
                 )?
                 .states[&ProgramEntityNode::Exit]
                     .states
-                    .values
                     .clone(),
             );
         }
@@ -1238,7 +1164,7 @@ mod tests {
         module:
             a@{module[1:0]} = (0 ➤ ({} - Pure - Total))
             a@{module[4:4]} = (Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] ➤ ({} - Pure - Total)) ⊔ #deferred{(a@{module[4:8]}) + (1)}
-            b@{module[6:0]} = (@class(builtins[1:6]) ➤ ({} - Pure - Total)) ⊔ #deferred{a@{module[6:4]}}
+            b@{module[6:0]} = (Union[@class(builtins[1:6]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] ➤ ({} - Pure - Total)) ⊔ #deferred{a@{module[6:4]}}
             #return = {}
         "##},  // TODO: fix this when operations are implemented
     )]
@@ -1295,7 +1221,14 @@ mod tests {
             for (variable, ty) in abstract_state.variables() {
                 actual_types.push_str(&format!("    {} = {}\n", variable, ty));
             }
-            actual_types.push_str(&format!("    #return = {}\n", abstract_state.return_value));
+            actual_types.push_str("    #return = {");
+            for (i, expression) in abstract_state.return_value.iter().enumerate() {
+                if i > 0 {
+                    actual_types.push_str(", ");
+                }
+                actual_types.push_str(&format!("{}", expression));
+            }
+            actual_types.push_str("}\n");
         }
 
         assert_eq!(expected_types, actual_types, "{actual_types}");
