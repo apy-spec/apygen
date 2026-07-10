@@ -9,3 +9,4 @@ license.workspace = true
 apygen_cfg = { workspace = true }
 rayon = { workspace = true }
 log = { workspace = true }
+imbl = { workspace = true }

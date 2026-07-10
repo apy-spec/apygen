@@ -1,6 +1,7 @@
 pub use apygen_cfg as cfg;
 use std::collections::BTreeSet;
 
+pub mod imbl;
 pub mod lattice;
 pub mod log;
 pub mod namespace;

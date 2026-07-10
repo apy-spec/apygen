@@ -1,4 +1,6 @@
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map, hash_map};
 use std::convert::Infallible;
+use std::hash::Hash;
 use std::sync::Arc;
 
 pub trait ContextualLattice<C>: Sized {
@@ -118,5 +120,163 @@ impl<T: OrdLattice> Lattice for T {
 
     fn join(&self, other: &Self) -> Self {
         self.max(other).clone()
+    }
+}
+
+pub trait Join {
+    fn join(&self, other: &Self) -> Self;
+}
+
+impl<T: Join + Eq> Join for Arc<T> {
+    fn join(&self, other: &Self) -> Self {
+        if self == other {
+            return self.clone();
+        }
+        Arc::new(self.as_ref().join(other.as_ref()))
+    }
+}
+
+impl<T: Join + Clone> Join for Option<T> {
+    fn join(&self, other: &Self) -> Self {
+        match (self, other) {
+            (Some(self_lattice), Some(other_lattice)) => Some(self_lattice.join(other_lattice)),
+            (Some(self_lattice), None) => Some(self_lattice.clone()),
+            (None, Some(other_lattice)) => Some(other_lattice.clone()),
+            (None, None) => None,
+        }
+    }
+}
+
+impl<T: Clone + Ord> Join for BTreeSet<T> {
+    fn join(&self, other: &Self) -> Self {
+        BTreeSet::from_iter(self.union(other).cloned())
+    }
+}
+
+impl<K: Clone + Ord, V: Join + Clone> Join for BTreeMap<K, V> {
+    fn join(&self, other: &Self) -> Self {
+        let mut out = self.clone();
+        for (key, value) in other {
+            match out.entry(key.clone()) {
+                btree_map::Entry::Vacant(entry) => {
+                    entry.insert(value.clone());
+                }
+                btree_map::Entry::Occupied(entry) => {
+                    let current = entry.into_mut();
+                    *current = current.join(value);
+                }
+            }
+        }
+        out
+    }
+}
+
+impl<T: Clone + Eq + Hash> Join for HashSet<T> {
+    fn join(&self, other: &Self) -> Self {
+        HashSet::from_iter(self.union(other).cloned())
+    }
+}
+
+impl<K: Clone + Eq + Hash, V: Join + Clone> Join for HashMap<K, V> {
+    fn join(&self, other: &Self) -> Self {
+        let mut out = self.clone();
+        for (key, value) in other {
+            match out.entry(key.clone()) {
+                hash_map::Entry::Vacant(entry) => {
+                    entry.insert(value.clone());
+                }
+                hash_map::Entry::Occupied(entry) => {
+                    let current = entry.into_mut();
+                    *current = current.join(value);
+                }
+            }
+        }
+        out
+    }
+}
+
+pub trait OrdJoin: Ord + Clone {}
+
+impl<T: OrdJoin> Join for T {
+    fn join(&self, other: &Self) -> Self {
+        self.max(other).clone()
+    }
+}
+
+pub trait Meet {
+    fn meet(&self, other: &Self) -> Self;
+}
+
+impl<T: Meet + Eq> Meet for Arc<T> {
+    fn meet(&self, other: &Self) -> Self {
+        if self == other {
+            return self.clone();
+        }
+        Arc::new(self.as_ref().meet(other.as_ref()))
+    }
+}
+
+impl<T: Meet + Clone> Meet for Option<T> {
+    fn meet(&self, other: &Self) -> Self {
+        match (self, other) {
+            (Some(self_lattice), Some(other_lattice)) => Some(self_lattice.meet(other_lattice)),
+            _ => None,
+        }
+    }
+}
+
+impl<T: Clone + Ord> Meet for BTreeSet<T> {
+    fn meet(&self, other: &Self) -> Self {
+        BTreeSet::from_iter(self.intersection(other).cloned())
+    }
+}
+
+impl<K: Clone + Ord, V: Meet + Clone> Meet for BTreeMap<K, V> {
+    fn meet(&self, other: &Self) -> Self {
+        let mut out = self.clone();
+        for (key, value) in other {
+            match out.entry(key.clone()) {
+                btree_map::Entry::Vacant(entry) => {
+                    entry.insert(value.clone());
+                }
+                btree_map::Entry::Occupied(entry) => {
+                    let current = entry.into_mut();
+                    *current = current.meet(value);
+                }
+            }
+        }
+        out
+    }
+}
+
+impl<T: Clone + Eq + Hash> Meet for HashSet<T> {
+    fn meet(&self, other: &Self) -> Self {
+        HashSet::from_iter(self.intersection(other).cloned())
+    }
+}
+
+impl<K: Clone + Eq + Hash, V: Meet + Clone> Meet for HashMap<K, V> {
+    fn meet(&self, other: &Self) -> Self {
+        let mut out = self.clone();
+        for (key, value) in other {
+            match out.entry(key.clone()) {
+                hash_map::Entry::Vacant(entry) => {
+                    entry.insert(value.clone());
+                }
+                hash_map::Entry::Occupied(entry) => {
+                    let current = entry.into_mut();
+                    *current = current.meet(value);
+                }
+            }
+        }
+        out
+    }
+}
+
+pub trait OrdMeet: Ord + Clone {}
+
+impl<T: OrdMeet> Meet for T {
+    fn meet(&self, other: &Self) -> Self {
+        self.min(other).clone()
     }
 }
