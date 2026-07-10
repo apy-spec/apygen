@@ -373,3 +373,7 @@ impl<T: OrdMeet> Meet for T {
         self.min(other).clone()
     }
 }
+
+pub use apygen_analysis_derive::Join;
+pub use apygen_analysis_derive::LatticeOrd;
+pub use apygen_analysis_derive::Meet;

@@ -12,6 +12,7 @@ apygen = { path = "crates/apygen" }
 apygen_python_analysis = { path = "crates/apygen_python_analysis" }
 apygen_cfg = { path = "crates/apygen_cfg" }
 apygen_analysis = { path = "crates/apygen_analysis" }
+apygen_analysis_derive = { path = "crates/apygen_analysis_derive" }
 apygen_finder = { path = "crates/apygen_finder" }
 
 apy = { git = "https://github.com/apy-spec/apy-rs.git" }
@@ -35,6 +36,10 @@ num-traits = { version = "0.2.19" }
 num-rational = { version = "0.4.2" }
 num-complex = { version = "0.4.6" }
 indoc = { version = "2.0.7" }
+
+syn = { version = "2.0.118" }
+quote = { version = "1.0.46" }
+proc-macro2 = { version = "1.0.106" }
 
 [profile.release]
 debug = true

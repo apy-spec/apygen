@@ -10,3 +10,8 @@ apygen_cfg = { workspace = true }
 rayon = { workspace = true }
 log = { workspace = true }
 imbl = { workspace = true }
+apygen_analysis_derive = { workspace = true, optional = true }
+
+[features]
+derive = ["dep:apygen_analysis_derive"]
+default = ["derive"]
