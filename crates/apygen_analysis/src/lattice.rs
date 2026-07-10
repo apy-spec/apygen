@@ -123,6 +123,67 @@ impl<T: OrdLattice> Lattice for T {
     }
 }
 
+pub trait LatticeOrd {
+    fn leq(&self, other: &Self) -> bool;
+}
+
+impl<T: LatticeOrd> LatticeOrd for Arc<T> {
+    fn leq(&self, other: &Self) -> bool {
+        self.as_ref().leq(other.as_ref())
+    }
+}
+
+impl<T: LatticeOrd> LatticeOrd for Option<T> {
+    fn leq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Some(self_lattice), Some(other_lattice)) => self_lattice.leq(other_lattice),
+            (Some(_), None) => false,
+            (None, Some(_)) => true,
+            (None, None) => true,
+        }
+    }
+}
+
+impl<T: Ord> LatticeOrd for BTreeSet<T> {
+    fn leq(&self, other: &Self) -> bool {
+        self.is_subset(other)
+    }
+}
+
+impl<K: Ord, V: LatticeOrd> LatticeOrd for BTreeMap<K, V> {
+    fn leq(&self, other: &Self) -> bool {
+        self.iter().all(|(key, self_value)| {
+            other
+                .get(key)
+                .is_some_and(|other_value| self_value.leq(other_value))
+        })
+    }
+}
+
+impl<T: Eq + Hash> LatticeOrd for HashSet<T> {
+    fn leq(&self, other: &Self) -> bool {
+        self.is_subset(other)
+    }
+}
+
+impl<K: Eq + Hash, V: LatticeOrd> LatticeOrd for HashMap<K, V> {
+    fn leq(&self, other: &Self) -> bool {
+        self.iter().all(|(key, self_value)| {
+            other
+                .get(key)
+                .is_some_and(|other_value| self_value.leq(other_value))
+        })
+    }
+}
+
+pub trait OrdLatticeOrd: Ord {}
+
+impl<T: OrdLatticeOrd> LatticeOrd for T {
+    fn leq(&self, other: &Self) -> bool {
+        self <= other
+    }
+}
+
 pub trait Join {
     fn join(&self, other: &Self) -> Self;
 }
@@ -149,12 +210,20 @@ impl<T: Join + Clone> Join for Option<T> {
 
 impl<T: Clone + Ord> Join for BTreeSet<T> {
     fn join(&self, other: &Self) -> Self {
-        BTreeSet::from_iter(self.union(other).cloned())
+        if self == other {
+            self.clone()
+        } else {
+            BTreeSet::from_iter(self.union(other).cloned())
+        }
     }
 }
 
-impl<K: Clone + Ord, V: Join + Clone> Join for BTreeMap<K, V> {
+impl<K: Clone + Ord, V: Join + Clone + Eq> Join for BTreeMap<K, V> {
     fn join(&self, other: &Self) -> Self {
+        if self == other {
+            return self.clone();
+        }
+
         let mut out = self.clone();
         for (key, value) in other {
             match out.entry(key.clone()) {
@@ -173,12 +242,20 @@ impl<K: Clone + Ord, V: Join + Clone> Join for BTreeMap<K, V> {
 
 impl<T: Clone + Eq + Hash> Join for HashSet<T> {
     fn join(&self, other: &Self) -> Self {
-        HashSet::from_iter(self.union(other).cloned())
+        if self == other {
+            self.clone()
+        } else {
+            HashSet::from_iter(self.union(other).cloned())
+        }
     }
 }
 
-impl<K: Clone + Eq + Hash, V: Join + Clone> Join for HashMap<K, V> {
+impl<K: Clone + Eq + Hash, V: Join + Clone + Eq> Join for HashMap<K, V> {
     fn join(&self, other: &Self) -> Self {
+        if self == other {
+            return self.clone();
+        }
+
         let mut out = self.clone();
         for (key, value) in other {
             match out.entry(key.clone()) {
@@ -227,12 +304,20 @@ impl<T: Meet + Clone> Meet for Option<T> {
 
 impl<T: Clone + Ord> Meet for BTreeSet<T> {
     fn meet(&self, other: &Self) -> Self {
-        BTreeSet::from_iter(self.intersection(other).cloned())
+        if self == other {
+            self.clone()
+        } else {
+            BTreeSet::from_iter(self.union(other).cloned())
+        }
     }
 }
 
-impl<K: Clone + Ord, V: Meet + Clone> Meet for BTreeMap<K, V> {
+impl<K: Clone + Ord, V: Meet + Clone + Eq> Meet for BTreeMap<K, V> {
     fn meet(&self, other: &Self) -> Self {
+        if self == other {
+            return self.clone();
+        }
+
         let mut out = self.clone();
         for (key, value) in other {
             match out.entry(key.clone()) {
@@ -251,12 +336,20 @@ impl<K: Clone + Ord, V: Meet + Clone> Meet for BTreeMap<K, V> {
 
 impl<T: Clone + Eq + Hash> Meet for HashSet<T> {
     fn meet(&self, other: &Self) -> Self {
-        HashSet::from_iter(self.intersection(other).cloned())
+        if self == other {
+            self.clone()
+        } else {
+            HashSet::from_iter(self.union(other).cloned())
+        }
     }
 }
 
-impl<K: Clone + Eq + Hash, V: Meet + Clone> Meet for HashMap<K, V> {
+impl<K: Clone + Eq + Hash, V: Meet + Clone + Eq> Meet for HashMap<K, V> {
     fn meet(&self, other: &Self) -> Self {
+        if self == other {
+            return self.clone();
+        }
+
         let mut out = self.clone();
         for (key, value) in other {
             match out.entry(key.clone()) {
