@@ -98,15 +98,12 @@ pub fn call_literal(type_instance: &TypeInstance, arguments: &Arguments) -> Opti
 /// References:
 /// - https://docs.python.org/3/glossary.html#term-method-resolution-order
 /// - https://docs.python.org/3/howto/mro.html
-pub fn method_resolution_order<'a>(
-    namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
-    literal_class: &'a LiteralClass,
-) -> Option<VecDeque<&'a LiteralClass>> {
+pub fn method_resolution_order(literal_class: &LiteralClass) -> Option<VecDeque<&LiteralClass>> {
     let mut class_bases = VecDeque::from_iter(&literal_class.value.bases);
 
     let mut class_bases_mro = class_bases
         .iter()
-        .map(|base| method_resolution_order(namespaces, base))
+        .map(|base| method_resolution_order(base))
         .collect::<Option<Vec<_>>>()?;
     let mut class = VecDeque::from_iter([literal_class]);
 
@@ -163,7 +160,7 @@ pub fn resolve_class_attribute<'a>(
     literal_class: &LiteralClass,
     name: &Identifier,
 ) -> Option<&'a Attribute> {
-    for class in method_resolution_order(namespaces, literal_class)? {
+    for class in method_resolution_order(literal_class)? {
         let Some(environment) = namespaces
             .get_abstract_environment(&Location::at_exit(class.value.location.as_sub_location()))
         else {
@@ -422,8 +419,7 @@ mod tests {
 
         let class_c = create_target_base(&namespaces, namespace_location.clone(), "C");
 
-        let class_c_mro =
-            method_resolution_order(&namespaces, class_c).expect("Failed to compute MRO");
+        let class_c_mro = method_resolution_order(&class_c).expect("Failed to compute MRO");
 
         assert_eq_mro(
             &namespaces,
@@ -447,8 +443,7 @@ mod tests {
 
         let class_b = create_target_base(&namespaces, namespace_location.clone(), "B");
 
-        let class_b_mro =
-            method_resolution_order(&namespaces, class_b).expect("Failed to compute MRO");
+        let class_b_mro = method_resolution_order(&class_b).expect("Failed to compute MRO");
 
         assert_eq_mro(
             &namespaces,
@@ -468,8 +463,7 @@ mod tests {
 
         let class_a = create_target_base(&namespaces, namespace_location.clone(), "A");
 
-        let class_a_mro =
-            method_resolution_order(&namespaces, class_a).expect("Failed to compute MRO");
+        let class_a_mro = method_resolution_order(&class_a).expect("Failed to compute MRO");
 
         assert_eq_mro(
             &namespaces,
@@ -500,14 +494,13 @@ mod tests {
 
         let class_c = create_target_base(&namespaces, namespace_location.clone(), "C");
 
-        let class_c_mro = method_resolution_order(&namespaces, class_c);
+        let class_c_mro = method_resolution_order(&class_c);
 
         assert_eq!(class_c_mro, None);
 
         let class_b = create_target_base(&namespaces, namespace_location.clone(), "B");
 
-        let class_b_mro =
-            method_resolution_order(&namespaces, class_b).expect("Failed to compute MRO");
+        let class_b_mro = method_resolution_order(&class_b).expect("Failed to compute MRO");
 
         assert_eq_mro(
             &namespaces,
@@ -535,8 +528,7 @@ mod tests {
 
         let class_a = create_target_base(&namespaces, namespace_location.clone(), "A");
 
-        let class_a_mro =
-            method_resolution_order(&namespaces, class_a).expect("Failed to compute MRO");
+        let class_a_mro = method_resolution_order(class_a).expect("Failed to compute MRO");
 
         assert_eq_mro(
             &namespaces,
@@ -582,8 +574,7 @@ mod tests {
 
         let class_a = create_target_base(&namespaces, namespace_location.clone(), "A");
 
-        let class_a_mro =
-            method_resolution_order(&namespaces, class_a).expect("Failed to compute MRO");
+        let class_a_mro = method_resolution_order(class_a).expect("Failed to compute MRO");
 
         assert_eq_mro(
             &namespaces,
