@@ -283,7 +283,7 @@ impl<'a> ConstraintSolver<'a> {
         }
     }
 
-    pub fn resolve_expression_evaluations(
+    pub fn resolve_expression_evaluation(
         &self,
         abstract_state: &EvaluationState,
         done_expressions: imbl::OrdSet<&Expression>,
@@ -291,15 +291,36 @@ impl<'a> ConstraintSolver<'a> {
     ) -> Option<PyTypeEval> {
         let mut ty = evaluation.type_eval.clone();
 
-        for deferred in &evaluation.deferred {
+        for expression in &evaluation.deferred {
             ty = ty.join(&self.evaluate_expression(
                 abstract_state,
                 done_expressions.clone(),
-                deferred,
+                expression,
             )?)
         }
 
         Some(ty)
+    }
+
+    pub fn simplify_expression_evaluation(
+        &self,
+        abstract_state: &EvaluationState,
+        evaluation: &ExpressionEval,
+    ) -> ExpressionEval {
+        let mut eval = ExpressionEval::new(evaluation.type_eval.clone(), imbl::OrdSet::default());
+
+        for expression in &evaluation.deferred {
+            match self.evaluate_expression(&abstract_state, imbl::OrdSet::default(), &expression) {
+                Some(type_eval) => {
+                    eval.type_eval = eval.type_eval.join(&type_eval);
+                }
+                None => {
+                    eval.deferred.insert(expression.clone());
+                }
+            }
+        }
+
+        eval
     }
 
     pub fn evaluate_expression_variable(
@@ -335,7 +356,7 @@ impl<'a> ConstraintSolver<'a> {
             };
         };
 
-        Some(self.resolve_expression_evaluations(abstract_state, done_expressions, evaluation)?)
+        Some(self.resolve_expression_evaluation(abstract_state, done_expressions, evaluation)?)
     }
 
     pub fn evaluate_expression_annotated(
@@ -697,11 +718,7 @@ impl<'a> ConstraintSolver<'a> {
         let new_done_expressions = done_expressions.update(expression);
 
         if let Some(eval) = abstract_state.evaluations.get(expression) {
-            return self.resolve_expression_evaluations(
-                abstract_state,
-                new_done_expressions,
-                &eval,
-            );
+            return self.resolve_expression_evaluation(abstract_state, new_done_expressions, &eval);
         }
 
         match expression.as_ref() {
@@ -767,35 +784,6 @@ impl<'a> ConstraintSolver<'a> {
                 Type::new_literal(TypeLiteral::Ellipsis),
             )),
         }
-    }
-
-    pub fn evaluate_type_constraint(
-        &self,
-        abstract_state: &mut EvaluationState,
-        type_constraint: &IncludeConstraint<Arc<Expression>>,
-    ) {
-        let previous_eval = abstract_state.evaluations.get(&type_constraint.right);
-
-        let expression_eval = match self.evaluate_expression(
-            abstract_state,
-            imbl::OrdSet::default(),
-            &type_constraint.left,
-        ) {
-            Some(type_eval) => ExpressionEval::new(type_eval, imbl::OrdSet::default()),
-            None => ExpressionEval::new(
-                PyTypeEval::never(),
-                imbl::OrdSet::unit(type_constraint.left.clone()),
-            ),
-        };
-
-        abstract_state.evaluations.insert(
-            type_constraint.right.clone(),
-            if let Some(previous_eval) = previous_eval {
-                previous_eval.join(&expression_eval)
-            } else {
-                expression_eval
-            },
-        );
     }
 }
 
@@ -868,7 +856,29 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                 }
             }
             ConstraintNode::TypeConstraint(constraint) => {
-                self.evaluate_type_constraint(&mut abstract_state, constraint)
+                let previous_eval = abstract_state.evaluations.get(&constraint.right);
+
+                let expression_eval = match self.evaluate_expression(
+                    &abstract_state,
+                    imbl::OrdSet::default(),
+                    &constraint.left,
+                ) {
+                    Some(type_eval) => ExpressionEval::new(type_eval, imbl::OrdSet::default()),
+                    None => ExpressionEval::new(
+                        PyTypeEval::never(),
+                        imbl::OrdSet::unit(constraint.left.clone()),
+                    ),
+                };
+
+                abstract_state.evaluations.insert(
+                    constraint.right.clone(),
+                    if let Some(previous_eval) = previous_eval {
+                        self.simplify_expression_evaluation(&abstract_state, previous_eval)
+                            .join(&expression_eval)
+                    } else {
+                        expression_eval
+                    },
+                );
             }
             ConstraintNode::DefinedVariableConstraint(expression) => {
                 abstract_state.defined_variables.names.insert(
