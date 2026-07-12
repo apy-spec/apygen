@@ -6,9 +6,8 @@ use crate::abstract_environment::{
 use crate::constraints::{
     AbstractEnvironmentSpecification, BinaryOperator, ConstraintGraph, ConstraintNode,
     DependentGraph, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
-    ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionVariable, IncludeConstraint,
-    ModuleName, ModuleNode, ProgramAnalysis, ProgramEntity, ProgramEntityNode, QualifiedLocation,
-    VariableName,
+    ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionVariable, ModuleName,
+    ModuleNode, ProgramAnalysis, ProgramEntity, ProgramEntityNode, QualifiedLocation, VariableName,
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::literal_class::method_resolution_order;
@@ -18,9 +17,7 @@ use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::fmt::{fmt_display_set, fmt_set};
 use apygen_analysis::lattice::Join;
 use apygen_analysis::log::LogAnalysisObserver;
-use apygen_analysis::namespace::Location;
 use apygen_analysis::{GraphAnalyser, analysis};
-use log::debug;
 use std::convert::Infallible;
 use std::fmt::Display;
 use std::sync::Arc;
@@ -818,8 +815,6 @@ impl GraphAnalyser for ConstraintSolver<'_> {
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
-        debug!("[{}] Analysing {}", self.program_entity, node);
-
         let mut abstract_state = analysis_state.clone_abstract_state_or_default(&node);
 
         match &node {
@@ -987,6 +982,14 @@ impl ProgramEvaluation {
     }
 }
 
+impl Display for ProgramEvaluation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt_set(f, self.states.iter(), |f, (location, state)| {
+            write!(f, "{}: {}", location, state)
+        })
+    }
+}
+
 #[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
 pub struct ProgramEntitySolverState {
     pub states: imbl::OrdMap<ProgramEntityNode, ProgramEvaluation>,
@@ -1044,8 +1047,6 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
-        debug!("[{}] Analysing {}", self.module_node, node);
-
         let previous_state = analysis_state
             .states
             .get(&node)
@@ -1185,8 +1186,6 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
-        debug!("Analysing {}", node);
-
         let mut previous_state = analysis_state
             .evaluations
             .get(&node)
