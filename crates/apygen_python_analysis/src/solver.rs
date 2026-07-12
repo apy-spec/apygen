@@ -568,7 +568,7 @@ impl<'a> ConstraintSolver<'a> {
             }
         }
 
-        let Type::Literal(literal) = literal_ty else {
+        let Type::Literal(literal) = &literal_ty else {
             return None; // TODO: add support for unions, etc
         };
 
@@ -598,6 +598,12 @@ impl<'a> ConstraintSolver<'a> {
                     ))
                 })
                 .unwrap_or_default(),
+            TypeLiteral::Class(_) => Some(PyTypeEval::with_default_effects(Type::Instance2(
+                TypeInstance2 {
+                    base: Arc::new(literal_ty.clone()),
+                    arguments: imbl::Vector::new(),
+                },
+            ))),
             _ => None, // TODO: add support for classes, etc
         }
     }
@@ -1356,6 +1362,82 @@ mod tests {
         module[1:6]:
             b@{module[1:6][2:4]} = (5 ➤ ({} - Pure - Total))
             #return = {}
+        "##},
+    )]
+    #[case::simple_attribute_access(
+        indoc! {r##"
+        class A:
+            b = 5
+
+        a = A()
+        result = a.b
+        "##},
+        indoc! {r##"
+        builtins:
+            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
+            #return = {}
+        builtins[1:6]:
+            #return = {}
+        module:
+            A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
+            a@{module[4:0]} = (@class(module[1:6]) ➤ ({} - Pure - Total))
+            result@{module[5:0]} = (5 ➤ ({} - Pure - Total)) ⊔ #deferred{(a@{module[5:9]}).b}
+            #return = {}
+        module[1:6]:
+            b@{module[1:6][2:4]} = (5 ➤ ({} - Pure - Total))
+            #return = {}
+        "##},
+    )]
+    #[case::simple_class_function_access(
+        indoc! {r##"
+        class A:
+            def foo():
+                return 5
+
+        result = A.foo
+        "##},
+        indoc! {r##"
+        builtins:
+            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
+            #return = {}
+        builtins[1:6]:
+            #return = {}
+        module:
+            A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
+            result@{module[5:0]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total)) ⊔ #deferred{(A@{module[5:9]}).foo}
+            #return = {}
+        module[1:6]:
+            foo@{module[1:6][2:8]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
+            #return = {}
+        module[1:6][2:8]:
+            #return = {5}
+        "##},
+    )]
+    #[case::simple_method_access(
+        indoc! {r##"
+        class A:
+            def foo():
+                return 5
+
+        a = A()
+        result = a.foo
+        "##},
+        indoc! {r##"
+        builtins:
+            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
+            #return = {}
+        builtins[1:6]:
+            #return = {}
+        module:
+            A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
+            a@{module[5:0]} = (@class(module[1:6]) ➤ ({} - Pure - Total))
+            result@{module[6:0]} = (method(class(module[1:6])[], function(module[1:6][2:8])) ➤ ({} - Pure - Total)) ⊔ #deferred{(a@{module[6:9]}).foo}
+            #return = {}
+        module[1:6]:
+            foo@{module[1:6][2:8]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
+            #return = {}
+        module[1:6][2:8]:
+            #return = {5}
         "##},
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
