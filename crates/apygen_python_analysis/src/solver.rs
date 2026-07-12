@@ -14,10 +14,13 @@ use crate::genkill::expressions::literal_class::method_resolution_order;
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::{is_type_unreachable, pytype_consume_or_return_option};
 use apy::v1::{Identifier, QualifiedName};
+use apygen_analysis::abstract_state::AbstractState;
 use apygen_analysis::fmt::{fmt_display_set, fmt_set};
 use apygen_analysis::lattice::Join;
 use apygen_analysis::log::LogAnalysisObserver;
 use apygen_analysis::{GraphAnalyser, analysis};
+use imbl::ordmap::Entry;
+use imbl::shared_ptr::DefaultSharedPtr;
 use std::convert::Infallible;
 use std::fmt::Display;
 use std::sync::Arc;
@@ -1052,6 +1055,42 @@ impl Display for ProgramEvaluation {
         fmt_set(f, self.states.iter(), |f, (location, state)| {
             write!(f, "{}: {}", location, state)
         })
+    }
+}
+
+impl AbstractState for ProgramEvaluation {
+    type Key = QualifiedLocation;
+    type AbstractValue = EvaluationState;
+
+    fn get(&self, key: &Self::Key) -> Option<&Self::AbstractValue> {
+        self.states.get(key)
+    }
+
+    fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::AbstractValue> {
+        self.states.get_mut(key)
+    }
+
+    fn get_or_insert(
+        &mut self,
+        key: Self::Key,
+        abstract_value: Self::AbstractValue,
+    ) -> &mut Self::AbstractValue {
+        self.states.entry(key).or_insert(abstract_value)
+    }
+
+    fn insert(
+        &mut self,
+        key: Self::Key,
+        abstract_value: Self::AbstractValue,
+    ) -> &mut Self::AbstractValue {
+        match self.states.entry(key) {
+            Entry::Occupied(entry) => {
+                let previous_abstract_value = entry.into_mut();
+                *previous_abstract_value = abstract_value;
+                previous_abstract_value
+            }
+            Entry::Vacant(entry) => entry.insert(abstract_value),
+        }
     }
 }
 
