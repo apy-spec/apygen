@@ -402,10 +402,6 @@ impl<'a> ConstraintSolver<'a> {
             )?
         );
 
-        let Type::Literal(literal) = literal_ty else {
-            return None; // TODO: add support for unions, etc
-        };
-
         let mut arguments = Arguments::new();
 
         for argument in &expression_call.positional_arguments {
@@ -433,10 +429,15 @@ impl<'a> ConstraintSolver<'a> {
             }
         }
 
+        let Type::Literal(literal) = literal_ty else {
+            return None; // TODO: add support for unions, etc
+        };
+
         match literal.as_ref() {
             TypeLiteral::Function(literal_function) => self
                 .program_evaluation
                 .states
+                .update(self.program_entity.location.clone(), abstract_state.clone())
                 .get(&literal_function.value.qualified_location)
                 .map(|evaluation_state| {
                     let ty = evaluation_state.return_value.iter().try_fold(
