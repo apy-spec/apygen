@@ -116,18 +116,14 @@ impl EvaluationState {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
 pub struct SolverState {
-    pub states: imbl::OrdMap<ConstraintNode, EvaluationState>,
+    pub states: imbl::OrdMap<ConstraintNode, ProgramEvaluation>,
 }
 
 impl SolverState {
-    pub fn new(evaluations: imbl::OrdMap<ConstraintNode, EvaluationState>) -> Self {
+    pub fn new(evaluations: imbl::OrdMap<ConstraintNode, ProgramEvaluation>) -> Self {
         Self {
             states: evaluations,
         }
-    }
-
-    pub fn clone_abstract_state_or_default(&self, node: &ConstraintNode) -> EvaluationState {
-        self.states.get(node).cloned().unwrap_or_default()
     }
 }
 
@@ -279,19 +275,308 @@ impl<'a> ConstraintSolver<'a> {
             program_evaluation,
         }
     }
+}
+
+impl GraphAnalyser for ConstraintSolver<'_> {
+    type Node = ConstraintNode;
+    type AbstractState = ProgramEvaluation;
+    type AnalysisState = SolverState;
+    type Error = Infallible;
+
+    fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
+        Ok(std::iter::once(ConstraintNode::Entry))
+    }
+
+    fn next_nodes(
+        &self,
+        node: &Self::Node,
+    ) -> Result<impl Iterator<Item = &Self::Node>, Self::Error> {
+        Ok(self
+            .graph
+            .edges
+            .get(node)
+            .into_iter()
+            .flat_map(|tos| tos.keys()))
+    }
+
+    fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
+        Ok(SolverState::default())
+    }
+
+    fn analyse_node(
+        &self,
+        analysis_state: &Self::AnalysisState,
+        node: &Self::Node,
+    ) -> Result<Self::AbstractState, Self::Error> {
+        let mut program_evaluation =
+            analysis_state.states.get(node).cloned().unwrap_or_else(|| {
+                self.program_evaluation.update(
+                    self.program_entity.location.clone(),
+                    EvaluationState::default(),
+                )
+            });
+
+        match &node {
+            ConstraintNode::Entry => {
+                for (variable, expressions) in self.specification.arguments.as_ref() {
+                    let expression_evals =
+                        expressions
+                            .iter()
+                            .fold(ExpressionEval::default(), |acc, expression| {
+                                acc.join(&match program_evaluation.evaluate_expression(
+                                    &self.program_entity.location,
+                                    &imbl::OrdSet::default(),
+                                    &Arc::new(expression.clone()),
+                                ) {
+                                    Some(type_eval) => {
+                                        ExpressionEval::new(type_eval, imbl::OrdSet::default())
+                                    }
+                                    None => ExpressionEval::new(
+                                        PyTypeEval::never(),
+                                        imbl::OrdSet::unit(Arc::new(expression.clone())),
+                                    ),
+                                })
+                            });
+
+                    let evaluation_state = program_evaluation
+                        .states
+                        .entry(self.program_entity.location.clone())
+                        .or_default();
+
+                    evaluation_state.defined_variables.names.insert(
+                        variable.name.clone(),
+                        imbl::OrdSet::unit(variable.location.clone()),
+                    );
+
+                    evaluation_state.evaluations.insert(
+                        Arc::new(Expression::Variable(variable.clone())),
+                        expression_evals,
+                    );
+                }
+            }
+            ConstraintNode::TypeConstraint(constraint) => {
+                let expression_eval = match program_evaluation.evaluate_expression(
+                    &self.program_entity.location,
+                    &imbl::OrdSet::default(),
+                    &constraint.left,
+                ) {
+                    Some(type_eval) => ExpressionEval::new(type_eval, imbl::OrdSet::default()),
+                    None => ExpressionEval::new(
+                        PyTypeEval::never(),
+                        imbl::OrdSet::unit(constraint.left.clone()),
+                    ),
+                };
+
+                let evaluation_state = program_evaluation
+                    .states
+                    .entry(self.program_entity.location.clone())
+                    .or_default();
+
+                evaluation_state
+                    .evaluations
+                    .entry(constraint.right.clone())
+                    .and_modify(|previous_eval| {
+                        *previous_eval = previous_eval.join(&expression_eval)
+                    })
+                    .or_insert(expression_eval);
+            }
+            ConstraintNode::DefinedVariableConstraint(expression) => {
+                let evaluation_state = program_evaluation
+                    .states
+                    .entry(self.program_entity.location.clone())
+                    .or_default();
+
+                evaluation_state.defined_variables.names.insert(
+                    expression.name.clone(),
+                    imbl::OrdSet::unit(expression.location.clone()),
+                );
+            }
+            ConstraintNode::ReturnConstraint(expression) => {
+                let evaluation_state = program_evaluation
+                    .states
+                    .entry(self.program_entity.location.clone())
+                    .or_default();
+
+                evaluation_state.return_value = imbl::OrdSet::unit(expression.clone());
+            }
+            _ => {}
+        }
+
+        Ok(program_evaluation)
+    }
+
+    fn update_abstract_state(
+        &self,
+        _analysis_state: &Self::AnalysisState,
+        _from: &Self::Node,
+        _to: &Self::Node,
+        abstract_state: &Self::AbstractState,
+    ) -> Result<Option<Self::AbstractState>, Self::Error> {
+        Ok(Some(abstract_state.clone()))
+    }
+
+    fn get_abstract_state<'a>(
+        &self,
+        analysis_state: &'a Self::AnalysisState,
+        node: &Self::Node,
+    ) -> Result<Option<&'a Self::AbstractState>, Self::Error> {
+        Ok(analysis_state.states.get(node))
+    }
+
+    fn set_abstract_state(
+        &self,
+        analysis_state: &mut Self::AnalysisState,
+        node: &Self::Node,
+        abstract_state: Self::AbstractState,
+    ) -> Result<(), Self::Error> {
+        analysis_state.states.insert(node.clone(), abstract_state);
+        Ok(())
+    }
+
+    fn merge(
+        &self,
+        _analysis_state: &Self::AnalysisState,
+        _node: &Self::Node,
+        left: &Self::AbstractState,
+        right: &Self::AbstractState,
+    ) -> Result<Self::AbstractState, Self::Error> {
+        let left_evaluation_state = left
+            .states
+            .get(&self.program_entity.location)
+            .cloned()
+            .unwrap_or_default();
+        let right_evaluation_state = right
+            .states
+            .get(&self.program_entity.location)
+            .cloned()
+            .unwrap_or_default();
+
+        let new_evaluation = EvaluationState {
+            evaluations: left_evaluation_state.evaluations.union_with(
+                right_evaluation_state.evaluations.clone(),
+                |left, right| {
+                    let mut eval = left.join(&right);
+
+                    while eval.type_eval.value.width() > WIDTH_LIMIT {
+                        eval.type_eval.value = match eval.type_eval.value {
+                            Type::Union(type_union) => {
+                                let mut new_type_union = TypeUnion::new();
+                                for ty in type_union.types() {
+                                    new_type_union.add_type(
+                                        if let Type::Literal(type_literal) = ty.as_ref() {
+                                            Arc::new(
+                                                as_type_instance(
+                                                    &self.program_evaluation,
+                                                    type_literal,
+                                                )
+                                                .map(|type_instance| Type::Instance2(type_instance))
+                                                .unwrap_or(Type::Any),
+                                            )
+                                        } else {
+                                            ty.clone()
+                                        },
+                                    );
+                                }
+                                new_type_union.simplify().as_ref().clone()
+                            }
+                            _ => Type::Any,
+                        };
+                    }
+
+                    if eval.type_eval.value.depth() > DEPTH_LIMIT {
+                        eval.type_eval.value = Type::Any;
+                    }
+
+                    eval
+                },
+            ),
+            return_value: left_evaluation_state
+                .return_value
+                .join(&right_evaluation_state.return_value),
+            raised_exceptions: left_evaluation_state
+                .raised_exceptions
+                .join(&right_evaluation_state.raised_exceptions),
+            defined_variables: left_evaluation_state
+                .defined_variables
+                .join(&right_evaluation_state.defined_variables),
+        };
+
+        Ok(left
+            .join(&right)
+            .update(self.program_entity.location.clone(), new_evaluation))
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
+pub struct ProgramEvaluation {
+    pub states: imbl::OrdMap<QualifiedLocation, EvaluationState>,
+}
+
+impl ProgramEvaluation {
+    pub fn new(states: imbl::OrdMap<QualifiedLocation, EvaluationState>) -> Self {
+        Self { states }
+    }
+
+    pub fn update(
+        &self,
+        qualified_location: QualifiedLocation,
+        evaluation_state: EvaluationState,
+    ) -> Self {
+        Self::new(self.states.update(qualified_location, evaluation_state))
+    }
+
+    pub fn simplify(&mut self, qualified_location: QualifiedLocation) -> Option<()> {
+        let state = self.states.get(&qualified_location)?;
+
+        let mut new_evaluations = imbl::OrdMap::new();
+
+        for (expression, evaluation) in &state.evaluations {
+            let mut eval =
+                ExpressionEval::new(evaluation.type_eval.clone(), imbl::OrdSet::default());
+
+            for expression in &evaluation.deferred {
+                match self.evaluate_expression(
+                    &qualified_location,
+                    &imbl::OrdSet::default(),
+                    &expression,
+                ) {
+                    Some(type_eval) => {
+                        eval.type_eval = eval.type_eval.join(&type_eval);
+                    }
+                    None => {
+                        eval.deferred.insert(expression.clone());
+                    }
+                }
+            }
+
+            new_evaluations.insert(expression.clone(), eval);
+        }
+
+        self.states.insert(
+            qualified_location,
+            EvaluationState {
+                evaluations: new_evaluations,
+                return_value: state.return_value.clone(),
+                raised_exceptions: state.raised_exceptions.clone(),
+                defined_variables: state.defined_variables.clone(),
+            },
+        );
+
+        Some(())
+    }
 
     pub fn resolve_expression_evaluation(
         &self,
-        abstract_state: &EvaluationState,
-        done_expressions: imbl::OrdSet<&Expression>,
+        qualified_location: &QualifiedLocation,
+        done_expressions: &imbl::OrdSet<&Expression>,
         evaluation: &ExpressionEval,
     ) -> Option<PyTypeEval> {
         let mut ty = evaluation.type_eval.clone();
 
         for expression in &evaluation.deferred {
             ty = ty.join(&self.evaluate_expression(
-                abstract_state,
-                done_expressions.clone(),
+                qualified_location,
+                done_expressions,
                 expression,
             )?)
         }
@@ -299,50 +584,21 @@ impl<'a> ConstraintSolver<'a> {
         Some(ty)
     }
 
-    pub fn simplify_expression_evaluation(
-        &self,
-        abstract_state: &EvaluationState,
-        evaluation: &ExpressionEval,
-    ) -> ExpressionEval {
-        let mut eval = ExpressionEval::new(evaluation.type_eval.clone(), imbl::OrdSet::default());
-
-        for expression in &evaluation.deferred {
-            match self.evaluate_expression(&abstract_state, imbl::OrdSet::default(), &expression) {
-                Some(type_eval) => {
-                    eval.type_eval = eval.type_eval.join(&type_eval);
-                }
-                None => {
-                    eval.deferred.insert(expression.clone());
-                }
-            }
-        }
-
-        eval
-    }
-
     pub fn evaluate_expression_variable(
         &self,
-        abstract_state: &EvaluationState,
-        done_expressions: imbl::OrdSet<&Expression>,
+        qualified_location: &QualifiedLocation,
+        done_expressions: &imbl::OrdSet<&Expression>,
         expression_variable: &ExpressionVariable,
     ) -> Option<PyTypeEval> {
         let parent_location = expression_variable.location.at_parent_location().unwrap();
 
-        let state = if self.program_entity.location != parent_location {
-            let Some(evaluation_state) = self.program_evaluation.states.get(&parent_location)
-            else {
-                return None;
-            };
-            evaluation_state
-        } else {
-            &abstract_state
-        };
+        let state = self.states.get(&parent_location)?;
 
         let Some(evaluation) = state
             .evaluations
             .get(&Expression::Variable(expression_variable.clone()))
         else {
-            return if abstract_state
+            return if state
                 .defined_variables
                 .names
                 .contains_key(&expression_variable.name)
@@ -353,17 +609,21 @@ impl<'a> ConstraintSolver<'a> {
             };
         };
 
-        Some(self.resolve_expression_evaluation(abstract_state, done_expressions, evaluation)?)
+        Some(self.resolve_expression_evaluation(
+            qualified_location,
+            done_expressions,
+            evaluation,
+        )?)
     }
 
     pub fn evaluate_expression_annotated(
         &self,
-        abstract_state: &EvaluationState,
-        done_expressions: imbl::OrdSet<&Expression>,
+        qualified_location: &QualifiedLocation,
+        done_expressions: &imbl::OrdSet<&Expression>,
         expression_annotated: &ExpressionAnnotated,
     ) -> Option<PyTypeEval> {
         let annotation_eval = self.evaluate_expression(
-            abstract_state,
+            qualified_location,
             done_expressions,
             &expression_annotated.annotation,
         )?;
@@ -378,8 +638,8 @@ impl<'a> ConstraintSolver<'a> {
 
     pub fn evaluate_expression_function(
         &self,
-        abstract_state: &EvaluationState,
-        done_expressions: imbl::OrdSet<&Expression>,
+        qualified_location: &QualifiedLocation,
+        done_expressions: &imbl::OrdSet<&Expression>,
         expression_function: &ExpressionFunction,
     ) -> Option<PyTypeEval> {
         Some(PyTypeEval::with_default_effects(Type::new_literal(
@@ -402,8 +662,8 @@ impl<'a> ConstraintSolver<'a> {
 
     pub fn evaluate_expression_class(
         &self,
-        abstract_state: &EvaluationState,
-        done_expressions: imbl::OrdSet<&Expression>,
+        qualified_location: &QualifiedLocation,
+        done_expressions: &imbl::OrdSet<&Expression>,
         expression_class: &ExpressionClass,
     ) -> Option<PyTypeEval> {
         Some(PyTypeEval::with_default_effects(Type::new_literal(
@@ -427,8 +687,8 @@ impl<'a> ConstraintSolver<'a> {
 
     pub fn evaluate_expression_attribute(
         &self,
-        abstract_state: &EvaluationState,
-        done_expressions: imbl::OrdSet<&Expression>,
+        qualified_location: &QualifiedLocation,
+        done_expressions: &imbl::OrdSet<&Expression>,
         expression_attribute: &ExpressionAttribute,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -436,8 +696,8 @@ impl<'a> ConstraintSolver<'a> {
         let value_ty = pytype_consume_or_return_option!(
             effects,
             self.evaluate_expression(
-                abstract_state,
-                done_expressions.clone(),
+                qualified_location,
+                done_expressions,
                 &expression_attribute.value
             )?
         );
@@ -530,22 +790,13 @@ impl<'a> ConstraintSolver<'a> {
             }
         }
 
-        evaluate_attributes(
-            &ProgramEvaluation::new(
-                self.program_evaluation
-                    .states
-                    .update(self.program_entity.location.clone(), abstract_state.clone()),
-            ),
-            &value_ty,
-            &expression_attribute.attribute,
-            None,
-        )
+        evaluate_attributes(self, &value_ty, &expression_attribute.attribute, None)
     }
 
     pub fn evaluate_expression_call(
         &self,
-        abstract_state: &EvaluationState,
-        done_expressions: imbl::OrdSet<&Expression>,
+        qualified_location: &QualifiedLocation,
+        done_expressions: &imbl::OrdSet<&Expression>,
         expression_call: &ExpressionCall,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -553,8 +804,8 @@ impl<'a> ConstraintSolver<'a> {
         let literal_ty = pytype_consume_or_return_option!(
             effects,
             self.evaluate_expression(
-                abstract_state,
-                done_expressions.clone(),
+                qualified_location,
+                done_expressions,
                 &expression_call.target
             )?
         );
@@ -564,7 +815,7 @@ impl<'a> ConstraintSolver<'a> {
         for argument in &expression_call.positional_arguments {
             let argument_ty = pytype_consume_or_return_option!(
                 effects,
-                self.evaluate_expression(abstract_state, done_expressions.clone(), &argument)?
+                self.evaluate_expression(qualified_location, done_expressions, &argument)?
             );
 
             arguments.positional.push(Arc::new(argument_ty));
@@ -574,8 +825,8 @@ impl<'a> ConstraintSolver<'a> {
                 let keyword_argument_ty = pytype_consume_or_return_option!(
                     effects,
                     self.evaluate_expression(
-                        abstract_state,
-                        done_expressions.clone(),
+                        qualified_location,
+                        done_expressions,
                         &keyword_argument.value
                     )?
                 );
@@ -592,9 +843,7 @@ impl<'a> ConstraintSolver<'a> {
 
         match literal.as_ref() {
             TypeLiteral::Function(literal_function) => self
-                .program_evaluation
                 .states
-                .update(self.program_entity.location.clone(), abstract_state.clone())
                 .get(&literal_function.value.qualified_location)
                 .map(|evaluation_state| {
                     let ty = evaluation_state.return_value.iter().try_fold(
@@ -628,8 +877,8 @@ impl<'a> ConstraintSolver<'a> {
 
     pub fn evaluate_expression_binary(
         &self,
-        abstract_state: &EvaluationState,
-        done_expressions: imbl::OrdSet<&Expression>,
+        qualified_location: &QualifiedLocation,
+        done_expressions: &imbl::OrdSet<&Expression>,
         expression_binary: &ExpressionBinary,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -637,14 +886,18 @@ impl<'a> ConstraintSolver<'a> {
         let left_ty = pytype_consume_or_return_option!(
             effects,
             self.evaluate_expression(
-                abstract_state,
-                done_expressions.clone(),
+                qualified_location,
+                done_expressions,
                 &expression_binary.left
             )?
         );
         let right_ty = pytype_consume_or_return_option!(
             effects,
-            self.evaluate_expression(abstract_state, done_expressions, &expression_binary.right)?
+            self.evaluate_expression(
+                qualified_location,
+                done_expressions,
+                &expression_binary.right
+            )?
         );
 
         pub fn evaluate_binary_operation(
@@ -704,8 +957,8 @@ impl<'a> ConstraintSolver<'a> {
 
     pub fn evaluate_expression(
         &self,
-        abstract_state: &EvaluationState,
-        done_expressions: imbl::OrdSet<&Expression>,
+        qualified_location: &QualifiedLocation,
+        done_expressions: &imbl::OrdSet<&Expression>,
         expression: &Arc<Expression>,
     ) -> Option<PyTypeEval> {
         if done_expressions.contains(&expression.as_ref()) {
@@ -714,46 +967,56 @@ impl<'a> ConstraintSolver<'a> {
 
         let new_done_expressions = done_expressions.update(expression);
 
-        if let Some(eval) = abstract_state.evaluations.get(expression) {
-            return self.resolve_expression_evaluation(abstract_state, new_done_expressions, &eval);
+        if let Some(eval) = self
+            .states
+            .get(qualified_location)
+            .and_then(|state| state.evaluations.get(expression))
+        {
+            return self.resolve_expression_evaluation(
+                qualified_location,
+                &new_done_expressions,
+                &eval,
+            );
         }
 
         match expression.as_ref() {
             Expression::Variable(expression_variable) => self.evaluate_expression_variable(
-                abstract_state,
-                new_done_expressions,
+                qualified_location,
+                &new_done_expressions,
                 expression_variable,
             ),
             Expression::Annotated(expression_annotated) => self.evaluate_expression_annotated(
-                abstract_state,
-                new_done_expressions,
+                qualified_location,
+                &new_done_expressions,
                 expression_annotated,
             ),
             Expression::Override(_) => None,
             Expression::Function(expression_function) => self.evaluate_expression_function(
-                abstract_state,
-                new_done_expressions,
+                qualified_location,
+                &new_done_expressions,
                 expression_function,
             ),
             Expression::Class(expression_class) => self.evaluate_expression_class(
-                abstract_state,
-                new_done_expressions,
+                qualified_location,
+                &new_done_expressions,
                 expression_class,
             ),
             Expression::Import(_) => None,
             Expression::Attribute(expression_attribute) => self.evaluate_expression_attribute(
-                abstract_state,
-                new_done_expressions,
+                qualified_location,
+                &new_done_expressions,
                 expression_attribute,
             ),
             Expression::Subscript(_) => None,
-            Expression::Call(expression_call) => {
-                self.evaluate_expression_call(abstract_state, new_done_expressions, expression_call)
-            }
+            Expression::Call(expression_call) => self.evaluate_expression_call(
+                qualified_location,
+                &new_done_expressions,
+                expression_call,
+            ),
             Expression::Unary(_) => None,
             Expression::Binary(expression_binary) => self.evaluate_expression_binary(
-                abstract_state,
-                new_done_expressions,
+                qualified_location,
+                &new_done_expressions,
                 expression_binary,
             ),
             Expression::LiteralInteger(literal_integer) => Some(PyTypeEval::with_default_effects(
@@ -781,204 +1044,6 @@ impl<'a> ConstraintSolver<'a> {
                 Type::new_literal(TypeLiteral::Ellipsis),
             )),
         }
-    }
-}
-
-impl GraphAnalyser for ConstraintSolver<'_> {
-    type Node = ConstraintNode;
-    type AbstractState = EvaluationState;
-    type AnalysisState = SolverState;
-    type Error = Infallible;
-
-    fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
-        Ok(std::iter::once(ConstraintNode::Entry))
-    }
-
-    fn next_nodes(
-        &self,
-        node: &Self::Node,
-    ) -> Result<impl Iterator<Item = &Self::Node>, Self::Error> {
-        Ok(self
-            .graph
-            .edges
-            .get(node)
-            .into_iter()
-            .flat_map(|tos| tos.keys()))
-    }
-
-    fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
-        Ok(SolverState::default())
-    }
-
-    fn analyse_node(
-        &self,
-        analysis_state: &Self::AnalysisState,
-        node: &Self::Node,
-    ) -> Result<Self::AbstractState, Self::Error> {
-        let mut abstract_state = analysis_state.clone_abstract_state_or_default(&node);
-
-        match &node {
-            ConstraintNode::Entry => {
-                for (variable, expressions) in self.specification.arguments.as_ref() {
-                    let expression_evals =
-                        expressions
-                            .iter()
-                            .fold(ExpressionEval::default(), |acc, expression| {
-                                acc.join(&match self.evaluate_expression(
-                                    &abstract_state,
-                                    imbl::OrdSet::default(),
-                                    &Arc::new(expression.clone()),
-                                ) {
-                                    Some(type_eval) => {
-                                        ExpressionEval::new(type_eval, imbl::OrdSet::default())
-                                    }
-                                    None => ExpressionEval::new(
-                                        PyTypeEval::never(),
-                                        imbl::OrdSet::unit(Arc::new(expression.clone())),
-                                    ),
-                                })
-                            });
-
-                    abstract_state.defined_variables.names.insert(
-                        variable.name.clone(),
-                        imbl::OrdSet::unit(variable.location.clone()),
-                    );
-
-                    abstract_state.evaluations.insert(
-                        Arc::new(Expression::Variable(variable.clone())),
-                        expression_evals,
-                    );
-                }
-            }
-            ConstraintNode::TypeConstraint(constraint) => {
-                let previous_eval = abstract_state.evaluations.get(&constraint.right);
-
-                let expression_eval = match self.evaluate_expression(
-                    &abstract_state,
-                    imbl::OrdSet::default(),
-                    &constraint.left,
-                ) {
-                    Some(type_eval) => ExpressionEval::new(type_eval, imbl::OrdSet::default()),
-                    None => ExpressionEval::new(
-                        PyTypeEval::never(),
-                        imbl::OrdSet::unit(constraint.left.clone()),
-                    ),
-                };
-
-                abstract_state.evaluations.insert(
-                    constraint.right.clone(),
-                    if let Some(previous_eval) = previous_eval {
-                        self.simplify_expression_evaluation(&abstract_state, previous_eval)
-                            .join(&expression_eval)
-                    } else {
-                        expression_eval
-                    },
-                );
-            }
-            ConstraintNode::DefinedVariableConstraint(expression) => {
-                abstract_state.defined_variables.names.insert(
-                    expression.name.clone(),
-                    imbl::OrdSet::unit(expression.location.clone()),
-                );
-            }
-            ConstraintNode::ReturnConstraint(expression) => {
-                abstract_state.return_value = imbl::OrdSet::unit(expression.clone());
-            }
-            _ => {}
-        }
-
-        Ok(abstract_state)
-    }
-
-    fn update_abstract_state(
-        &self,
-        _analysis_state: &Self::AnalysisState,
-        _from: &Self::Node,
-        _to: &Self::Node,
-        abstract_state: &Self::AbstractState,
-    ) -> Result<Option<Self::AbstractState>, Self::Error> {
-        Ok(Some(abstract_state.clone()))
-    }
-
-    fn get_abstract_state<'a>(
-        &self,
-        analysis_state: &'a Self::AnalysisState,
-        node: &Self::Node,
-    ) -> Result<Option<&'a Self::AbstractState>, Self::Error> {
-        Ok(analysis_state.states.get(node))
-    }
-
-    fn set_abstract_state(
-        &self,
-        analysis_state: &mut Self::AnalysisState,
-        node: &Self::Node,
-        abstract_state: Self::AbstractState,
-    ) -> Result<(), Self::Error> {
-        analysis_state.states.insert(node.clone(), abstract_state);
-        Ok(())
-    }
-
-    fn merge(
-        &self,
-        _analysis_state: &Self::AnalysisState,
-        _node: &Self::Node,
-        left: &Self::AbstractState,
-        right: &Self::AbstractState,
-    ) -> Result<Self::AbstractState, Self::Error> {
-        Ok(EvaluationState {
-            evaluations: left.evaluations.clone().union_with(
-                right.evaluations.clone(),
-                |left, right| {
-                    let mut eval = left.join(&right);
-
-                    while eval.type_eval.value.width() > WIDTH_LIMIT {
-                        eval.type_eval.value = match eval.type_eval.value {
-                            Type::Union(type_union) => {
-                                let mut new_type_union = TypeUnion::new();
-                                for ty in type_union.types() {
-                                    new_type_union.add_type(
-                                        if let Type::Literal(type_literal) = ty.as_ref() {
-                                            Arc::new(
-                                                as_type_instance(
-                                                    &self.program_evaluation,
-                                                    type_literal,
-                                                )
-                                                .map(|type_instance| Type::Instance2(type_instance))
-                                                .unwrap_or(Type::Any),
-                                            )
-                                        } else {
-                                            ty.clone()
-                                        },
-                                    );
-                                }
-                                new_type_union.simplify().as_ref().clone()
-                            }
-                            _ => Type::Any,
-                        };
-                    }
-
-                    if eval.type_eval.value.depth() > DEPTH_LIMIT {
-                        eval.type_eval.value = Type::Any;
-                    }
-
-                    eval
-                },
-            ),
-            return_value: left.return_value.join(&right.return_value),
-            raised_exceptions: left.raised_exceptions.join(&right.raised_exceptions),
-            defined_variables: left.defined_variables.join(&right.defined_variables),
-        })
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
-pub struct ProgramEvaluation {
-    pub states: imbl::OrdMap<QualifiedLocation, EvaluationState>,
-}
-
-impl ProgramEvaluation {
-    pub fn new(states: imbl::OrdMap<QualifiedLocation, EvaluationState>) -> Self {
-        Self { states }
     }
 }
 
@@ -1074,15 +1139,26 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
             &mut LogAnalysisObserver::with_prefix(node.to_string()),
         )?;
 
-        let mut evaluation_state = solver_state
+        let mut program_evaluation = solver_state
             .states
             .get(&ConstraintNode::TypeExit)
             .cloned()
             .unwrap_or_default();
 
-        if let Some(exception_evaluation_state) =
+        if let Some(exception_program_evaluation) =
             solver_state.states.get(&ConstraintNode::ExceptionExit)
         {
+            let evaluation_state = program_evaluation
+                .states
+                .entry(entity.location.clone())
+                .or_default();
+
+            let exception_evaluation_state = exception_program_evaluation
+                .states
+                .get(&entity.location)
+                .cloned()
+                .unwrap_or_default();
+
             evaluation_state.evaluations = evaluation_state
                 .evaluations
                 .join(&exception_evaluation_state.evaluations);
@@ -1091,11 +1167,7 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
                 .join(&exception_evaluation_state.raised_exceptions);
         }
 
-        Ok(ProgramEvaluation::new(
-            previous_state
-                .states
-                .update(entity.location.clone(), evaluation_state),
-        ))
+        Ok(program_evaluation)
     }
 
     fn update_abstract_state(
@@ -1129,11 +1201,17 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
     fn merge(
         &self,
         _analysis_state: &Self::AnalysisState,
-        _node: &Self::Node,
+        node: &Self::Node,
         left: &Self::AbstractState,
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
-        Ok(left.join(right))
+        let mut program_evaluation = left.join(right);
+
+        if let ProgramEntityNode::Entity(entity) = &node {
+            program_evaluation.simplify(entity.location.clone());
+        }
+
+        Ok(program_evaluation)
     }
 }
 
@@ -1240,11 +1318,19 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
     fn merge(
         &self,
         _analysis_state: &Self::AnalysisState,
-        _node: &Self::Node,
+        node: &Self::Node,
         left: &Self::AbstractState,
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
-        Ok(left.join(right))
+        let mut program_evaluation = left.join(right);
+        if let Some(dependent_graph) = self.graph.nodes.get(&node) {
+            for node in dependent_graph.nodes.keys() {
+                if let ProgramEntityNode::Entity(entity) = &node {
+                    program_evaluation.simplify(entity.location.clone());
+                }
+            }
+        }
+        Ok(program_evaluation)
     }
 }
 
@@ -1366,7 +1452,7 @@ mod tests {
             #return = {}
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
-            result@{module[4:0]} = (5 ➤ ({} - Pure - Total)) ⊔ #deferred{(A@{module[4:9]}).b}
+            result@{module[4:0]} = (5 ➤ ({} - Pure - Total))
             #return = {}
         module[1:6]:
             b@{module[1:6][2:4]} = (5 ➤ ({} - Pure - Total))
@@ -1390,7 +1476,7 @@ mod tests {
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             a@{module[4:0]} = (@class(module[1:6]) ➤ ({} - Pure - Total))
-            result@{module[5:0]} = (5 ➤ ({} - Pure - Total)) ⊔ #deferred{(a@{module[5:9]}).b}
+            result@{module[5:0]} = (5 ➤ ({} - Pure - Total))
             #return = {}
         module[1:6]:
             b@{module[1:6][2:4]} = (5 ➤ ({} - Pure - Total))
@@ -1413,7 +1499,7 @@ mod tests {
             #return = {}
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
-            result@{module[5:0]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total)) ⊔ #deferred{(A@{module[5:9]}).foo}
+            result@{module[5:0]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
             #return = {}
         module[1:6]:
             foo@{module[1:6][2:8]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
@@ -1440,7 +1526,7 @@ mod tests {
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             a@{module[5:0]} = (@class(module[1:6]) ➤ ({} - Pure - Total))
-            result@{module[6:0]} = (method(class(module[1:6])[], function(module[1:6][2:8])) ➤ ({} - Pure - Total)) ⊔ #deferred{(a@{module[6:9]}).foo}
+            result@{module[6:0]} = (method(class(module[1:6])[], function(module[1:6][2:8])) ➤ ({} - Pure - Total))
             #return = {}
         module[1:6]:
             foo@{module[1:6][2:8]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
@@ -1468,10 +1554,19 @@ mod tests {
 
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-        let program_evaluation = analysis(&solver, &mut LogAnalysisObserver::default())
+        let mut program_evaluation = analysis(&solver, &mut LogAnalysisObserver::default())
             .expect("analysis should work")
             .evaluations[&ModuleNode::Exit]
             .clone();
+
+        for location in program_evaluation
+            .states
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            program_evaluation.simplify(location);
+        }
 
         let mut actual_types = String::new();
         for (node, abstract_state) in program_evaluation.states.as_ref() {
