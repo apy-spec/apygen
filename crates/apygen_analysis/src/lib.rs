@@ -7,6 +7,7 @@ pub mod log;
 pub mod namespace;
 pub mod rayon;
 pub mod fmt;
+pub mod abstract_state;
 
 pub trait GraphAnalyser {
     type Node;
