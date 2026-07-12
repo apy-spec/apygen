@@ -1,4 +1,10 @@
-use crate::abstract_environment::{AbstractEnvironment, Attribute, BUILTINS_MODULE, LiteralBoolean, LiteralBytes, LiteralClass, LiteralComplex, LiteralDict, LiteralFloat, LiteralFunction, LiteralGeneric, LiteralImportedModule, LiteralInteger, LiteralList, LiteralString, LiteralTuple, LiteralTypeAlias, QualifiedName, RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion, TypeInstance2};
+use crate::abstract_environment::{
+    AbstractEnvironment, Attribute, BUILTINS_MODULE, LiteralBoolean, LiteralBytes, LiteralClass,
+    LiteralComplex, LiteralDict, LiteralFloat, LiteralFunction, LiteralGeneric,
+    LiteralImportedModule, LiteralInteger, LiteralList, LiteralString, LiteralTuple,
+    LiteralTypeAlias, QualifiedName, RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type,
+    TypeInstance, TypeInstance2, TypeLiteral, TypeUnion,
+};
 use crate::genkill::visibility::visibility_from_name;
 use apy;
 use apygen_analysis::namespace::{Location, NamespaceLocation, Namespaces};
@@ -261,6 +267,7 @@ pub fn convert_type_literal(
                 literal_overloaded_function.value.target.as_ref()?,
             )?) // TODO: improve the conversion
         }
+        TypeLiteral::Method(_) => return None,  // TODO: improve the conversion
         TypeLiteral::Class(literal_class) => {
             ConvertedTypeLiteral::Class(convert_literal_class(context, literal_class)?)
         }
@@ -361,7 +368,7 @@ pub fn convert_type(
         Type::Instance(type_instance) => convert_type_instance(context, type_instance)?,
         Type::Union(type_union) => convert_type_union(context, type_union)?,
         Type::Intersection(_) => convert_type_intersection(),
-        Type::Instance2(_) => convert_type_any(),  // TODO: fix
+        Type::Instance2(_) => convert_type_any(), // TODO: fix
         Type::Literal(type_literal) => match convert_type_literal(context, type_literal)? {
             ConvertedTypeLiteral::TypeReference(ty) => ty,
             ConvertedTypeLiteral::PythonValue(python_value) => {
@@ -430,7 +437,7 @@ pub fn convert_attribute(
         Type::Instance(type_instance) => {
             apy::v1::Type::Reference(convert_type_instance(context, type_instance)?)
         }
-        Type::Instance2(_) => apy::v1::Type::Reference(convert_type_any()),  // TODO: fix
+        Type::Instance2(_) => apy::v1::Type::Reference(convert_type_any()), // TODO: fix
         Type::Union(type_union) => {
             apy::v1::Type::Reference(convert_type_union(context, type_union)?)
         }

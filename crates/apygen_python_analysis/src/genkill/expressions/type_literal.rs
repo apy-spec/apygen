@@ -1,10 +1,10 @@
 use crate::abstract_environment::{
     TYPES_MODULE, TYPING_MODULE, TypeAliasKind, TypeInstance, TypeLiteral,
 };
+use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::{self, PyTypeEval};
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::namespace::Location;
-use crate::constraints::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
     match type_literal {
@@ -33,6 +33,7 @@ pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
         TypeLiteral::Dict(dict) => Some(!dict.values.is_empty()),
         TypeLiteral::Function(_) => None,
         TypeLiteral::OverloadedFunction(_) => None,
+        TypeLiteral::Method(_) => None,
         TypeLiteral::Class(_) => None,
         TypeLiteral::TypeAlias(_) => None,
         TypeLiteral::Generic(_) => None,
@@ -66,6 +67,10 @@ pub fn as_type_instance(type_literal: &TypeLiteral) -> TypeInstance {
         TypeLiteral::OverloadedFunction(_) => TypeInstance::new(
             Location::from(QualifiedName::parse(TYPES_MODULE)),
             Identifier::parse("FunctionType"),
+        ),
+        TypeLiteral::Method(_) => TypeInstance::new(
+            Location::from(QualifiedName::parse(TYPES_MODULE)),
+            Identifier::parse("MethodType"),
         ),
         TypeLiteral::Class(_) => TypeInstance::builtins("type"),
         TypeLiteral::TypeAlias(literal_type_alias) => match literal_type_alias.value.kind {

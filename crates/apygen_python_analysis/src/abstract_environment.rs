@@ -3,6 +3,7 @@ use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
 use crate::constraints::QualifiedLocation;
 pub use apy::OneOrMany;
 pub use apy::v1::{GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName};
+use apygen_analysis::fmt::fmt_display_wrapped;
 use apygen_analysis::lattice::{Join, LatticeOrd, OrdJoin, OrdLatticeOrd};
 use imbl;
 pub use num_bigint::BigInt;
@@ -334,6 +335,12 @@ pub struct FunctionType {
     pub is_async: bool,
 }
 
+impl Display for FunctionType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "function({})", self.qualified_location)
+    }
+}
+
 impl StructuralDepth for FunctionType {
     fn depth(&self) -> usize {
         1 + self
@@ -432,6 +439,12 @@ pub struct ClassType {
     pub keyword_arguments: imbl::OrdMap<String, Arc<Type>>,
 
     pub is_abstract: bool,
+}
+
+impl Display for ClassType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "class({})", self.qualified_location)
+    }
 }
 
 impl StructuralDepth for ClassType {
@@ -1124,7 +1137,7 @@ pub struct LiteralFunction {
 
 impl Display for LiteralFunction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "function({})", self.value.qualified_location)
+        self.value.fmt(f)
     }
 }
 
@@ -1172,13 +1185,44 @@ impl StructuralWidth for LiteralOverloadedFunction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LiteralMethod {
+    pub class: Arc<ClassType>,
+    pub arguments: imbl::Vector<Arc<Type>>,
+    pub function: Arc<FunctionType>,
+}
+
+impl Display for LiteralMethod {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "method({}", self.class)?;
+        fmt_display_wrapped(f, self.arguments.iter(), ", ", "[", "]")?;
+        write!(f, ", {})", self.function)
+    }
+}
+
+impl StructuralDepth for LiteralMethod {
+    fn depth(&self) -> usize {
+        1 + self
+            .class
+            .depth()
+            .max(self.arguments.depth())
+            .max(self.function.depth())
+    }
+}
+
+impl StructuralWidth for LiteralMethod {
+    fn width(&self) -> usize {
+        self.class.width() + self.arguments.width() + self.function.width()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralClass {
     pub value: Arc<ClassType>,
 }
 
 impl Display for LiteralClass {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "class({})", self.value.qualified_location)
+        self.value.fmt(f)
     }
 }
 
@@ -1281,6 +1325,7 @@ pub enum TypeLiteral {
 
     Function(LiteralFunction),
     OverloadedFunction(LiteralOverloadedFunction),
+    Method(LiteralMethod),
     Class(LiteralClass),
     TypeAlias(LiteralTypeAlias),
     Generic(LiteralGeneric),
@@ -1305,6 +1350,7 @@ impl StructuralDepth for TypeLiteral {
             TypeLiteral::OverloadedFunction(literal_overloaded_function) => {
                 literal_overloaded_function.depth()
             }
+            TypeLiteral::Method(literal_method) => literal_method.depth(),
             TypeLiteral::Class(literal_class) => literal_class.depth(),
             TypeLiteral::TypeAlias(literal_type_alias) => literal_type_alias.depth(),
             TypeLiteral::Generic(literal_generic) => literal_generic.depth(),
@@ -1331,6 +1377,7 @@ impl StructuralWidth for TypeLiteral {
             TypeLiteral::OverloadedFunction(literal_overloaded_function) => {
                 literal_overloaded_function.width()
             }
+            TypeLiteral::Method(literal_method) => literal_method.width(),
             TypeLiteral::Class(literal_class) => literal_class.width(),
             TypeLiteral::TypeAlias(literal_type_alias) => literal_type_alias.width(),
             TypeLiteral::Generic(literal_generic) => literal_generic.width(),
@@ -1368,6 +1415,9 @@ impl Display for TypeLiteral {
             }
             TypeLiteral::OverloadedFunction(literal_overloaded_function) => {
                 write!(f, "{}", literal_overloaded_function)
+            }
+            TypeLiteral::Method(literal_method) => {
+                write!(f, "{}", literal_method)
             }
             TypeLiteral::Class(literal_class) => {
                 write!(f, "{}", literal_class)

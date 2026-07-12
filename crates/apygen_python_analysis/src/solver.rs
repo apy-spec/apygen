@@ -1,21 +1,24 @@
 use crate::abstract_environment::{
     BUILTINS_MODULE, ClassType, DEPTH_LIMIT, FunctionType, LiteralClass, LiteralFunction,
-    RaisedExceptions, StructuralDepth, StructuralWidth, TYPES_MODULE, Type, TypeInstance2,
-    TypeLiteral, TypeUnion, WIDTH_LIMIT,
+    LiteralMethod, RaisedExceptions, StructuralDepth, StructuralWidth, TYPES_MODULE, Type,
+    TypeInstance2, TypeLiteral, TypeUnion, WIDTH_LIMIT,
 };
 use crate::constraints::{
     AbstractEnvironmentSpecification, BinaryOperator, ConstraintGraph, ConstraintNode,
-    DependentGraph, Expression, ExpressionAnnotated, ExpressionBinary, ExpressionCall,
-    ExpressionClass, ExpressionFunction, ExpressionVariable, IncludeConstraint, ModuleName,
-    ModuleNode, ProgramAnalysis, ProgramEntity, ProgramEntityNode, QualifiedLocation, VariableName,
+    DependentGraph, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
+    ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionVariable, IncludeConstraint,
+    ModuleName, ModuleNode, ProgramAnalysis, ProgramEntity, ProgramEntityNode, QualifiedLocation,
+    VariableName,
 };
 use crate::genkill::calls::Arguments;
+use crate::genkill::expressions::literal_class::method_resolution_order;
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::{is_type_unreachable, pytype_consume_or_return_option};
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::fmt::{fmt_display_set, fmt_set};
 use apygen_analysis::lattice::Join;
 use apygen_analysis::log::LogAnalysisObserver;
+use apygen_analysis::namespace::Location;
 use apygen_analysis::{GraphAnalyser, analysis};
 use log::debug;
 use std::convert::Infallible;
@@ -131,6 +134,133 @@ impl SolverState {
     }
 }
 
+pub fn get_variable_type(
+    program_evaluation: &ProgramEvaluation,
+    module_name: &ModuleName,
+    name: &VariableName,
+) -> Option<TypeInstance2> {
+    let evaluation_state = program_evaluation.states.get(&QualifiedLocation::new(
+        module_name.clone(),
+        imbl::Vector::new(),
+    ))?;
+
+    let locations = evaluation_state.defined_variables.names.get(name)?;
+
+    let mut base = Type::Never;
+
+    for location in locations {
+        base = base.join(
+            &evaluation_state
+                .evaluations
+                .get(&Expression::Variable(ExpressionVariable::new(
+                    name.clone(),
+                    location.clone(),
+                )))?
+                .type_eval
+                .value,
+        );
+    }
+
+    if base == Type::Never {
+        return None;
+    }
+
+    Some(TypeInstance2 {
+        base: Arc::new(base),
+        arguments: imbl::Vector::new(),
+    })
+}
+
+pub fn as_type_instance(
+    program_evaluation: &ProgramEvaluation,
+    ty: &TypeLiteral,
+) -> Option<TypeInstance2> {
+    match ty {
+        TypeLiteral::Integer(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("int")),
+        ),
+        TypeLiteral::Boolean(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("bool")),
+        ),
+        TypeLiteral::Float(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("float")),
+        ),
+        TypeLiteral::Complex(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("complex")),
+        ),
+        TypeLiteral::String(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("str")),
+        ),
+        TypeLiteral::Bytes(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("bytes")),
+        ),
+        TypeLiteral::None => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+            &Arc::new(Identifier::parse("NoneType")),
+        ),
+        TypeLiteral::Ellipsis => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+            &Arc::new(Identifier::parse("EllipsisType")),
+        ),
+        TypeLiteral::List(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("list")),
+        ),
+        TypeLiteral::Tuple(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("tuple")),
+        ),
+        TypeLiteral::Dict(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("dict")),
+        ),
+        TypeLiteral::Function(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+            &Arc::new(Identifier::parse("FunctionType")),
+        ),
+        TypeLiteral::OverloadedFunction(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+            &Arc::new(Identifier::parse("FunctionType")),
+        ),
+        TypeLiteral::Method(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+            &Arc::new(Identifier::parse("MethodType")),
+        ),
+        TypeLiteral::Class(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("type")),
+        ),
+        TypeLiteral::TypeAlias(_) => None,
+        TypeLiteral::Generic(_) => None,
+        TypeLiteral::ImportedModule(_) => get_variable_type(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+            &Arc::new(Identifier::parse("ModuleType")),
+        ),
+    }
+}
+
 pub struct ConstraintSolver<'a> {
     pub program_entity: &'a ProgramEntity,
     pub specification: &'a AbstractEnvironmentSpecification,
@@ -150,114 +280,6 @@ impl<'a> ConstraintSolver<'a> {
             specification,
             graph,
             program_evaluation,
-        }
-    }
-
-    pub fn get_variable_type(
-        &self,
-        module_name: &ModuleName,
-        name: &VariableName,
-    ) -> Option<TypeInstance2> {
-        if self.program_entity.location.module_name == *module_name {
-            return None;
-        }
-
-        let evaluation_state = self.program_evaluation.states.get(&QualifiedLocation::new(
-            module_name.clone(),
-            imbl::Vector::new(),
-        ))?;
-
-        let locations = evaluation_state.defined_variables.names.get(name)?;
-
-        let mut base = Type::Never;
-
-        for location in locations {
-            base = base.join(
-                &evaluation_state
-                    .evaluations
-                    .get(&Expression::Variable(ExpressionVariable::new(
-                        name.clone(),
-                        location.clone(),
-                    )))?
-                    .type_eval
-                    .value,
-            );
-        }
-
-        if base == Type::Never {
-            return None;
-        }
-
-        Some(TypeInstance2 {
-            base: Arc::new(base),
-            arguments: imbl::Vector::new(),
-        })
-    }
-
-    pub fn as_type_instance(&self, ty: &TypeLiteral) -> Option<TypeInstance2> {
-        match ty {
-            TypeLiteral::Integer(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("int")),
-            ),
-            TypeLiteral::Boolean(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("bool")),
-            ),
-            TypeLiteral::Float(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("float")),
-            ),
-            TypeLiteral::Complex(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("complex")),
-            ),
-            TypeLiteral::String(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("str")),
-            ),
-            TypeLiteral::Bytes(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("bytes")),
-            ),
-            TypeLiteral::None => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-                &Arc::new(Identifier::parse("NoneType")),
-            ),
-            TypeLiteral::Ellipsis => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-                &Arc::new(Identifier::parse("EllipsisType")),
-            ),
-            TypeLiteral::List(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("list")),
-            ),
-            TypeLiteral::Tuple(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("tuple")),
-            ),
-            TypeLiteral::Dict(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("dict")),
-            ),
-            TypeLiteral::Function(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-                &Arc::new(Identifier::parse("FunctionType")),
-            ),
-            TypeLiteral::OverloadedFunction(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-                &Arc::new(Identifier::parse("FunctionType")),
-            ),
-            TypeLiteral::Class(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("type")),
-            ),
-            TypeLiteral::TypeAlias(_) => None,
-            TypeLiteral::Generic(_) => None,
-            TypeLiteral::ImportedModule(_) => self.get_variable_type(
-                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-                &Arc::new(Identifier::parse("ModuleType")),
-            ),
         }
     }
 
@@ -383,6 +405,123 @@ impl<'a> ConstraintSolver<'a> {
                 }),
             }),
         )))
+    }
+
+    pub fn evaluate_expression_attribute(
+        &self,
+        abstract_state: &EvaluationState,
+        done_expressions: imbl::OrdSet<&Expression>,
+        expression_attribute: &ExpressionAttribute,
+    ) -> Option<PyTypeEval> {
+        let mut effects = PyEffects::new();
+
+        let value_ty = pytype_consume_or_return_option!(
+            effects,
+            self.evaluate_expression(
+                abstract_state,
+                done_expressions.clone(),
+                &expression_attribute.value
+            )?
+        );
+
+        /// References: https://docs.python.org/3/howto/descriptor.html
+        pub fn evaluate_attributes(
+            program_evaluation: &ProgramEvaluation,
+            value_ty: &Type,
+            name: &VariableName,
+            instance_arguments: Option<&imbl::Vector<Arc<Type>>>,
+        ) -> Option<PyTypeEval> {
+            match value_ty {
+                Type::Instance2(type_instance) => evaluate_attributes(
+                    program_evaluation,
+                    &type_instance.base,
+                    name,
+                    Some(&type_instance.arguments),
+                ),
+                Type::Union(type_union) => {
+                    let mut eval = PyTypeEval::never();
+                    for ty in type_union.types() {
+                        eval = eval.join(&evaluate_attributes(program_evaluation, ty, name, None)?);
+                    }
+                    Some(eval)
+                }
+                Type::Intersection(type_intersection) => {
+                    let mut eval = PyTypeEval::never();
+                    for ty in type_intersection {
+                        eval = eval.join(&evaluate_attributes(program_evaluation, ty, name, None)?);
+                    }
+                    Some(eval)
+                }
+                Type::Literal(type_literal) => match type_literal.as_ref() {
+                    TypeLiteral::Class(literal_class) => {
+                        // TODO: add support for descriptors
+                        for class in method_resolution_order(literal_class)? {
+                            let Some(state) = program_evaluation
+                                .states
+                                .get(&class.value.qualified_location)
+                            else {
+                                continue;
+                            };
+
+                            let Some(locations) = state.defined_variables.names.get(name) else {
+                                continue;
+                            };
+
+                            let mut eval = PyTypeEval::never();
+                            for location in locations {
+                                let location_eval =
+                                    state.evaluations.get(&Expression::Variable(
+                                        ExpressionVariable::new(name.clone(), location.clone()),
+                                    ))?;
+                                if !location_eval.deferred.is_empty() {
+                                    return None;
+                                }
+                                eval = eval.join(&location_eval.type_eval.clone().map(|ty| {
+                                    let Type::Literal(type_literal) = &ty else {
+                                        return ty;
+                                    };
+                                    let TypeLiteral::Function(literal_function) =
+                                        type_literal.as_ref()
+                                    else {
+                                        return ty;
+                                    };
+                                    let Some(arguments) = instance_arguments else {
+                                        return ty;
+                                    };
+
+                                    Type::new_literal(TypeLiteral::Method(LiteralMethod {
+                                        class: class.value.clone(),
+                                        function: literal_function.value.clone(),
+                                        arguments: arguments.clone(),
+                                    }))
+                                }));
+                            }
+
+                            return Some(eval);
+                        }
+                        None
+                    }
+                    _ => evaluate_attributes(
+                        program_evaluation,
+                        &Type::Instance2(as_type_instance(program_evaluation, type_literal)?),
+                        name,
+                        None,
+                    ),
+                },
+                _ => None,
+            }
+        }
+
+        evaluate_attributes(
+            &ProgramEvaluation::new(
+                self.program_evaluation
+                    .states
+                    .update(self.program_entity.location.clone(), abstract_state.clone()),
+            ),
+            &value_ty,
+            &expression_attribute.attribute,
+            None,
+        )
     }
 
     pub fn evaluate_expression_call(
@@ -582,7 +721,11 @@ impl<'a> ConstraintSolver<'a> {
                 expression_class,
             ),
             Expression::Import(_) => None,
-            Expression::Attribute(_) => None,
+            Expression::Attribute(expression_attribute) => self.evaluate_expression_attribute(
+                abstract_state,
+                new_done_expressions,
+                expression_attribute,
+            ),
             Expression::Subscript(_) => None,
             Expression::Call(expression_call) => {
                 self.evaluate_expression_call(abstract_state, new_done_expressions, expression_call)
@@ -785,11 +928,12 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                                     new_type_union.add_type(
                                         if let Type::Literal(type_literal) = ty.as_ref() {
                                             Arc::new(
-                                                self.as_type_instance(type_literal)
-                                                    .map(|type_instance| {
-                                                        Type::Instance2(type_instance)
-                                                    })
-                                                    .unwrap_or(Type::Any),
+                                                as_type_instance(
+                                                    &self.program_evaluation,
+                                                    type_literal,
+                                                )
+                                                .map(|type_instance| Type::Instance2(type_instance))
+                                                .unwrap_or(Type::Any),
                                             )
                                         } else {
                                             ty.clone()
@@ -1190,6 +1334,28 @@ mod tests {
             a@{module[1:12]} = (@class(builtins[1:6]) ➤ ({} - Pure - Total))
             b@{module[1:20]} = (Never ➤ ({} - Pure - Total))
             #return = {(a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]})}
+        "##},
+    )]
+    #[case::simple_class_attribute_access(
+        indoc! {r##"
+        class A:
+            b = 5
+
+        result = A.b
+        "##},
+        indoc! {r##"
+        builtins:
+            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
+            #return = {}
+        builtins[1:6]:
+            #return = {}
+        module:
+            A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
+            result@{module[4:0]} = (5 ➤ ({} - Pure - Total)) ⊔ #deferred{(A@{module[4:9]}).b}
+            #return = {}
+        module[1:6]:
+            b@{module[1:6][2:4]} = (5 ➤ ({} - Pure - Total))
+            #return = {}
         "##},
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
