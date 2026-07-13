@@ -239,13 +239,7 @@ impl<
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
         let mut program_evaluation = analysis_state.get_clone_or_else(node, || {
-            AbstractStateProxy::new(
-                self.program_evaluation,
-                ProgramEvaluation::unit(
-                    self.program_entity.location.clone(),
-                    EvaluationState::default(),
-                ),
-            )
+            AbstractStateProxy::with_default_proxy(self.program_evaluation)
         });
 
         match &node {
