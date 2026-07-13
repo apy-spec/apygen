@@ -139,6 +139,44 @@ impl<S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>>
     }
 }
 
+impl<S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Clone>
+    AbstractState for SolverState<S>
+{
+    type Key = ConstraintNode;
+    type AbstractValue = S;
+
+    fn get(&self, key: &Self::Key) -> Option<&Self::AbstractValue> {
+        self.states.get(key)
+    }
+
+    fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::AbstractValue> {
+        self.states.get_mut(key)
+    }
+
+    fn get_or_insert(
+        &mut self,
+        key: Self::Key,
+        abstract_value: Self::AbstractValue,
+    ) -> &mut Self::AbstractValue {
+        self.states.entry(key).or_insert(abstract_value)
+    }
+
+    fn insert(
+        &mut self,
+        key: Self::Key,
+        abstract_value: Self::AbstractValue,
+    ) -> &mut Self::AbstractValue {
+        match self.states.entry(key) {
+            Entry::Occupied(entry) => {
+                let previous_abstract_value = entry.into_mut();
+                *previous_abstract_value = abstract_value;
+                previous_abstract_value
+            }
+            Entry::Vacant(entry) => entry.insert(abstract_value),
+        }
+    }
+}
+
 pub fn get_variable_type(
     program_evaluation: &ProgramEvaluation,
     module_name: &ModuleName,
@@ -325,13 +363,12 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
-        let mut program_evaluation =
-            analysis_state.states.get(node).cloned().unwrap_or_else(|| {
-                self.program_evaluation.update(
-                    self.program_entity.location.clone(),
-                    EvaluationState::default(),
-                )
-            });
+        let mut program_evaluation = analysis_state.clone_or_else(node, || {
+            self.program_evaluation.update(
+                self.program_entity.location.clone(),
+                EvaluationState::default(),
+            )
+        });
 
         match &node {
             ConstraintNode::Entry => {
