@@ -177,133 +177,6 @@ impl<S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> 
     }
 }
 
-pub fn get_variable_type(
-    program_evaluation: &ProgramEvaluation,
-    module_name: &ModuleName,
-    name: &VariableName,
-) -> Option<TypeInstance2> {
-    let evaluation_state = program_evaluation.states.get(&QualifiedLocation::new(
-        module_name.clone(),
-        imbl::Vector::new(),
-    ))?;
-
-    let locations = evaluation_state.defined_variables.names.get(name)?;
-
-    let mut base = Type::Never;
-
-    for location in locations {
-        base = base.join(
-            &evaluation_state
-                .evaluations
-                .get(&Expression::Variable(ExpressionVariable::new(
-                    name.clone(),
-                    location.clone(),
-                )))?
-                .type_eval
-                .value,
-        );
-    }
-
-    if base == Type::Never {
-        return None;
-    }
-
-    Some(TypeInstance2 {
-        base: Arc::new(base),
-        arguments: imbl::Vector::new(),
-    })
-}
-
-pub fn as_type_instance(
-    program_evaluation: &ProgramEvaluation,
-    ty: &TypeLiteral,
-) -> Option<TypeInstance2> {
-    match ty {
-        TypeLiteral::Integer(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            &Arc::new(Identifier::parse("int")),
-        ),
-        TypeLiteral::Boolean(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            &Arc::new(Identifier::parse("bool")),
-        ),
-        TypeLiteral::Float(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            &Arc::new(Identifier::parse("float")),
-        ),
-        TypeLiteral::Complex(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            &Arc::new(Identifier::parse("complex")),
-        ),
-        TypeLiteral::String(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            &Arc::new(Identifier::parse("str")),
-        ),
-        TypeLiteral::Bytes(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            &Arc::new(Identifier::parse("bytes")),
-        ),
-        TypeLiteral::None => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-            &Arc::new(Identifier::parse("NoneType")),
-        ),
-        TypeLiteral::Ellipsis => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-            &Arc::new(Identifier::parse("EllipsisType")),
-        ),
-        TypeLiteral::List(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            &Arc::new(Identifier::parse("list")),
-        ),
-        TypeLiteral::Tuple(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            &Arc::new(Identifier::parse("tuple")),
-        ),
-        TypeLiteral::Dict(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            &Arc::new(Identifier::parse("dict")),
-        ),
-        TypeLiteral::Function(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-            &Arc::new(Identifier::parse("FunctionType")),
-        ),
-        TypeLiteral::OverloadedFunction(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-            &Arc::new(Identifier::parse("FunctionType")),
-        ),
-        TypeLiteral::Method(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-            &Arc::new(Identifier::parse("MethodType")),
-        ),
-        TypeLiteral::Class(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-            &Arc::new(Identifier::parse("type")),
-        ),
-        TypeLiteral::TypeAlias(_) => None,
-        TypeLiteral::Generic(_) => None,
-        TypeLiteral::ImportedModule(_) => get_variable_type(
-            program_evaluation,
-            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-            &Arc::new(Identifier::parse("ModuleType")),
-        ),
-    }
-}
-
 pub struct ConstraintSolver<
     's,
     S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
@@ -377,7 +250,8 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
                         expressions
                             .iter()
                             .fold(ExpressionEval::default(), |acc, expression| {
-                                acc.join(&match program_evaluation.evaluate_expression(
+                                acc.join(&match evaluate_expression(
+                                    &program_evaluation,
                                     &self.program_entity.location,
                                     &Arc::new(expression.clone()),
                                 ) {
@@ -406,9 +280,11 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
                 }
             }
             ConstraintNode::TypeConstraint(constraint) => {
-                let expression_eval = match program_evaluation
-                    .evaluate_expression(&self.program_entity.location, &constraint.left)
-                {
+                let expression_eval = match evaluate_expression(
+                    &program_evaluation,
+                    &self.program_entity.location,
+                    &constraint.left,
+                ) {
                     Some(type_eval) => ExpressionEval::new(type_eval, imbl::OrdSet::default()),
                     None => ExpressionEval::new(
                         PyTypeEval::never(),
@@ -488,7 +364,7 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
 
         let mut program_evaluation = left.join(&right);
 
-        program_evaluation.simplify(&self.program_entity.location);
+        simplify(&mut program_evaluation, &self.program_entity.location);
 
         let new_evaluation = EvaluationState {
             evaluations: left_evaluation_state.evaluations.union_with(
@@ -562,459 +438,6 @@ impl ProgramEvaluation {
     ) -> Self {
         Self::new(self.states.update(qualified_location, evaluation_state))
     }
-
-    pub fn simplify(&mut self, qualified_location: &QualifiedLocation) -> Option<()> {
-        let mut evaluations = self.states.get(&qualified_location)?.evaluations.clone();
-
-        loop {
-            let mut changed = false;
-
-            evaluations = evaluations
-                .into_iter()
-                .map(|(expression, evaluation)| {
-                    let mut eval =
-                        ExpressionEval::new(evaluation.type_eval.clone(), imbl::OrdSet::default());
-
-                    for expression in &evaluation.deferred {
-                        match self.evaluate_expression(&qualified_location, &expression) {
-                            Some(type_eval) => {
-                                eval.type_eval = eval.type_eval.join(&type_eval);
-                                changed = true;
-                            }
-                            None => {
-                                eval.deferred.insert(expression.clone());
-                            }
-                        }
-                    }
-
-                    (expression, eval)
-                })
-                .collect();
-
-            let Entry::Occupied(entry) = self.states.entry(qualified_location.clone()) else {
-                unreachable!("state should exists")
-            };
-
-            entry.into_mut().evaluations = evaluations.clone();
-
-            if !changed {
-                break;
-            }
-        }
-
-        Some(())
-    }
-
-    pub fn evaluate_expression_eval(&self, expression_eval: &ExpressionEval) -> Option<PyTypeEval> {
-        if expression_eval.deferred.is_empty() {
-            Some(expression_eval.type_eval.clone())
-        } else {
-            None
-        }
-    }
-
-    pub fn evaluate_expression_variable(
-        &self,
-        qualified_location: &QualifiedLocation,
-        expression_variable: &ExpressionVariable,
-    ) -> Option<PyTypeEval> {
-        let parent_location = expression_variable.location.at_parent_location().unwrap();
-
-        let state = self.states.get(&parent_location)?;
-
-        let Some(evaluation) = state
-            .evaluations
-            .get(&Expression::Variable(expression_variable.clone()))
-        else {
-            return if state
-                .defined_variables
-                .names
-                .contains_key(&expression_variable.name)
-            {
-                Some(PyTypeEval::with_default_effects(Type::Never))
-            } else {
-                Some(PyTypeEval::with_default_effects(Type::Never)) // TODO: Add exceptions
-            };
-        };
-
-        self.evaluate_expression_eval(evaluation)
-    }
-
-    pub fn evaluate_expression_annotated(
-        &self,
-        qualified_location: &QualifiedLocation,
-        expression_annotated: &ExpressionAnnotated,
-    ) -> Option<PyTypeEval> {
-        let annotation_eval =
-            self.evaluate_expression(qualified_location, &expression_annotated.annotation)?;
-
-        Some(PyTypeEval::with_default_effects(Type::Instance2(
-            TypeInstance2 {
-                base: Arc::new(annotation_eval.value.clone()),
-                arguments: imbl::Vector::new(),
-            },
-        )))
-    }
-
-    pub fn evaluate_expression_function(
-        &self,
-        qualified_location: &QualifiedLocation,
-        expression_function: &ExpressionFunction,
-    ) -> Option<PyTypeEval> {
-        Some(PyTypeEval::with_default_effects(Type::new_literal(
-            TypeLiteral::Function(LiteralFunction {
-                value: Arc::new(FunctionType {
-                    name: Arc::new(Identifier::parse("todo")),
-                    location: apygen_analysis::namespace::Location::at_exit(
-                        apygen_analysis::namespace::NamespaceLocation::from(Arc::new(
-                            QualifiedName::parse("todo"),
-                        )),
-                    ),
-                    qualified_location: expression_function.location.clone(),
-                    generics: Default::default(),
-                    parameters: Default::default(),
-                    is_async: expression_function.is_async,
-                }),
-            }),
-        )))
-    }
-
-    pub fn evaluate_expression_class(
-        &self,
-        qualified_location: &QualifiedLocation,
-        expression_class: &ExpressionClass,
-    ) -> Option<PyTypeEval> {
-        Some(PyTypeEval::with_default_effects(Type::new_literal(
-            TypeLiteral::Class(LiteralClass {
-                value: Arc::new(ClassType {
-                    name: Arc::new(Identifier::parse("todo")),
-                    location: apygen_analysis::namespace::Location::at_exit(
-                        apygen_analysis::namespace::NamespaceLocation::from(Arc::new(
-                            QualifiedName::parse("todo"),
-                        )),
-                    ),
-                    qualified_location: expression_class.location.clone(),
-                    generics: Default::default(),
-                    bases: Default::default(),
-                    keyword_arguments: Default::default(),
-                    is_abstract: false,
-                }),
-            }),
-        )))
-    }
-
-    pub fn evaluate_expression_attribute(
-        &self,
-        qualified_location: &QualifiedLocation,
-        expression_attribute: &ExpressionAttribute,
-    ) -> Option<PyTypeEval> {
-        let mut effects = PyEffects::new();
-
-        let value_ty = pytype_consume_or_return_option!(
-            effects,
-            self.evaluate_expression(qualified_location, &expression_attribute.value)?
-        );
-
-        /// References: https://docs.python.org/3/howto/descriptor.html
-        pub fn evaluate_attributes(
-            program_evaluation: &ProgramEvaluation,
-            value_ty: &Type,
-            name: &VariableName,
-            instance_arguments: Option<&imbl::Vector<Arc<Type>>>,
-        ) -> Option<PyTypeEval> {
-            match value_ty {
-                Type::Instance2(type_instance) => evaluate_attributes(
-                    program_evaluation,
-                    &type_instance.base,
-                    name,
-                    Some(&type_instance.arguments),
-                ),
-                Type::Union(type_union) => {
-                    let mut eval = PyTypeEval::never();
-                    for ty in type_union.types() {
-                        eval = eval.join(&evaluate_attributes(program_evaluation, ty, name, None)?);
-                    }
-                    Some(eval)
-                }
-                Type::Intersection(type_intersection) => {
-                    let mut eval = PyTypeEval::never();
-                    for ty in type_intersection {
-                        eval = eval.join(&evaluate_attributes(program_evaluation, ty, name, None)?);
-                    }
-                    Some(eval)
-                }
-                Type::Literal(type_literal) => match type_literal.as_ref() {
-                    TypeLiteral::Class(literal_class) => {
-                        // TODO: add support for descriptors
-                        for class in method_resolution_order(literal_class)? {
-                            let Some(state) = program_evaluation
-                                .states
-                                .get(&class.value.qualified_location)
-                            else {
-                                continue;
-                            };
-
-                            let Some(locations) = state.defined_variables.names.get(name) else {
-                                continue;
-                            };
-
-                            let mut eval = PyTypeEval::never();
-                            for location in locations {
-                                let location_eval =
-                                    state.evaluations.get(&Expression::Variable(
-                                        ExpressionVariable::new(name.clone(), location.clone()),
-                                    ))?;
-                                if !location_eval.deferred.is_empty() {
-                                    return None;
-                                }
-                                eval = eval.join(&location_eval.type_eval.clone().map(|ty| {
-                                    let Type::Literal(type_literal) = &ty else {
-                                        return ty;
-                                    };
-                                    let TypeLiteral::Function(literal_function) =
-                                        type_literal.as_ref()
-                                    else {
-                                        return ty;
-                                    };
-                                    let Some(arguments) = instance_arguments else {
-                                        return ty;
-                                    };
-
-                                    Type::new_literal(TypeLiteral::Method(LiteralMethod {
-                                        class: class.value.clone(),
-                                        function: literal_function.value.clone(),
-                                        arguments: arguments.clone(),
-                                    }))
-                                }));
-                            }
-
-                            return Some(eval);
-                        }
-                        None
-                    }
-                    _ => evaluate_attributes(
-                        program_evaluation,
-                        &Type::Instance2(as_type_instance(program_evaluation, type_literal)?),
-                        name,
-                        None,
-                    ),
-                },
-                _ => None,
-            }
-        }
-
-        evaluate_attributes(self, &value_ty, &expression_attribute.attribute, None)
-    }
-
-    pub fn evaluate_expression_call(
-        &self,
-        qualified_location: &QualifiedLocation,
-        expression_call: &ExpressionCall,
-    ) -> Option<PyTypeEval> {
-        let mut effects = PyEffects::new();
-
-        let literal_ty = pytype_consume_or_return_option!(
-            effects,
-            self.evaluate_expression(qualified_location, &expression_call.target)?
-        );
-
-        let mut arguments = Arguments::new();
-
-        for argument in &expression_call.positional_arguments {
-            let argument_ty = pytype_consume_or_return_option!(
-                effects,
-                self.evaluate_expression(qualified_location, &argument)?
-            );
-
-            arguments.positional.push(Arc::new(argument_ty));
-        }
-        for keyword_argument in &expression_call.keyword_arguments {
-            if let Some(name) = &keyword_argument.name {
-                let keyword_argument_ty = pytype_consume_or_return_option!(
-                    effects,
-                    self.evaluate_expression(qualified_location, &keyword_argument.value)?
-                );
-
-                arguments
-                    .keyword
-                    .insert(name.clone(), Arc::new(keyword_argument_ty));
-            }
-        }
-
-        let Type::Literal(literal) = &literal_ty else {
-            return None; // TODO: add support for unions, etc
-        };
-
-        match literal.as_ref() {
-            TypeLiteral::Function(literal_function) => self
-                .states
-                .get(&literal_function.value.qualified_location)
-                .map(|evaluation_state| {
-                    let ty = evaluation_state.return_value.iter().try_fold(
-                        Type::Never,
-                        |acc, expression| {
-                            let expression_eval = evaluation_state.evaluations.get(expression)?;
-
-                            if expression_eval.deferred.is_empty() {
-                                None
-                            } else {
-                                Some(acc.join(&expression_eval.type_eval.value))
-                            }
-                        },
-                    )?;
-                    Some(PyTypeEval::new(
-                        ty,
-                        PyEffects::new()
-                            .with_exceptions(evaluation_state.raised_exceptions.clone()),
-                    ))
-                })
-                .unwrap_or_default(),
-            TypeLiteral::Class(_) => Some(PyTypeEval::with_default_effects(Type::Instance2(
-                TypeInstance2 {
-                    base: Arc::new(literal_ty.clone()),
-                    arguments: imbl::Vector::new(),
-                },
-            ))),
-            _ => None, // TODO: add support for classes, etc
-        }
-    }
-
-    pub fn evaluate_expression_binary(
-        &self,
-        qualified_location: &QualifiedLocation,
-        expression_binary: &ExpressionBinary,
-    ) -> Option<PyTypeEval> {
-        let mut effects = PyEffects::new();
-
-        let left_ty = pytype_consume_or_return_option!(
-            effects,
-            self.evaluate_expression(qualified_location, &expression_binary.left)?
-        );
-        let right_ty = pytype_consume_or_return_option!(
-            effects,
-            self.evaluate_expression(qualified_location, &expression_binary.right)?
-        );
-
-        pub fn evaluate_binary_operation(
-            left_ty: &Type,
-            operator: BinaryOperator,
-            right_ty: &Type,
-        ) -> Option<PyTypeEval> {
-            match (left_ty, right_ty) {
-                (Type::Literal(left), Type::Literal(right)) => Some(type_literal::call_binary_op(
-                    left.as_ref(),
-                    operator,
-                    right.as_ref(),
-                )),
-                (Type::Union(left_type_union), Type::Union(right_type_union)) => {
-                    let mut type_eval = PyTypeEval::never();
-                    for ty in left_type_union.types() {
-                        type_eval =
-                            type_eval.join(&evaluate_binary_operation(ty, operator, right_ty)?);
-                    }
-                    for ty in right_type_union.types() {
-                        type_eval =
-                            type_eval.join(&evaluate_binary_operation(left_ty, operator, ty)?);
-                    }
-                    Some(type_eval)
-                }
-                (Type::Union(left_type_union), _) => {
-                    let mut type_eval = PyTypeEval::never();
-                    for ty in left_type_union.types() {
-                        type_eval =
-                            type_eval.join(&evaluate_binary_operation(ty, operator, right_ty)?);
-                    }
-                    Some(type_eval)
-                }
-                (_, Type::Union(right_type_union)) => {
-                    let mut type_eval = PyTypeEval::never();
-                    for ty in right_type_union.types() {
-                        type_eval =
-                            type_eval.join(&evaluate_binary_operation(left_ty, operator, ty)?);
-                    }
-                    Some(type_eval)
-                }
-                (Type::Any, _) | (_, Type::Any) => Some(PyTypeEval::unknown()),
-                (Type::Never, _) | (_, Type::Never) | (Type::NoReturn, _) | (_, Type::NoReturn) => {
-                    unreachable!()
-                }
-                _ => None, // TODO: add support for the rest
-            }
-        }
-
-        let ty = pytype_consume_or_return_option!(
-            effects,
-            evaluate_binary_operation(&left_ty, expression_binary.operator, &right_ty)?
-        );
-
-        Some(PyTypeEval::new(ty, effects))
-    }
-
-    pub fn evaluate_expression(
-        &self,
-        qualified_location: &QualifiedLocation,
-        expression: &Arc<Expression>,
-    ) -> Option<PyTypeEval> {
-        if let Some(expression_eval) = self
-            .states
-            .get(qualified_location)
-            .and_then(|state| state.evaluations.get(expression))
-        {
-            return self.evaluate_expression_eval(expression_eval);
-        }
-
-        match expression.as_ref() {
-            Expression::Variable(expression_variable) => {
-                self.evaluate_expression_variable(qualified_location, expression_variable)
-            }
-            Expression::Annotated(expression_annotated) => {
-                self.evaluate_expression_annotated(qualified_location, expression_annotated)
-            }
-            Expression::Override(_) => None,
-            Expression::Function(expression_function) => {
-                self.evaluate_expression_function(qualified_location, expression_function)
-            }
-            Expression::Class(expression_class) => {
-                self.evaluate_expression_class(qualified_location, expression_class)
-            }
-            Expression::Import(_) => None,
-            Expression::Attribute(expression_attribute) => {
-                self.evaluate_expression_attribute(qualified_location, expression_attribute)
-            }
-            Expression::Subscript(_) => None,
-            Expression::Call(expression_call) => {
-                self.evaluate_expression_call(qualified_location, expression_call)
-            }
-            Expression::Unary(_) => None,
-            Expression::Binary(expression_binary) => {
-                self.evaluate_expression_binary(qualified_location, expression_binary)
-            }
-            Expression::LiteralInteger(literal_integer) => Some(PyTypeEval::with_default_effects(
-                Type::new_integer_literal(literal_integer.clone()),
-            )),
-            Expression::LiteralFloat(literal_float) => Some(PyTypeEval::with_default_effects(
-                Type::new_float_literal(literal_float.clone()),
-            )),
-            Expression::LiteralComplex(literal_complex) => Some(PyTypeEval::with_default_effects(
-                Type::new_complex_literal(literal_complex.clone()),
-            )),
-            Expression::LiteralString(literal_string) => Some(PyTypeEval::with_default_effects(
-                Type::new_string_literal(literal_string.clone()),
-            )),
-            Expression::LiteralBytes(literal_bytes) => Some(PyTypeEval::with_default_effects(
-                Type::new_bytes_literal(literal_bytes.clone()),
-            )),
-            Expression::LiteralBoolean(literal_boolean) => Some(PyTypeEval::with_default_effects(
-                Type::new_boolean_literal(literal_boolean.clone()),
-            )),
-            Expression::LiteralNone => Some(PyTypeEval::with_default_effects(Type::new_literal(
-                TypeLiteral::None,
-            ))),
-            Expression::LiteralEllipsis => Some(PyTypeEval::with_default_effects(
-                Type::new_literal(TypeLiteral::Ellipsis),
-            )),
-        }
-    }
 }
 
 impl Display for ProgramEvaluation {
@@ -1058,6 +481,618 @@ impl AbstractState for ProgramEvaluation {
             }
             Entry::Vacant(entry) => entry.insert(abstract_value),
         }
+    }
+}
+
+pub fn get_variable_type(
+    abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+    module_name: &ModuleName,
+    name: &VariableName,
+) -> Option<TypeInstance2> {
+    let evaluation_state = abstract_state.get(&QualifiedLocation::new(
+        module_name.clone(),
+        imbl::Vector::new(),
+    ))?;
+
+    let locations = evaluation_state.defined_variables.names.get(name)?;
+
+    let mut base = Type::Never;
+
+    for location in locations {
+        base = base.join(
+            &evaluation_state
+                .evaluations
+                .get(&Expression::Variable(ExpressionVariable::new(
+                    name.clone(),
+                    location.clone(),
+                )))?
+                .type_eval
+                .value,
+        );
+    }
+
+    if base == Type::Never {
+        return None;
+    }
+
+    Some(TypeInstance2 {
+        base: Arc::new(base),
+        arguments: imbl::Vector::new(),
+    })
+}
+
+pub fn as_type_instance(
+    abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+    ty: &TypeLiteral,
+) -> Option<TypeInstance2> {
+    match ty {
+        TypeLiteral::Integer(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("int")),
+        ),
+        TypeLiteral::Boolean(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("bool")),
+        ),
+        TypeLiteral::Float(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("float")),
+        ),
+        TypeLiteral::Complex(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("complex")),
+        ),
+        TypeLiteral::String(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("str")),
+        ),
+        TypeLiteral::Bytes(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("bytes")),
+        ),
+        TypeLiteral::None => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+            &Arc::new(Identifier::parse("NoneType")),
+        ),
+        TypeLiteral::Ellipsis => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+            &Arc::new(Identifier::parse("EllipsisType")),
+        ),
+        TypeLiteral::List(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("list")),
+        ),
+        TypeLiteral::Tuple(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("tuple")),
+        ),
+        TypeLiteral::Dict(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("dict")),
+        ),
+        TypeLiteral::Function(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+            &Arc::new(Identifier::parse("FunctionType")),
+        ),
+        TypeLiteral::OverloadedFunction(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+            &Arc::new(Identifier::parse("FunctionType")),
+        ),
+        TypeLiteral::Method(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+            &Arc::new(Identifier::parse("MethodType")),
+        ),
+        TypeLiteral::Class(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+            &Arc::new(Identifier::parse("type")),
+        ),
+        TypeLiteral::TypeAlias(_) => None,
+        TypeLiteral::Generic(_) => None,
+        TypeLiteral::ImportedModule(_) => get_variable_type(
+            abstract_state,
+            &Arc::new(QualifiedName::parse(TYPES_MODULE)),
+            &Arc::new(Identifier::parse("ModuleType")),
+        ),
+    }
+}
+
+pub fn simplify(
+    abstract_state: &mut impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+    current_program_entity: &QualifiedLocation,
+) -> Option<()> {
+    let mut evaluations = abstract_state
+        .get(&current_program_entity)?
+        .evaluations
+        .clone();
+
+    loop {
+        let mut changed = false;
+
+        evaluations = evaluations
+            .into_iter()
+            .map(|(expression, evaluation)| {
+                let mut eval =
+                    ExpressionEval::new(evaluation.type_eval.clone(), imbl::OrdSet::default());
+
+                for expression in &evaluation.deferred {
+                    match evaluate_expression(abstract_state, &current_program_entity, &expression)
+                    {
+                        Some(type_eval) => {
+                            eval.type_eval = eval.type_eval.join(&type_eval);
+                            changed = true;
+                        }
+                        None => {
+                            eval.deferred.insert(expression.clone());
+                        }
+                    }
+                }
+
+                (expression, eval)
+            })
+            .collect();
+
+        let evaluation_state = abstract_state
+            .get_mut(current_program_entity)
+            .expect("evaluation_state should exists");
+
+        evaluation_state.evaluations = evaluations.clone();
+
+        if !changed {
+            break;
+        }
+    }
+
+    Some(())
+}
+
+pub fn evaluate_expression_eval(expression_eval: &ExpressionEval) -> Option<PyTypeEval> {
+    if expression_eval.deferred.is_empty() {
+        Some(expression_eval.type_eval.clone())
+    } else {
+        None
+    }
+}
+
+pub fn evaluate_expression_variable(
+    abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+    current_program_entity: &QualifiedLocation,
+    expression_variable: &ExpressionVariable,
+) -> Option<PyTypeEval> {
+    let parent_location = expression_variable.location.at_parent_location().unwrap();
+
+    let evaluation_state = abstract_state.get(&parent_location)?;
+
+    let Some(evaluation) = evaluation_state
+        .evaluations
+        .get(&Expression::Variable(expression_variable.clone()))
+    else {
+        return if evaluation_state
+            .defined_variables
+            .names
+            .contains_key(&expression_variable.name)
+        {
+            Some(PyTypeEval::with_default_effects(Type::Never))
+        } else {
+            Some(PyTypeEval::with_default_effects(Type::Never)) // TODO: Add exceptions
+        };
+    };
+
+    evaluate_expression_eval(evaluation)
+}
+
+pub fn evaluate_expression_annotated(
+    abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+    current_program_entity: &QualifiedLocation,
+    expression_annotated: &ExpressionAnnotated,
+) -> Option<PyTypeEval> {
+    let annotation_eval = evaluate_expression(
+        abstract_state,
+        current_program_entity,
+        &expression_annotated.annotation,
+    )?;
+
+    Some(PyTypeEval::with_default_effects(Type::Instance2(
+        TypeInstance2 {
+            base: Arc::new(annotation_eval.value.clone()),
+            arguments: imbl::Vector::new(),
+        },
+    )))
+}
+
+pub fn evaluate_expression_function(
+    abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+    current_program_entity: &QualifiedLocation,
+    expression_function: &ExpressionFunction,
+) -> Option<PyTypeEval> {
+    Some(PyTypeEval::with_default_effects(Type::new_literal(
+        TypeLiteral::Function(LiteralFunction {
+            value: Arc::new(FunctionType {
+                name: Arc::new(Identifier::parse("todo")),
+                location: apygen_analysis::namespace::Location::at_exit(
+                    apygen_analysis::namespace::NamespaceLocation::from(Arc::new(
+                        QualifiedName::parse("todo"),
+                    )),
+                ),
+                qualified_location: expression_function.location.clone(),
+                generics: Default::default(),
+                parameters: Default::default(),
+                is_async: expression_function.is_async,
+            }),
+        }),
+    )))
+}
+
+pub fn evaluate_expression_class(
+    abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+    current_program_entity: &QualifiedLocation,
+    expression_class: &ExpressionClass,
+) -> Option<PyTypeEval> {
+    Some(PyTypeEval::with_default_effects(Type::new_literal(
+        TypeLiteral::Class(LiteralClass {
+            value: Arc::new(ClassType {
+                name: Arc::new(Identifier::parse("todo")),
+                location: apygen_analysis::namespace::Location::at_exit(
+                    apygen_analysis::namespace::NamespaceLocation::from(Arc::new(
+                        QualifiedName::parse("todo"),
+                    )),
+                ),
+                qualified_location: expression_class.location.clone(),
+                generics: Default::default(),
+                bases: Default::default(),
+                keyword_arguments: Default::default(),
+                is_abstract: false,
+            }),
+        }),
+    )))
+}
+
+pub fn evaluate_expression_attribute(
+    abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+    current_program_entity: &QualifiedLocation,
+    expression_attribute: &ExpressionAttribute,
+) -> Option<PyTypeEval> {
+    let mut effects = PyEffects::new();
+
+    let value_ty = pytype_consume_or_return_option!(
+        effects,
+        evaluate_expression(
+            abstract_state,
+            current_program_entity,
+            &expression_attribute.value
+        )?
+    );
+
+    /// References: https://docs.python.org/3/howto/descriptor.html
+    pub fn evaluate_attributes(
+        abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+        value_ty: &Type,
+        name: &VariableName,
+        instance_arguments: Option<&imbl::Vector<Arc<Type>>>,
+    ) -> Option<PyTypeEval> {
+        match value_ty {
+            Type::Instance2(type_instance) => evaluate_attributes(
+                abstract_state,
+                &type_instance.base,
+                name,
+                Some(&type_instance.arguments),
+            ),
+            Type::Union(type_union) => {
+                let mut eval = PyTypeEval::never();
+                for ty in type_union.types() {
+                    eval = eval.join(&evaluate_attributes(abstract_state, ty, name, None)?);
+                }
+                Some(eval)
+            }
+            Type::Intersection(type_intersection) => {
+                let mut eval = PyTypeEval::never();
+                for ty in type_intersection {
+                    eval = eval.join(&evaluate_attributes(abstract_state, ty, name, None)?);
+                }
+                Some(eval)
+            }
+            Type::Literal(type_literal) => match type_literal.as_ref() {
+                TypeLiteral::Class(literal_class) => {
+                    // TODO: add support for descriptors
+                    for class in method_resolution_order(literal_class)? {
+                        let Some(state) = abstract_state.get(&class.value.qualified_location)
+                        else {
+                            continue;
+                        };
+
+                        let Some(locations) = state.defined_variables.names.get(name) else {
+                            continue;
+                        };
+
+                        let mut eval = PyTypeEval::never();
+                        for location in locations {
+                            let location_eval = state.evaluations.get(&Expression::Variable(
+                                ExpressionVariable::new(name.clone(), location.clone()),
+                            ))?;
+                            if !location_eval.deferred.is_empty() {
+                                return None;
+                            }
+                            eval = eval.join(&location_eval.type_eval.clone().map(|ty| {
+                                let Type::Literal(type_literal) = &ty else {
+                                    return ty;
+                                };
+                                let TypeLiteral::Function(literal_function) = type_literal.as_ref()
+                                else {
+                                    return ty;
+                                };
+                                let Some(arguments) = instance_arguments else {
+                                    return ty;
+                                };
+
+                                Type::new_literal(TypeLiteral::Method(LiteralMethod {
+                                    class: class.value.clone(),
+                                    function: literal_function.value.clone(),
+                                    arguments: arguments.clone(),
+                                }))
+                            }));
+                        }
+
+                        return Some(eval);
+                    }
+                    None
+                }
+                _ => evaluate_attributes(
+                    abstract_state,
+                    &Type::Instance2(as_type_instance(abstract_state, type_literal)?),
+                    name,
+                    None,
+                ),
+            },
+            _ => None,
+        }
+    }
+
+    evaluate_attributes(
+        abstract_state,
+        &value_ty,
+        &expression_attribute.attribute,
+        None,
+    )
+}
+
+pub fn evaluate_expression_call(
+    abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+    current_program_entity: &QualifiedLocation,
+    expression_call: &ExpressionCall,
+) -> Option<PyTypeEval> {
+    let mut effects = PyEffects::new();
+
+    let literal_ty = pytype_consume_or_return_option!(
+        effects,
+        evaluate_expression(
+            abstract_state,
+            current_program_entity,
+            &expression_call.target
+        )?
+    );
+
+    let mut arguments = Arguments::new();
+
+    for argument in &expression_call.positional_arguments {
+        let argument_ty = pytype_consume_or_return_option!(
+            effects,
+            evaluate_expression(abstract_state, current_program_entity, &argument)?
+        );
+
+        arguments.positional.push(Arc::new(argument_ty));
+    }
+    for keyword_argument in &expression_call.keyword_arguments {
+        if let Some(name) = &keyword_argument.name {
+            let keyword_argument_ty = pytype_consume_or_return_option!(
+                effects,
+                evaluate_expression(
+                    abstract_state,
+                    current_program_entity,
+                    &keyword_argument.value
+                )?
+            );
+
+            arguments
+                .keyword
+                .insert(name.clone(), Arc::new(keyword_argument_ty));
+        }
+    }
+
+    let Type::Literal(literal) = &literal_ty else {
+        return None; // TODO: add support for unions, etc
+    };
+
+    match literal.as_ref() {
+        TypeLiteral::Function(literal_function) => abstract_state
+            .get(&literal_function.value.qualified_location)
+            .map(|evaluation_state| {
+                let ty = evaluation_state.return_value.iter().try_fold(
+                    Type::Never,
+                    |acc, expression| {
+                        let expression_eval = evaluation_state.evaluations.get(expression)?;
+
+                        if expression_eval.deferred.is_empty() {
+                            None
+                        } else {
+                            Some(acc.join(&expression_eval.type_eval.value))
+                        }
+                    },
+                )?;
+                Some(PyTypeEval::new(
+                    ty,
+                    PyEffects::new().with_exceptions(evaluation_state.raised_exceptions.clone()),
+                ))
+            })
+            .unwrap_or_default(),
+        TypeLiteral::Class(_) => Some(PyTypeEval::with_default_effects(Type::Instance2(
+            TypeInstance2 {
+                base: Arc::new(literal_ty.clone()),
+                arguments: imbl::Vector::new(),
+            },
+        ))),
+        _ => None, // TODO: add support for classes, etc
+    }
+}
+
+pub fn evaluate_expression_binary(
+    abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+    current_program_entity: &QualifiedLocation,
+    expression_binary: &ExpressionBinary,
+) -> Option<PyTypeEval> {
+    let mut effects = PyEffects::new();
+
+    let left_ty = pytype_consume_or_return_option!(
+        effects,
+        evaluate_expression(
+            abstract_state,
+            current_program_entity,
+            &expression_binary.left
+        )?
+    );
+    let right_ty = pytype_consume_or_return_option!(
+        effects,
+        evaluate_expression(
+            abstract_state,
+            current_program_entity,
+            &expression_binary.right
+        )?
+    );
+
+    pub fn evaluate_binary_operation(
+        left_ty: &Type,
+        operator: BinaryOperator,
+        right_ty: &Type,
+    ) -> Option<PyTypeEval> {
+        match (left_ty, right_ty) {
+            (Type::Literal(left), Type::Literal(right)) => Some(type_literal::call_binary_op(
+                left.as_ref(),
+                operator,
+                right.as_ref(),
+            )),
+            (Type::Union(left_type_union), Type::Union(right_type_union)) => {
+                let mut type_eval = PyTypeEval::never();
+                for ty in left_type_union.types() {
+                    type_eval = type_eval.join(&evaluate_binary_operation(ty, operator, right_ty)?);
+                }
+                for ty in right_type_union.types() {
+                    type_eval = type_eval.join(&evaluate_binary_operation(left_ty, operator, ty)?);
+                }
+                Some(type_eval)
+            }
+            (Type::Union(left_type_union), _) => {
+                let mut type_eval = PyTypeEval::never();
+                for ty in left_type_union.types() {
+                    type_eval = type_eval.join(&evaluate_binary_operation(ty, operator, right_ty)?);
+                }
+                Some(type_eval)
+            }
+            (_, Type::Union(right_type_union)) => {
+                let mut type_eval = PyTypeEval::never();
+                for ty in right_type_union.types() {
+                    type_eval = type_eval.join(&evaluate_binary_operation(left_ty, operator, ty)?);
+                }
+                Some(type_eval)
+            }
+            (Type::Any, _) | (_, Type::Any) => Some(PyTypeEval::unknown()),
+            (Type::Never, _) | (_, Type::Never) | (Type::NoReturn, _) | (_, Type::NoReturn) => {
+                unreachable!()
+            }
+            _ => None, // TODO: add support for the rest
+        }
+    }
+
+    let ty = pytype_consume_or_return_option!(
+        effects,
+        evaluate_binary_operation(&left_ty, expression_binary.operator, &right_ty)?
+    );
+
+    Some(PyTypeEval::new(ty, effects))
+}
+
+pub fn evaluate_expression(
+    abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+    current_program_entity: &QualifiedLocation,
+    expression: &Arc<Expression>,
+) -> Option<PyTypeEval> {
+    if let Some(expression_eval) = abstract_state
+        .get(current_program_entity)
+        .and_then(|state| state.evaluations.get(expression))
+    {
+        return evaluate_expression_eval(expression_eval);
+    }
+
+    match expression.as_ref() {
+        Expression::Variable(expression_variable) => evaluate_expression_variable(
+            abstract_state,
+            current_program_entity,
+            expression_variable,
+        ),
+        Expression::Annotated(expression_annotated) => evaluate_expression_annotated(
+            abstract_state,
+            current_program_entity,
+            expression_annotated,
+        ),
+        Expression::Override(_) => None,
+        Expression::Function(expression_function) => evaluate_expression_function(
+            abstract_state,
+            current_program_entity,
+            expression_function,
+        ),
+        Expression::Class(expression_class) => {
+            evaluate_expression_class(abstract_state, current_program_entity, expression_class)
+        }
+        Expression::Import(_) => None,
+        Expression::Attribute(expression_attribute) => evaluate_expression_attribute(
+            abstract_state,
+            current_program_entity,
+            expression_attribute,
+        ),
+        Expression::Subscript(_) => None,
+        Expression::Call(expression_call) => {
+            evaluate_expression_call(abstract_state, current_program_entity, expression_call)
+        }
+        Expression::Unary(_) => None,
+        Expression::Binary(expression_binary) => {
+            evaluate_expression_binary(abstract_state, current_program_entity, expression_binary)
+        }
+        Expression::LiteralInteger(literal_integer) => Some(PyTypeEval::with_default_effects(
+            Type::new_integer_literal(literal_integer.clone()),
+        )),
+        Expression::LiteralFloat(literal_float) => Some(PyTypeEval::with_default_effects(
+            Type::new_float_literal(literal_float.clone()),
+        )),
+        Expression::LiteralComplex(literal_complex) => Some(PyTypeEval::with_default_effects(
+            Type::new_complex_literal(literal_complex.clone()),
+        )),
+        Expression::LiteralString(literal_string) => Some(PyTypeEval::with_default_effects(
+            Type::new_string_literal(literal_string.clone()),
+        )),
+        Expression::LiteralBytes(literal_bytes) => Some(PyTypeEval::with_default_effects(
+            Type::new_bytes_literal(literal_bytes.clone()),
+        )),
+        Expression::LiteralBoolean(literal_boolean) => Some(PyTypeEval::with_default_effects(
+            Type::new_boolean_literal(literal_boolean.clone()),
+        )),
+        Expression::LiteralNone => Some(PyTypeEval::with_default_effects(Type::new_literal(
+            TypeLiteral::None,
+        ))),
+        Expression::LiteralEllipsis => Some(PyTypeEval::with_default_effects(Type::new_literal(
+            TypeLiteral::Ellipsis,
+        ))),
     }
 }
 
@@ -1214,7 +1249,7 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
         let mut program_evaluation = left.join(right);
 
         if let ProgramEntityNode::Entity(entity) = &node {
-            program_evaluation.simplify(&entity.location);
+            simplify(&mut program_evaluation, &entity.location);
         }
 
         Ok(program_evaluation)
@@ -1332,7 +1367,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
         if let Some(dependent_graph) = self.graph.nodes.get(&node) {
             for node in dependent_graph.nodes.keys() {
                 if let ProgramEntityNode::Entity(entity) = &node {
-                    program_evaluation.simplify(&entity.location);
+                    simplify(&mut program_evaluation, &entity.location);
                 }
             }
         }
@@ -1571,7 +1606,7 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>()
         {
-            program_evaluation.simplify(&location);
+            simplify(&mut program_evaluation, &location);
         }
 
         let mut actual_types = String::new();
