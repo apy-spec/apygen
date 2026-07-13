@@ -57,6 +57,14 @@ impl ExpressionEval {
             deferred,
         }
     }
+
+    pub fn as_py_type_eval(&self) -> Option<&PyTypeEval> {
+        if self.deferred.is_empty() {
+            Some(&self.type_eval)
+        } else {
+            None
+        }
+    }
 }
 
 impl Display for ExpressionEval {
@@ -626,6 +634,10 @@ pub fn simplify(
         evaluations = evaluations
             .into_iter()
             .map(|(expression, evaluation)| {
+                if evaluation.deferred.is_empty() {
+                    return (expression, evaluation);
+                }
+
                 let mut eval =
                     ExpressionEval::new(evaluation.type_eval.clone(), imbl::OrdSet::default());
 
@@ -660,14 +672,6 @@ pub fn simplify(
     Some(())
 }
 
-pub fn evaluate_expression_eval(expression_eval: &ExpressionEval) -> Option<PyTypeEval> {
-    if expression_eval.deferred.is_empty() {
-        Some(expression_eval.type_eval.clone())
-    } else {
-        None
-    }
-}
-
 pub fn evaluate_expression_variable(
     abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
     current_program_entity: &QualifiedLocation,
@@ -692,7 +696,7 @@ pub fn evaluate_expression_variable(
         };
     };
 
-    evaluate_expression_eval(evaluation)
+    evaluation.as_py_type_eval().cloned()
 }
 
 pub fn evaluate_expression_annotated(
@@ -1032,7 +1036,7 @@ pub fn evaluate_expression(
         .get(current_program_entity)
         .and_then(|state| state.evaluations.get(expression))
     {
-        return evaluate_expression_eval(expression_eval);
+        return expression_eval.as_py_type_eval().cloned();
     }
 
     match expression.as_ref() {
@@ -1100,7 +1104,6 @@ pub struct ProgramEntityConstraintSolver<
     's,
     S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
 > {
-    pub module_node: &'s ModuleNode,
     pub graph: &'s DependentGraph<ProgramEntityNode, ProgramAnalysis>,
     pub program_evaluation: &'s S,
 }
@@ -1109,12 +1112,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
     ProgramEntityConstraintSolver<'s, S>
 {
     pub fn new(
-        module_node: &'s ModuleNode,
         graph: &'s DependentGraph<ProgramEntityNode, ProgramAnalysis>,
         program_evaluation: &'s S,
     ) -> Self {
         Self {
-            module_node,
             graph,
             program_evaluation,
         }
@@ -1308,7 +1309,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 
         if let Some(dependent_graph) = self.graph.nodes.get(&node) {
             let solver_state = analysis(
-                &ProgramEntityConstraintSolver::new(&node, dependent_graph, &previous_state),
+                &ProgramEntityConstraintSolver::new(dependent_graph, &previous_state),
                 &mut LogAnalysisObserver::with_prefix(node.to_string()),
             )?;
 
