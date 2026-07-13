@@ -247,7 +247,13 @@ impl<
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
         let mut program_evaluation = analysis_state.get_clone_or_else(node, || {
-            AbstractStateProxy::with_default_proxy(self.program_evaluation)
+            AbstractStateProxy::new(
+                self.program_evaluation,
+                ProgramEvaluation::unit(
+                    self.program_entity.location.clone(),
+                    EvaluationState::default(),
+                ),
+            )
         });
 
         match &node {
@@ -1207,6 +1213,8 @@ impl<
             .proxy
             .insert(entity.location.clone(), evaluation_state);
 
+        simplify(&mut previous_state, &entity.location);
+
         Ok(previous_state)
     }
 
@@ -1225,7 +1233,7 @@ impl<
         analysis_state: &'a Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Option<&'a Self::AbstractState>, Self::Error> {
-        Ok(analysis_state.abstract_states.get(node))
+        Ok(analysis_state.get(node))
     }
 
     fn set_abstract_state(
@@ -1234,9 +1242,7 @@ impl<
         node: &Self::Node,
         abstract_state: Self::AbstractState,
     ) -> Result<(), Self::Error> {
-        analysis_state
-            .abstract_states
-            .insert(node.clone(), abstract_state);
+        analysis_state.insert(node.clone(), abstract_state);
         Ok(())
     }
 
