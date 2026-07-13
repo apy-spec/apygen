@@ -379,7 +379,6 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
                             .fold(ExpressionEval::default(), |acc, expression| {
                                 acc.join(&match program_evaluation.evaluate_expression(
                                     &self.program_entity.location,
-                                    &imbl::OrdSet::default(),
                                     &Arc::new(expression.clone()),
                                 ) {
                                     Some(type_eval) => {
@@ -407,11 +406,9 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
                 }
             }
             ConstraintNode::TypeConstraint(constraint) => {
-                let expression_eval = match program_evaluation.evaluate_expression(
-                    &self.program_entity.location,
-                    &imbl::OrdSet::default(),
-                    &constraint.left,
-                ) {
+                let expression_eval = match program_evaluation
+                    .evaluate_expression(&self.program_entity.location, &constraint.left)
+                {
                     Some(type_eval) => ExpressionEval::new(type_eval, imbl::OrdSet::default()),
                     None => ExpressionEval::new(
                         PyTypeEval::never(),
@@ -491,7 +488,7 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
 
         let mut program_evaluation = left.join(&right);
 
-        program_evaluation.simplify(self.program_entity.location.clone());
+        program_evaluation.simplify(&self.program_entity.location);
 
         let new_evaluation = EvaluationState {
             evaluations: left_evaluation_state.evaluations.union_with(
@@ -566,69 +563,59 @@ impl ProgramEvaluation {
         Self::new(self.states.update(qualified_location, evaluation_state))
     }
 
-    pub fn simplify(&mut self, qualified_location: QualifiedLocation) -> Option<()> {
-        let state = self.states.get(&qualified_location)?;
+    pub fn simplify(&mut self, qualified_location: &QualifiedLocation) -> Option<()> {
+        let mut evaluations = self.states.get(&qualified_location)?.evaluations.clone();
 
-        let mut new_evaluations = imbl::OrdMap::new();
+        loop {
+            let mut changed = false;
 
-        for (expression, evaluation) in &state.evaluations {
-            let mut eval =
-                ExpressionEval::new(evaluation.type_eval.clone(), imbl::OrdSet::default());
+            evaluations = evaluations
+                .into_iter()
+                .map(|(expression, evaluation)| {
+                    let mut eval =
+                        ExpressionEval::new(evaluation.type_eval.clone(), imbl::OrdSet::default());
 
-            for expression in &evaluation.deferred {
-                match self.evaluate_expression(
-                    &qualified_location,
-                    &imbl::OrdSet::default(),
-                    &expression,
-                ) {
-                    Some(type_eval) => {
-                        eval.type_eval = eval.type_eval.join(&type_eval);
+                    for expression in &evaluation.deferred {
+                        match self.evaluate_expression(&qualified_location, &expression) {
+                            Some(type_eval) => {
+                                eval.type_eval = eval.type_eval.join(&type_eval);
+                                changed = true;
+                            }
+                            None => {
+                                eval.deferred.insert(expression.clone());
+                            }
+                        }
                     }
-                    None => {
-                        eval.deferred.insert(expression.clone());
-                    }
-                }
+
+                    (expression, eval)
+                })
+                .collect();
+
+            let Entry::Occupied(entry) = self.states.entry(qualified_location.clone()) else {
+                unreachable!("state should exists")
+            };
+
+            entry.into_mut().evaluations = evaluations.clone();
+
+            if !changed {
+                break;
             }
-
-            new_evaluations.insert(expression.clone(), eval);
         }
-
-        self.states.insert(
-            qualified_location,
-            EvaluationState {
-                evaluations: new_evaluations,
-                return_value: state.return_value.clone(),
-                raised_exceptions: state.raised_exceptions.clone(),
-                defined_variables: state.defined_variables.clone(),
-            },
-        );
 
         Some(())
     }
 
-    pub fn resolve_expression_evaluation(
-        &self,
-        qualified_location: &QualifiedLocation,
-        done_expressions: &imbl::OrdSet<&Expression>,
-        evaluation: &ExpressionEval,
-    ) -> Option<PyTypeEval> {
-        let mut ty = evaluation.type_eval.clone();
-
-        for expression in &evaluation.deferred {
-            ty = ty.join(&self.evaluate_expression(
-                qualified_location,
-                done_expressions,
-                expression,
-            )?)
+    pub fn evaluate_expression_eval(&self, expression_eval: &ExpressionEval) -> Option<PyTypeEval> {
+        if expression_eval.deferred.is_empty() {
+            Some(expression_eval.type_eval.clone())
+        } else {
+            None
         }
-
-        Some(ty)
     }
 
     pub fn evaluate_expression_variable(
         &self,
         qualified_location: &QualifiedLocation,
-        done_expressions: &imbl::OrdSet<&Expression>,
         expression_variable: &ExpressionVariable,
     ) -> Option<PyTypeEval> {
         let parent_location = expression_variable.location.at_parent_location().unwrap();
@@ -650,24 +637,16 @@ impl ProgramEvaluation {
             };
         };
 
-        Some(self.resolve_expression_evaluation(
-            qualified_location,
-            done_expressions,
-            evaluation,
-        )?)
+        self.evaluate_expression_eval(evaluation)
     }
 
     pub fn evaluate_expression_annotated(
         &self,
         qualified_location: &QualifiedLocation,
-        done_expressions: &imbl::OrdSet<&Expression>,
         expression_annotated: &ExpressionAnnotated,
     ) -> Option<PyTypeEval> {
-        let annotation_eval = self.evaluate_expression(
-            qualified_location,
-            done_expressions,
-            &expression_annotated.annotation,
-        )?;
+        let annotation_eval =
+            self.evaluate_expression(qualified_location, &expression_annotated.annotation)?;
 
         Some(PyTypeEval::with_default_effects(Type::Instance2(
             TypeInstance2 {
@@ -680,7 +659,6 @@ impl ProgramEvaluation {
     pub fn evaluate_expression_function(
         &self,
         qualified_location: &QualifiedLocation,
-        done_expressions: &imbl::OrdSet<&Expression>,
         expression_function: &ExpressionFunction,
     ) -> Option<PyTypeEval> {
         Some(PyTypeEval::with_default_effects(Type::new_literal(
@@ -704,7 +682,6 @@ impl ProgramEvaluation {
     pub fn evaluate_expression_class(
         &self,
         qualified_location: &QualifiedLocation,
-        done_expressions: &imbl::OrdSet<&Expression>,
         expression_class: &ExpressionClass,
     ) -> Option<PyTypeEval> {
         Some(PyTypeEval::with_default_effects(Type::new_literal(
@@ -729,18 +706,13 @@ impl ProgramEvaluation {
     pub fn evaluate_expression_attribute(
         &self,
         qualified_location: &QualifiedLocation,
-        done_expressions: &imbl::OrdSet<&Expression>,
         expression_attribute: &ExpressionAttribute,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
 
         let value_ty = pytype_consume_or_return_option!(
             effects,
-            self.evaluate_expression(
-                qualified_location,
-                done_expressions,
-                &expression_attribute.value
-            )?
+            self.evaluate_expression(qualified_location, &expression_attribute.value)?
         );
 
         /// References: https://docs.python.org/3/howto/descriptor.html
@@ -837,18 +809,13 @@ impl ProgramEvaluation {
     pub fn evaluate_expression_call(
         &self,
         qualified_location: &QualifiedLocation,
-        done_expressions: &imbl::OrdSet<&Expression>,
         expression_call: &ExpressionCall,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
 
         let literal_ty = pytype_consume_or_return_option!(
             effects,
-            self.evaluate_expression(
-                qualified_location,
-                done_expressions,
-                &expression_call.target
-            )?
+            self.evaluate_expression(qualified_location, &expression_call.target)?
         );
 
         let mut arguments = Arguments::new();
@@ -856,7 +823,7 @@ impl ProgramEvaluation {
         for argument in &expression_call.positional_arguments {
             let argument_ty = pytype_consume_or_return_option!(
                 effects,
-                self.evaluate_expression(qualified_location, done_expressions, &argument)?
+                self.evaluate_expression(qualified_location, &argument)?
             );
 
             arguments.positional.push(Arc::new(argument_ty));
@@ -865,11 +832,7 @@ impl ProgramEvaluation {
             if let Some(name) = &keyword_argument.name {
                 let keyword_argument_ty = pytype_consume_or_return_option!(
                     effects,
-                    self.evaluate_expression(
-                        qualified_location,
-                        done_expressions,
-                        &keyword_argument.value
-                    )?
+                    self.evaluate_expression(qualified_location, &keyword_argument.value)?
                 );
 
                 arguments
@@ -919,26 +882,17 @@ impl ProgramEvaluation {
     pub fn evaluate_expression_binary(
         &self,
         qualified_location: &QualifiedLocation,
-        done_expressions: &imbl::OrdSet<&Expression>,
         expression_binary: &ExpressionBinary,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
 
         let left_ty = pytype_consume_or_return_option!(
             effects,
-            self.evaluate_expression(
-                qualified_location,
-                done_expressions,
-                &expression_binary.left
-            )?
+            self.evaluate_expression(qualified_location, &expression_binary.left)?
         );
         let right_ty = pytype_consume_or_return_option!(
             effects,
-            self.evaluate_expression(
-                qualified_location,
-                done_expressions,
-                &expression_binary.right
-            )?
+            self.evaluate_expression(qualified_location, &expression_binary.right)?
         );
 
         pub fn evaluate_binary_operation(
@@ -999,67 +953,42 @@ impl ProgramEvaluation {
     pub fn evaluate_expression(
         &self,
         qualified_location: &QualifiedLocation,
-        done_expressions: &imbl::OrdSet<&Expression>,
         expression: &Arc<Expression>,
     ) -> Option<PyTypeEval> {
-        if done_expressions.contains(&expression.as_ref()) {
-            return None;
-        }
-
-        let new_done_expressions = done_expressions.update(expression);
-
-        if let Some(eval) = self
+        if let Some(expression_eval) = self
             .states
             .get(qualified_location)
             .and_then(|state| state.evaluations.get(expression))
         {
-            return self.resolve_expression_evaluation(
-                qualified_location,
-                &new_done_expressions,
-                &eval,
-            );
+            return self.evaluate_expression_eval(expression_eval);
         }
 
         match expression.as_ref() {
-            Expression::Variable(expression_variable) => self.evaluate_expression_variable(
-                qualified_location,
-                &new_done_expressions,
-                expression_variable,
-            ),
-            Expression::Annotated(expression_annotated) => self.evaluate_expression_annotated(
-                qualified_location,
-                &new_done_expressions,
-                expression_annotated,
-            ),
+            Expression::Variable(expression_variable) => {
+                self.evaluate_expression_variable(qualified_location, expression_variable)
+            }
+            Expression::Annotated(expression_annotated) => {
+                self.evaluate_expression_annotated(qualified_location, expression_annotated)
+            }
             Expression::Override(_) => None,
-            Expression::Function(expression_function) => self.evaluate_expression_function(
-                qualified_location,
-                &new_done_expressions,
-                expression_function,
-            ),
-            Expression::Class(expression_class) => self.evaluate_expression_class(
-                qualified_location,
-                &new_done_expressions,
-                expression_class,
-            ),
+            Expression::Function(expression_function) => {
+                self.evaluate_expression_function(qualified_location, expression_function)
+            }
+            Expression::Class(expression_class) => {
+                self.evaluate_expression_class(qualified_location, expression_class)
+            }
             Expression::Import(_) => None,
-            Expression::Attribute(expression_attribute) => self.evaluate_expression_attribute(
-                qualified_location,
-                &new_done_expressions,
-                expression_attribute,
-            ),
+            Expression::Attribute(expression_attribute) => {
+                self.evaluate_expression_attribute(qualified_location, expression_attribute)
+            }
             Expression::Subscript(_) => None,
-            Expression::Call(expression_call) => self.evaluate_expression_call(
-                qualified_location,
-                &new_done_expressions,
-                expression_call,
-            ),
+            Expression::Call(expression_call) => {
+                self.evaluate_expression_call(qualified_location, expression_call)
+            }
             Expression::Unary(_) => None,
-            Expression::Binary(expression_binary) => self.evaluate_expression_binary(
-                qualified_location,
-                &new_done_expressions,
-                expression_binary,
-            ),
+            Expression::Binary(expression_binary) => {
+                self.evaluate_expression_binary(qualified_location, expression_binary)
+            }
             Expression::LiteralInteger(literal_integer) => Some(PyTypeEval::with_default_effects(
                 Type::new_integer_literal(literal_integer.clone()),
             )),
@@ -1285,7 +1214,7 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
         let mut program_evaluation = left.join(right);
 
         if let ProgramEntityNode::Entity(entity) = &node {
-            program_evaluation.simplify(entity.location.clone());
+            program_evaluation.simplify(&entity.location);
         }
 
         Ok(program_evaluation)
@@ -1403,7 +1332,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
         if let Some(dependent_graph) = self.graph.nodes.get(&node) {
             for node in dependent_graph.nodes.keys() {
                 if let ProgramEntityNode::Entity(entity) = &node {
-                    program_evaluation.simplify(entity.location.clone());
+                    program_evaluation.simplify(&entity.location);
                 }
             }
         }
@@ -1642,7 +1571,7 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>()
         {
-            program_evaluation.simplify(location);
+            program_evaluation.simplify(&location);
         }
 
         let mut actual_types = String::new();
