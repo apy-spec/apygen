@@ -14,14 +14,14 @@ use crate::genkill::expressions::literal_class::method_resolution_order;
 use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
 use crate::{is_type_unreachable, pytype_consume_or_return_option};
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::abstract_state::AbstractState;
+use apygen_analysis::abstract_state::{AbstractState, AbstractStateProxy};
 use apygen_analysis::fmt::{fmt_display_set, fmt_set};
 use apygen_analysis::lattice::Join;
 use apygen_analysis::log::LogAnalysisObserver;
 use apygen_analysis::{GraphAnalyser, analysis};
 use imbl::ordmap::Entry;
 use std::convert::Infallible;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 use std::sync::Arc;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
@@ -117,40 +117,38 @@ impl EvaluationState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Join)]
-pub struct SolverState<S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>> {
-    pub states: imbl::OrdMap<ConstraintNode, S>,
+pub struct SolverState<N: Ord, S> {
+    pub abstract_states: imbl::OrdMap<N, S>,
 }
 
-impl<S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>> SolverState<S> {
-    pub fn new(evaluations: imbl::OrdMap<ConstraintNode, S>) -> Self {
-        Self {
-            states: evaluations,
-        }
+impl<N: Ord, S> SolverState<N, S> {
+    pub fn new(abstract_states: imbl::OrdMap<N, S>) -> Self {
+        Self { abstract_states }
     }
 }
 
-impl<S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>> Default
-    for SolverState<S>
-{
+impl<N: Ord, S> Default for SolverState<N, S> {
     fn default() -> Self {
         Self {
-            states: imbl::OrdMap::default(),
+            abstract_states: imbl::OrdMap::default(),
         }
     }
 }
 
-impl<S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Clone>
-    AbstractState for SolverState<S>
+impl<
+    N: Clone + Ord,
+    S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Clone,
+> AbstractState for SolverState<N, S>
 {
-    type Key = ConstraintNode;
+    type Key = N;
     type AbstractValue = S;
 
     fn get(&self, key: &Self::Key) -> Option<&Self::AbstractValue> {
-        self.states.get(key)
+        self.abstract_states.get(key)
     }
 
     fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::AbstractValue> {
-        self.states.get_mut(key)
+        self.abstract_states.get_mut(key)
     }
 
     fn get_or_insert(
@@ -158,7 +156,7 @@ impl<S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> 
         key: Self::Key,
         abstract_value: Self::AbstractValue,
     ) -> &mut Self::AbstractValue {
-        self.states.entry(key).or_insert(abstract_value)
+        self.abstract_states.entry(key).or_insert(abstract_value)
     }
 
     fn insert(
@@ -166,7 +164,7 @@ impl<S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> 
         key: Self::Key,
         abstract_value: Self::AbstractValue,
     ) -> &mut Self::AbstractValue {
-        match self.states.entry(key) {
+        match self.abstract_states.entry(key) {
             Entry::Occupied(entry) => {
                 let previous_abstract_value = entry.into_mut();
                 *previous_abstract_value = abstract_value;
@@ -205,10 +203,14 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
     }
 }
 
-impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
+impl<
+    's,
+    S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Debug + Eq + Clone,
+> GraphAnalyser for ConstraintSolver<'s, S>
+{
     type Node = ConstraintNode;
-    type AbstractState = ProgramEvaluation;
-    type AnalysisState = SolverState<ProgramEvaluation>;
+    type AbstractState = AbstractStateProxy<'s, S, ProgramEvaluation>;
+    type AnalysisState = SolverState<Self::Node, Self::AbstractState>;
     type Error = Infallible;
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
@@ -237,9 +239,12 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
         let mut program_evaluation = analysis_state.get_clone_or_else(node, || {
-            self.program_evaluation.update(
-                self.program_entity.location.clone(),
-                EvaluationState::default(),
+            AbstractStateProxy::new(
+                self.program_evaluation,
+                ProgramEvaluation::unit(
+                    self.program_entity.location.clone(),
+                    EvaluationState::default(),
+                ),
             )
         });
 
@@ -339,7 +344,7 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
         analysis_state: &'a Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Option<&'a Self::AbstractState>, Self::Error> {
-        Ok(analysis_state.states.get(node))
+        Ok(analysis_state.abstract_states.get(node))
     }
 
     fn set_abstract_state(
@@ -348,7 +353,9 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
         node: &Self::Node,
         abstract_state: Self::AbstractState,
     ) -> Result<(), Self::Error> {
-        analysis_state.states.insert(node.clone(), abstract_state);
+        analysis_state
+            .abstract_states
+            .insert(node.clone(), abstract_state);
         Ok(())
     }
 
@@ -359,19 +366,20 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
         left: &Self::AbstractState,
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
-        let left_evaluation_state = left.get_clone_or_default(&self.program_entity.location);
-        let right_evaluation_state = right.get_clone_or_default(&self.program_entity.location);
+        assert_eq!(left.abstract_state, self.program_evaluation);
+        assert_eq!(right.abstract_state, self.program_evaluation);
 
-        let mut program_evaluation = left.join(&right);
+        let mut new_abstract_state =
+            AbstractStateProxy::new(self.program_evaluation, left.proxy.join(&right.proxy));
 
-        simplify(&mut program_evaluation, &self.program_entity.location);
+        simplify(&mut new_abstract_state, &self.program_entity.location);
 
-        let new_evaluation = EvaluationState {
-            evaluations: left_evaluation_state.evaluations.union_with(
-                right_evaluation_state.evaluations.clone(),
-                |left, right| {
-                    let mut eval = left.join(&right);
-
+        if let Some(evaluation_state) = new_abstract_state.get(&self.program_entity.location) {
+            let new_evaluations = evaluation_state
+                .evaluations
+                .clone()
+                .into_iter()
+                .map(|(expression, mut eval)| {
                     while eval.type_eval.value.width() > WIDTH_LIMIT {
                         eval.type_eval.value = match eval.type_eval.value {
                             Type::Union(type_union) => {
@@ -380,7 +388,7 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
                                     new_type_union.add_type(
                                         if let Type::Literal(type_literal) = ty.as_ref() {
                                             Arc::new(
-                                                as_type_instance(&program_evaluation, type_literal)
+                                                as_type_instance(&new_abstract_state, type_literal)
                                                     .map(|type_instance| {
                                                         Type::Instance2(type_instance)
                                                     })
@@ -401,23 +409,17 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
                         eval.type_eval.value = Type::Any;
                     }
 
-                    eval
-                },
-            ),
-            return_value: left_evaluation_state
-                .return_value
-                .join(&right_evaluation_state.return_value),
-            raised_exceptions: left_evaluation_state
-                .raised_exceptions
-                .join(&right_evaluation_state.raised_exceptions),
-            defined_variables: left_evaluation_state
-                .defined_variables
-                .join(&right_evaluation_state.defined_variables),
-        };
+                    (expression, eval)
+                })
+                .collect();
 
-        program_evaluation.insert(self.program_entity.location.clone(), new_evaluation.clone());
+            new_abstract_state
+                .get_mut(&self.program_entity.location)
+                .expect("evaluation_state should exists")
+                .evaluations = new_evaluations;
+        }
 
-        Ok(program_evaluation)
+        Ok(new_abstract_state)
     }
 }
 
@@ -429,6 +431,10 @@ pub struct ProgramEvaluation {
 impl ProgramEvaluation {
     pub fn new(states: imbl::OrdMap<QualifiedLocation, EvaluationState>) -> Self {
         Self { states }
+    }
+
+    pub fn unit(qualified_location: QualifiedLocation, evaluation_state: EvaluationState) -> Self {
+        Self::new(imbl::OrdMap::unit(qualified_location, evaluation_state))
     }
 
     pub fn update(
@@ -1096,22 +1102,22 @@ pub fn evaluate_expression(
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
-pub struct ProgramEntitySolverState {
-    pub states: imbl::OrdMap<ProgramEntityNode, ProgramEvaluation>,
+pub struct ProgramEntityConstraintSolver<
+    's,
+    S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+> {
+    pub module_node: &'s ModuleNode,
+    pub graph: &'s DependentGraph<ProgramEntityNode, ProgramAnalysis>,
+    pub program_evaluation: &'s S,
 }
 
-pub struct ProgramEntityConstraintSolver<'a> {
-    pub module_node: &'a ModuleNode,
-    pub graph: &'a DependentGraph<ProgramEntityNode, ProgramAnalysis>,
-    pub program_evaluation: &'a ProgramEvaluation,
-}
-
-impl<'a> ProgramEntityConstraintSolver<'a> {
+impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>>
+    ProgramEntityConstraintSolver<'s, S>
+{
     pub fn new(
-        module_node: &'a ModuleNode,
-        graph: &'a DependentGraph<ProgramEntityNode, ProgramAnalysis>,
-        program_evaluation: &'a ProgramEvaluation,
+        module_node: &'s ModuleNode,
+        graph: &'s DependentGraph<ProgramEntityNode, ProgramAnalysis>,
+        program_evaluation: &'s S,
     ) -> Self {
         Self {
             module_node,
@@ -1121,10 +1127,14 @@ impl<'a> ProgramEntityConstraintSolver<'a> {
     }
 }
 
-impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
+impl<
+    's,
+    S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Debug + Eq + Clone,
+> GraphAnalyser for ProgramEntityConstraintSolver<'s, S>
+{
     type Node = ProgramEntityNode;
-    type AbstractState = ProgramEvaluation;
-    type AnalysisState = ProgramEntitySolverState;
+    type AbstractState = AbstractStateProxy<'s, S, ProgramEvaluation>;
+    type AnalysisState = SolverState<Self::Node, Self::AbstractState>;
     type Error = Infallible;
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
@@ -1145,7 +1155,7 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
     }
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
-        Ok(ProgramEntitySolverState::default())
+        Ok(SolverState::default())
     }
 
     fn analyse_node(
@@ -1153,11 +1163,9 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
-        let previous_state = analysis_state
-            .states
-            .get(&node)
-            .cloned()
-            .unwrap_or_default();
+        let mut previous_state = analysis_state.get_clone_or_else(node, || {
+            AbstractStateProxy::with_default_proxy(self.program_evaluation)
+        });
 
         let ProgramEntityNode::Entity(entity) = &node else {
             return Ok(previous_state);
@@ -1170,35 +1178,25 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
                 &entity,
                 &abstract_environment.specification,
                 &abstract_environment.constraint_graph,
-                &ProgramEvaluation::new(
-                    previous_state
-                        .states
-                        .clone()
-                        .union(self.program_evaluation.states.clone()),
-                ),
+                &previous_state,
             ),
             &mut LogAnalysisObserver::with_prefix(node.to_string()),
         )?;
 
-        let mut program_evaluation = solver_state
-            .states
-            .get(&ConstraintNode::TypeExit)
-            .cloned()
-            .unwrap_or_default();
+        let program_evaluation =
+            if let Some(program_evaluation) = solver_state.get(&ConstraintNode::TypeExit) {
+                program_evaluation.proxy.clone()
+            } else {
+                ProgramEvaluation::default()
+            };
 
-        if let Some(exception_program_evaluation) =
-            solver_state.states.get(&ConstraintNode::ExceptionExit)
+        let mut evaluation_state = program_evaluation.get_clone_or_default(&entity.location);
+
+        if let Some(exception_program_evaluation) = solver_state.get(&ConstraintNode::ExceptionExit)
         {
-            let evaluation_state = program_evaluation
-                .states
-                .entry(entity.location.clone())
-                .or_default();
-
             let exception_evaluation_state = exception_program_evaluation
-                .states
-                .get(&entity.location)
-                .cloned()
-                .unwrap_or_default();
+                .proxy
+                .get_clone_or_default(&entity.location);
 
             evaluation_state.evaluations = evaluation_state
                 .evaluations
@@ -1208,7 +1206,13 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
                 .join(&exception_evaluation_state.raised_exceptions);
         }
 
-        Ok(program_evaluation)
+        drop(solver_state);
+
+        previous_state
+            .proxy
+            .insert(entity.location.clone(), evaluation_state);
+
+        Ok(previous_state)
     }
 
     fn update_abstract_state(
@@ -1226,7 +1230,7 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
         analysis_state: &'a Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Option<&'a Self::AbstractState>, Self::Error> {
-        Ok(analysis_state.states.get(node))
+        Ok(analysis_state.abstract_states.get(node))
     }
 
     fn set_abstract_state(
@@ -1235,7 +1239,9 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
         node: &Self::Node,
         abstract_state: Self::AbstractState,
     ) -> Result<(), Self::Error> {
-        analysis_state.states.insert(node.clone(), abstract_state);
+        analysis_state
+            .abstract_states
+            .insert(node.clone(), abstract_state);
         Ok(())
     }
 
@@ -1246,19 +1252,18 @@ impl GraphAnalyser for ProgramEntityConstraintSolver<'_> {
         left: &Self::AbstractState,
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
-        let mut program_evaluation = left.join(right);
+        assert_eq!(left.abstract_state, self.program_evaluation);
+        assert_eq!(right.abstract_state, self.program_evaluation);
+
+        let mut new_abstract_state =
+            AbstractStateProxy::new(self.program_evaluation, left.proxy.join(&right.proxy));
 
         if let ProgramEntityNode::Entity(entity) = &node {
-            simplify(&mut program_evaluation, &entity.location);
+            simplify(&mut new_abstract_state, &entity.location);
         }
 
-        Ok(program_evaluation)
+        Ok(new_abstract_state)
     }
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct ModuleSolverState {
-    pub evaluations: imbl::OrdMap<ModuleNode, ProgramEvaluation>,
 }
 
 pub struct ModuleConstraintSolver<'a> {
@@ -1276,7 +1281,7 @@ impl<'a> ModuleConstraintSolver<'a> {
 impl GraphAnalyser for ModuleConstraintSolver<'_> {
     type Node = ModuleNode;
     type AbstractState = ProgramEvaluation;
-    type AnalysisState = ModuleSolverState;
+    type AnalysisState = SolverState<Self::Node, Self::AbstractState>;
     type Error = Infallible;
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
@@ -1297,7 +1302,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
     }
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
-        Ok(ModuleSolverState::default())
+        Ok(SolverState::default())
     }
 
     fn analyse_node(
@@ -1305,22 +1310,24 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
-        let mut previous_state = analysis_state
-            .evaluations
-            .get(&node)
-            .cloned()
-            .unwrap_or_default();
+        let mut previous_state = analysis_state.get_clone_or_default(node);
 
         if let Some(dependent_graph) = self.graph.nodes.get(&node) {
-            previous_state.states.extend(
-                analysis(
-                    &ProgramEntityConstraintSolver::new(&node, dependent_graph, &previous_state),
-                    &mut LogAnalysisObserver::with_prefix(node.to_string()),
-                )?
-                .states[&ProgramEntityNode::Exit]
-                    .states
-                    .clone(),
-            );
+            let solver_state = analysis(
+                &ProgramEntityConstraintSolver::new(&node, dependent_graph, &previous_state),
+                &mut LogAnalysisObserver::with_prefix(node.to_string()),
+            )?;
+
+            let program_evaluation =
+                if let Some(program_evaluation) = solver_state.get(&ProgramEntityNode::Exit) {
+                    program_evaluation.proxy.clone()
+                } else {
+                    ProgramEvaluation::default()
+                };
+
+            drop(solver_state);
+
+            previous_state.states.extend(program_evaluation.states);
         }
 
         Ok(previous_state)
@@ -1341,7 +1348,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
         analysis_state: &'a Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Option<&'a Self::AbstractState>, Self::Error> {
-        Ok(analysis_state.evaluations.get(node))
+        Ok(analysis_state.get(node))
     }
 
     fn set_abstract_state(
@@ -1350,9 +1357,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
         node: &Self::Node,
         abstract_state: Self::AbstractState,
     ) -> Result<(), Self::Error> {
-        analysis_state
-            .evaluations
-            .insert(node.clone(), abstract_state);
+        analysis_state.insert(node.clone(), abstract_state);
         Ok(())
     }
 
@@ -1363,15 +1368,17 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
         left: &Self::AbstractState,
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
-        let mut program_evaluation = left.join(right);
+        let mut new_abstract_state = left.join(right);
+
         if let Some(dependent_graph) = self.graph.nodes.get(&node) {
             for node in dependent_graph.nodes.keys() {
                 if let ProgramEntityNode::Entity(entity) = &node {
-                    simplify(&mut program_evaluation, &entity.location);
+                    simplify(&mut new_abstract_state, &entity.location);
                 }
             }
         }
-        Ok(program_evaluation)
+
+        Ok(new_abstract_state)
     }
 }
 
@@ -1597,7 +1604,7 @@ mod tests {
 
         let mut program_evaluation = analysis(&solver, &mut LogAnalysisObserver::default())
             .expect("analysis should work")
-            .evaluations[&ModuleNode::Exit]
+            .abstract_states[&ModuleNode::Exit]
             .clone();
 
         for location in program_evaluation

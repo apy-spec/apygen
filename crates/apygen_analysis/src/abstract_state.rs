@@ -51,6 +51,12 @@ impl<'a, S: AbstractState, P: AbstractState> AbstractStateProxy<'a, S, P> {
             proxy,
         }
     }
+    pub fn with_default_proxy(abstract_state: &'a S) -> Self
+    where
+        P: Default,
+    {
+        Self::new(abstract_state, P::default())
+    }
 }
 
 impl<
