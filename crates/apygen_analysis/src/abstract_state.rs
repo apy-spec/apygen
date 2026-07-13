@@ -15,6 +15,14 @@ pub trait AbstractState {
     {
         self.get_or_insert(key, Self::AbstractValue::default())
     }
+    fn clone_or_default(&self, key: &Self::Key) -> Self::AbstractValue
+    where
+        Self::AbstractValue: Default + Clone,
+    {
+        self.get(key)
+            .cloned()
+            .unwrap_or_else(Self::AbstractValue::default)
+    }
     fn insert(
         &mut self,
         key: Self::Key,
