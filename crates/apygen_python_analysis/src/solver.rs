@@ -1584,6 +1584,30 @@ mod tests {
             #return = {5}
         "##},
     )]
+    #[case::hard_function_call(
+        indoc! {r##"
+        def foo():
+            return CONST
+
+        result = foo()
+
+        CONST = 5
+        "##},
+        indoc! {r##"
+        builtins:
+            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
+            #return = {}
+        builtins[1:6]:
+            #return = {}
+        module:
+            CONST@{module[6:0]} = (5 ➤ ({} - Pure - Total))
+            foo@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
+            result@{module[4:0]} = (Never ➤ ({} - Pure - Total)) ⊔ #deferred{(foo@{module[4:9]})()}
+            #return = {}
+        module[1:4]:
+            #return = {CONST@{module[1:4][2:11]}}
+        "##},  // TODO: should raise an exception when calling the function
+    )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
         init_logger();
 
