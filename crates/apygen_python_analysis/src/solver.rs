@@ -363,7 +363,7 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
-        let mut program_evaluation = analysis_state.clone_or_else(node, || {
+        let mut program_evaluation = analysis_state.get_clone_or_else(node, || {
             self.program_evaluation.update(
                 self.program_entity.location.clone(),
                 EvaluationState::default(),
@@ -486,8 +486,8 @@ impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
         left: &Self::AbstractState,
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
-        let left_evaluation_state = left.clone_or_default(&self.program_entity.location);
-        let right_evaluation_state = right.clone_or_default(&self.program_entity.location);
+        let left_evaluation_state = left.get_clone_or_default(&self.program_entity.location);
+        let right_evaluation_state = right.get_clone_or_default(&self.program_entity.location);
 
         let mut program_evaluation = left.join(&right);
 

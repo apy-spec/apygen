@@ -15,7 +15,7 @@ pub trait AbstractState {
     {
         self.get_or_insert(key, Self::AbstractValue::default())
     }
-    fn clone_or_else(
+    fn get_clone_or_else(
         &self,
         key: &Self::Key,
         f: impl FnOnce() -> Self::AbstractValue,
@@ -25,11 +25,11 @@ pub trait AbstractState {
     {
         self.get(key).cloned().unwrap_or_else(f)
     }
-    fn clone_or_default(&self, key: &Self::Key) -> Self::AbstractValue
+    fn get_clone_or_default(&self, key: &Self::Key) -> Self::AbstractValue
     where
         Self::AbstractValue: Default + Clone,
     {
-        self.clone_or_else(key, Self::AbstractValue::default)
+        self.get_clone_or_else(key, Self::AbstractValue::default)
     }
     fn insert(
         &mut self,
