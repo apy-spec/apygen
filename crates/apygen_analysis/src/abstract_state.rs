@@ -9,6 +9,12 @@ pub trait AbstractState {
         key: Self::Key,
         abstract_value: Self::AbstractValue,
     ) -> &mut Self::AbstractValue;
+    fn get_or_insert_default(&mut self, key: Self::Key) -> &mut Self::AbstractValue
+    where
+        Self::AbstractValue: Default,
+    {
+        self.get_or_insert(key, Self::AbstractValue::default())
+    }
     fn insert(
         &mut self,
         key: Self::Key,
@@ -16,9 +22,19 @@ pub trait AbstractState {
     ) -> &mut Self::AbstractValue;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AbstractStateProxy<'a, S: AbstractState, P: AbstractState> {
     pub abstract_state: &'a S,
     pub proxy: P,
+}
+
+impl<'a, S: AbstractState, P: AbstractState> AbstractStateProxy<'a, S, P> {
+    pub fn new(abstract_state: &'a S, proxy: P) -> Self {
+        Self {
+            abstract_state,
+            proxy,
+        }
+    }
 }
 
 impl<
