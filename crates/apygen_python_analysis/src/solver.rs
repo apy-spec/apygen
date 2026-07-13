@@ -20,7 +20,6 @@ use apygen_analysis::lattice::Join;
 use apygen_analysis::log::LogAnalysisObserver;
 use apygen_analysis::{GraphAnalyser, analysis};
 use imbl::ordmap::Entry;
-use imbl::shared_ptr::DefaultSharedPtr;
 use std::convert::Infallible;
 use std::fmt::Display;
 use std::sync::Arc;
@@ -117,15 +116,25 @@ impl EvaluationState {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
-pub struct SolverState {
-    pub states: imbl::OrdMap<ConstraintNode, ProgramEvaluation>,
+#[derive(Debug, Clone, PartialEq, Eq, Join)]
+pub struct SolverState<S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>> {
+    pub states: imbl::OrdMap<ConstraintNode, S>,
 }
 
-impl SolverState {
-    pub fn new(evaluations: imbl::OrdMap<ConstraintNode, ProgramEvaluation>) -> Self {
+impl<S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>> SolverState<S> {
+    pub fn new(evaluations: imbl::OrdMap<ConstraintNode, S>) -> Self {
         Self {
             states: evaluations,
+        }
+    }
+}
+
+impl<S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>> Default
+    for SolverState<S>
+{
+    fn default() -> Self {
+        Self {
+            states: imbl::OrdMap::default(),
         }
     }
 }
@@ -257,19 +266,24 @@ pub fn as_type_instance(
     }
 }
 
-pub struct ConstraintSolver<'a> {
-    pub program_entity: &'a ProgramEntity,
-    pub specification: &'a AbstractEnvironmentSpecification,
-    pub graph: &'a ConstraintGraph,
-    pub program_evaluation: &'a ProgramEvaluation,
+pub struct ConstraintSolver<
+    's,
+    S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+> {
+    pub program_entity: &'s ProgramEntity,
+    pub specification: &'s AbstractEnvironmentSpecification,
+    pub graph: &'s ConstraintGraph,
+    pub program_evaluation: &'s S,
 }
 
-impl<'a> ConstraintSolver<'a> {
+impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>>
+    ConstraintSolver<'s, S>
+{
     pub fn new(
-        program_entity: &'a ProgramEntity,
-        specification: &'a AbstractEnvironmentSpecification,
-        graph: &'a ConstraintGraph,
-        program_evaluation: &'a ProgramEvaluation,
+        program_entity: &'s ProgramEntity,
+        specification: &'s AbstractEnvironmentSpecification,
+        graph: &'s ConstraintGraph,
+        program_evaluation: &'s S,
     ) -> Self {
         Self {
             program_entity,
@@ -280,10 +294,10 @@ impl<'a> ConstraintSolver<'a> {
     }
 }
 
-impl GraphAnalyser for ConstraintSolver<'_> {
+impl GraphAnalyser for ConstraintSolver<'_, ProgramEvaluation> {
     type Node = ConstraintNode;
     type AbstractState = ProgramEvaluation;
-    type AnalysisState = SolverState;
+    type AnalysisState = SolverState<ProgramEvaluation>;
     type Error = Infallible;
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
@@ -342,9 +356,7 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                             });
 
                     let evaluation_state = program_evaluation
-                        .states
-                        .entry(self.program_entity.location.clone())
-                        .or_default();
+                        .get_or_insert_default(self.program_entity.location.clone());
 
                     evaluation_state.defined_variables.names.insert(
                         variable.name.clone(),
@@ -370,10 +382,8 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                     ),
                 };
 
-                let evaluation_state = program_evaluation
-                    .states
-                    .entry(self.program_entity.location.clone())
-                    .or_default();
+                let evaluation_state =
+                    program_evaluation.get_or_insert_default(self.program_entity.location.clone());
 
                 evaluation_state
                     .evaluations
@@ -384,10 +394,8 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                     .or_insert(expression_eval);
             }
             ConstraintNode::DefinedVariableConstraint(expression) => {
-                let evaluation_state = program_evaluation
-                    .states
-                    .entry(self.program_entity.location.clone())
-                    .or_default();
+                let evaluation_state =
+                    program_evaluation.get_or_insert_default(self.program_entity.location.clone());
 
                 evaluation_state.defined_variables.names.insert(
                     expression.name.clone(),
@@ -395,10 +403,8 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                 );
             }
             ConstraintNode::ReturnConstraint(expression) => {
-                let evaluation_state = program_evaluation
-                    .states
-                    .entry(self.program_entity.location.clone())
-                    .or_default();
+                let evaluation_state =
+                    program_evaluation.get_or_insert_default(self.program_entity.location.clone());
 
                 evaluation_state.return_value = imbl::OrdSet::unit(expression.clone());
             }
@@ -443,16 +449,12 @@ impl GraphAnalyser for ConstraintSolver<'_> {
         left: &Self::AbstractState,
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
-        let left_evaluation_state = left
-            .states
-            .get(&self.program_entity.location)
-            .cloned()
-            .unwrap_or_default();
-        let right_evaluation_state = right
-            .states
-            .get(&self.program_entity.location)
-            .cloned()
-            .unwrap_or_default();
+        let left_evaluation_state = left.clone_or_default(&self.program_entity.location);
+        let right_evaluation_state = right.clone_or_default(&self.program_entity.location);
+
+        let mut program_evaluation = left.join(&right);
+
+        program_evaluation.simplify(self.program_entity.location.clone());
 
         let new_evaluation = EvaluationState {
             evaluations: left_evaluation_state.evaluations.union_with(
@@ -468,12 +470,11 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                                     new_type_union.add_type(
                                         if let Type::Literal(type_literal) = ty.as_ref() {
                                             Arc::new(
-                                                as_type_instance(
-                                                    &self.program_evaluation,
-                                                    type_literal,
-                                                )
-                                                .map(|type_instance| Type::Instance2(type_instance))
-                                                .unwrap_or(Type::Any),
+                                                as_type_instance(&program_evaluation, type_literal)
+                                                    .map(|type_instance| {
+                                                        Type::Instance2(type_instance)
+                                                    })
+                                                    .unwrap_or(Type::Any),
                                             )
                                         } else {
                                             ty.clone()
@@ -504,9 +505,9 @@ impl GraphAnalyser for ConstraintSolver<'_> {
                 .join(&right_evaluation_state.defined_variables),
         };
 
-        Ok(left
-            .join(&right)
-            .update(self.program_entity.location.clone(), new_evaluation))
+        program_evaluation.insert(self.program_entity.location.clone(), new_evaluation.clone());
+
+        Ok(program_evaluation)
     }
 }
 
