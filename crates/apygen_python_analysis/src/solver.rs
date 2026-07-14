@@ -665,23 +665,20 @@ impl<'a> ExpressionEvaluator<'a> {
                     .unwrap()
                 };
 
-                let ty = evaluation_state.return_value.iter().try_fold(
+                let mut eval = PyTypeEval::new(
                     Type::Never,
-                    |acc, expression| {
-                        let expression_eval = evaluation_state.evaluations.get(expression)?;
-
-                        if expression_eval.deferred.is_empty() {
-                            None
-                        } else {
-                            Some(acc.join(&expression_eval.type_eval.value))
-                        }
-                    },
-                )?;
-
-                Some(PyTypeEval::new(
-                    ty,
                     PyEffects::new().with_exceptions(evaluation_state.raised_exceptions.clone()),
-                ))
+                );
+
+                for expression in evaluation_state.return_value.clone() {
+                    eval = eval.join(
+                        &self
+                            .with_qualified_location(&literal_function.value.qualified_location)
+                            .evaluate_expression(abstract_state, &expression)?,
+                    );
+                }
+
+                Some(eval)
             }
             TypeLiteral::Class(_) => Some(PyTypeEval::with_default_effects(Type::Instance2(
                 TypeInstance2 {
@@ -1455,7 +1452,7 @@ mod tests {
             #return = {}
         module:
             add_two@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
-            result@{module[4:0]} = (Never ➤ ({} - Pure - Total)) ⊔ #deferred{(add_two@{module[4:9]})(42, 67)}
+            result@{module[4:0]} = (Never ➤ ({} - Pure - Total))
             #return = {}
         module[1:4]:
             a@{module[1:12]} = (@class(builtins[1:6]) ➤ ({} - Pure - Total))
@@ -1579,7 +1576,7 @@ mod tests {
         module:
             CONST@{module[6:0]} = (5 ➤ ({} - Pure - Total))
             foo@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
-            result@{module[4:0]} = (Never ➤ ({} - Pure - Total)) ⊔ #deferred{(foo@{module[4:9]})()}
+            result@{module[4:0]} = (Never ➤ ({} - Pure - Total))
             #return = {}
         module[1:4]:
             #return = {CONST@{module[1:4][2:11]}}
