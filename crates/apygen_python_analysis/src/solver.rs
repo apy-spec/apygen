@@ -665,20 +665,17 @@ impl<'a> ExpressionEvaluator<'a> {
                     .unwrap()
                 };
 
-                let mut eval = PyTypeEval::new(
-                    Type::Never,
-                    PyEffects::new().with_exceptions(evaluation_state.raised_exceptions.clone()),
-                );
+                let return_value = evaluation_state.return_value.clone();
+                let raised_exceptions = evaluation_state.raised_exceptions.clone();
 
-                for expression in evaluation_state.return_value.clone() {
-                    eval = eval.join(
-                        &self
-                            .with_qualified_location(&literal_function.value.qualified_location)
-                            .evaluate_expression(abstract_state, &expression)?,
-                    );
-                }
-
-                Some(eval)
+                Some(
+                    self.with_qualified_location(&literal_function.value.qualified_location)
+                        .evaluate_expressions(
+                            abstract_state,
+                            return_value.iter().map(|expression| expression.as_ref()),
+                        )?
+                        .extend_effects(&PyEffects::new().with_exceptions(raised_exceptions)),
+                )
             }
             TypeLiteral::Class(_) => Some(PyTypeEval::with_default_effects(Type::Instance2(
                 TypeInstance2 {
@@ -796,7 +793,7 @@ impl<'a> ExpressionEvaluator<'a> {
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
-        expression: &Arc<Expression>,
+        expression: &Expression,
     ) -> Option<PyTypeEval> {
         if let Some(expression_eval) = abstract_state
             .get(self.qualified_location)
@@ -805,7 +802,7 @@ impl<'a> ExpressionEvaluator<'a> {
             return expression_eval.as_py_type_eval().cloned();
         }
 
-        match expression.as_ref() {
+        match expression {
             Expression::Variable(expression_variable) => {
                 self.evaluate_expression_variable(abstract_state, expression_variable)
             }
@@ -856,6 +853,24 @@ impl<'a> ExpressionEvaluator<'a> {
                 Type::new_literal(TypeLiteral::Ellipsis),
             )),
         }
+    }
+
+    pub fn evaluate_expressions<
+        'e,
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
+        &self,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        expressions: impl IntoIterator<Item = &'e Expression>,
+    ) -> Option<PyTypeEval> {
+        let mut eval = PyTypeEval::never();
+
+        for expression in expressions {
+            eval = eval.join(&self.evaluate_expression(abstract_state, expression)?);
+        }
+
+        Some(eval)
     }
 }
 
@@ -1404,15 +1419,15 @@ mod tests {
         indoc! {r##"
         builtins:
             int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         builtins[1:6]:
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module:
             a@{module[4:4]} = (42 ➤ ({} - Pure - Total))
             a@{module[6:4]} = (67 ➤ ({} - Pure - Total))
             b@{module[8:0]} = (Union[42, 67] ➤ ({} - Pure - Total))
             x@{module[1:0]} = (True ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         "##},
     )]
     #[case::simple_while_statement(
@@ -1427,14 +1442,14 @@ mod tests {
         indoc! {r##"
         builtins:
             int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         builtins[1:6]:
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module:
             a@{module[1:0]} = (0 ➤ ({} - Pure - Total))
             a@{module[4:4]} = (Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] ➤ ({} - Pure - Total)) ⊔ #deferred{(a@{module[4:8]}) + (1)}
             b@{module[6:0]} = (Union[@class(builtins[1:6]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] ➤ ({} - Pure - Total)) ⊔ #deferred{a@{module[6:4]}}
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         "##},  // TODO: fix this when operations are implemented
     )]
     #[case::simple_function_definition(
@@ -1447,17 +1462,17 @@ mod tests {
         indoc! {r##"
         builtins:
             int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         builtins[1:6]:
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module:
             add_two@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
             result@{module[4:0]} = (Never ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module[1:4]:
             a@{module[1:12]} = (@class(builtins[1:6]) ➤ ({} - Pure - Total))
             b@{module[1:20]} = (Never ➤ ({} - Pure - Total))
-            #return = {(a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]})}
+            #return = (Never ➤ ({} - Pure - Total))
         "##},
     )]
     #[case::simple_class_attribute_access(
@@ -1470,16 +1485,16 @@ mod tests {
         indoc! {r##"
         builtins:
             int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         builtins[1:6]:
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             result@{module[4:0]} = (5 ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module[1:6]:
             b@{module[1:6][2:4]} = (5 ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         "##},
     )]
     #[case::simple_attribute_access(
@@ -1493,17 +1508,17 @@ mod tests {
         indoc! {r##"
         builtins:
             int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         builtins[1:6]:
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             a@{module[4:0]} = (@class(module[1:6]) ➤ ({} - Pure - Total))
             result@{module[5:0]} = (5 ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module[1:6]:
             b@{module[1:6][2:4]} = (5 ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         "##},
     )]
     #[case::simple_class_function_access(
@@ -1517,18 +1532,18 @@ mod tests {
         indoc! {r##"
         builtins:
             int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         builtins[1:6]:
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             result@{module[5:0]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module[1:6]:
             foo@{module[1:6][2:8]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module[1:6][2:8]:
-            #return = {5}
+            #return = (5 ➤ ({} - Pure - Total))
         "##},
     )]
     #[case::simple_method_access(
@@ -1543,19 +1558,19 @@ mod tests {
         indoc! {r##"
         builtins:
             int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         builtins[1:6]:
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             a@{module[5:0]} = (@class(module[1:6]) ➤ ({} - Pure - Total))
             result@{module[6:0]} = (method(class(module[1:6])[], function(module[1:6][2:8])) ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module[1:6]:
             foo@{module[1:6][2:8]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module[1:6][2:8]:
-            #return = {5}
+            #return = (5 ➤ ({} - Pure - Total))
         "##},
     )]
     #[case::hard_function_call(
@@ -1570,16 +1585,16 @@ mod tests {
         indoc! {r##"
         builtins:
             int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         builtins[1:6]:
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module:
             CONST@{module[6:0]} = (5 ➤ ({} - Pure - Total))
             foo@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
             result@{module[4:0]} = (Never ➤ ({} - Pure - Total))
-            #return = {}
+            #return = (Never ➤ ({} - Pure - Total))
         module[1:4]:
-            #return = {CONST@{module[1:4][2:11]}}
+            #return = (5 ➤ ({} - Pure - Total))
         "##},  // TODO: should raise an exception when calling the function
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
@@ -1607,19 +1622,27 @@ mod tests {
             .clone();
 
         let mut actual_types = String::new();
-        for (node, abstract_state) in program_evaluation.states {
-            actual_types.push_str(&format!("{}:\n", node));
+        for (qualified_location, abstract_state) in &program_evaluation.states {
+            let program_entity_constraints =
+                &dependent_graph.nodes[&ModuleNode::Module(qualified_location.module_name.clone())];
+            let return_value = abstract_state.return_value.clone();
+
+            actual_types.push_str(&format!("{}:\n", qualified_location));
             for (variable, ty) in abstract_state.variables() {
                 actual_types.push_str(&format!("    {} = {}\n", variable, ty));
             }
-            actual_types.push_str("    #return = {");
-            for (i, expression) in abstract_state.return_value.iter().enumerate() {
-                if i > 0 {
-                    actual_types.push_str(", ");
-                }
-                actual_types.push_str(&format!("{}", expression));
+            if let Some(return_type) =
+                ExpressionEvaluator::new(qualified_location, program_entity_constraints)
+                    .evaluate_expressions(
+                        &mut AbstractStateProxy::new(
+                            &program_evaluation,
+                            ProgramEvaluation::default(),
+                        ),
+                        return_value.iter().map(|expression| expression.as_ref()),
+                    )
+            {
+                actual_types.push_str(&format!("    #return = {}\n", return_type));
             }
-            actual_types.push_str("}\n");
         }
 
         assert_eq!(expected_types, actual_types, "{actual_types}");
