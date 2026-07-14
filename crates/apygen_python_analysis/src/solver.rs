@@ -1,17 +1,17 @@
 use crate::abstract_environment::{
-    BUILTINS_MODULE, ClassType, DEPTH_LIMIT, FunctionType, LiteralClass, LiteralFunction,
-    LiteralMethod, RaisedExceptions, StructuralDepth, StructuralWidth, TYPES_MODULE, Type,
-    TypeInstance2, TypeLiteral, TypeUnion, WIDTH_LIMIT,
+    BUILTINS_MODULE, ClassType, DEPTH_LIMIT, Exception, ExceptionOrigin, FunctionType,
+    LiteralClass, LiteralFunction, LiteralMethod, RaisedExceptions, StructuralDepth,
+    StructuralWidth, TYPES_MODULE, Type, TypeInstance2, TypeLiteral, TypeUnion, WIDTH_LIMIT,
 };
 use crate::constraints::{
     BinaryOperator, ConstraintNode, DependentGraph, Expression, ExpressionAnnotated,
     ExpressionAttribute, ExpressionBinary, ExpressionCall, ExpressionClass, ExpressionFunction,
-    ExpressionVariable, ModuleName, ModuleNode, ProgramEntityConstraints, QualifiedLocation,
+    ExpressionVariable, Guard, ModuleName, ModuleNode, ProgramEntityConstraints, QualifiedLocation,
     VariableName,
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::literal_class::method_resolution_order;
-use crate::genkill::expressions::{PyEffects, PyTypeEval, type_literal};
+use crate::genkill::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
 use crate::{is_type_unreachable, pytype_consume_or_return_option};
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::abstract_state::{AbstractState, AbstractStateProxy};
@@ -408,7 +408,17 @@ impl<'a> ExpressionEvaluator<'a> {
             {
                 Some(PyTypeEval::with_default_effects(Type::Never))
             } else {
-                Some(PyTypeEval::with_default_effects(Type::Never)) // TODO: Add exceptions
+                Some(PyTypeEval::new(
+                    Type::Never,
+                    PyEffects::new().with_exceptions(RaisedExceptions::raise(Exception::new(
+                        Arc::new(Type::Instance2(Self::get_variable_type(
+                            abstract_state,
+                            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                            &Arc::new(Identifier::parse("NameError")),
+                        )?)),
+                        ExceptionOrigin::Specified, // TODO: fix origin
+                    ))),
+                ))
             };
         };
 
@@ -1044,11 +1054,77 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
     fn update_abstract_state(
         &self,
         _analysis_state: &Self::AnalysisState,
-        _from: &Self::Node,
+        from: &Self::Node,
         to: &Self::Node,
         abstract_state: &Self::AbstractState,
     ) -> Result<Option<Self::AbstractState>, Self::Error> {
         let mut new_abstract_state = abstract_state.clone();
+
+        let guard = self
+            .constraints()
+            .unwrap()
+            .constraint_graph
+            .edges
+            .get(from)
+            .unwrap()
+            .get(to)
+            .unwrap();
+
+        match guard {
+            Guard::IsTrue(expression) => {
+                let eval = self
+                    .evaluator()
+                    .evaluate_expression(&mut new_abstract_state, expression);
+
+                if let Some(type_eval) = eval {
+                    if let Some(bool_value) = gen_bool_value(&type_eval.value) {
+                        if !bool_value {
+                            return Ok(None);
+                        }
+                    }
+                }
+            }
+            Guard::IsFalse(expression) => {
+                let eval = self
+                    .evaluator()
+                    .evaluate_expression(&mut new_abstract_state, expression);
+
+                if let Some(type_eval) = eval {
+                    if let Some(bool_value) = gen_bool_value(&type_eval.value) {
+                        if bool_value {
+                            return Ok(None);
+                        }
+                    }
+                }
+            }
+            Guard::Succeed(expression) => {
+                let eval = self
+                    .evaluator()
+                    .evaluate_expression(&mut new_abstract_state, expression);
+
+                if let Some(type_eval) = eval {
+                    if is_type_unreachable!(type_eval.value) {
+                        return Ok(None);
+                    }
+                }
+            }
+            Guard::Raise { expression, .. } => {
+                let eval = self
+                    .evaluator()
+                    .evaluate_expression(&mut new_abstract_state, expression);
+
+                let evaluation_state =
+                    new_abstract_state.get_or_insert_default(self.qualified_location.clone());
+
+                if let Some(type_eval) = eval {
+                    evaluation_state
+                        .raised_exceptions
+                        .exceptions
+                        .extend(type_eval.effects.exceptions.exceptions)
+                }
+            }
+            Guard::Multiple(_) => {}
+        }
 
         if matches!(to, ConstraintNode::Exit) && self.qualified_location.locations.is_empty() {
             for other_qualified_location in self.program_entity_constraints.keys() {
@@ -1416,6 +1492,9 @@ mod tests {
     const TEST_BUILTINS: &str = indoc! {r##"
         class int:
             pass
+
+        class NameError:
+            pass
     "##};
 
     #[rstest]
@@ -1431,15 +1510,9 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        builtins:
-            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
-        builtins[1:6]:
-            #return = (Never ➤ ({} - Pure - Total))
         module:
             a@{module[4:4]} = (42 ➤ ({} - Pure - Total))
-            a@{module[6:4]} = (67 ➤ ({} - Pure - Total))
-            b@{module[8:0]} = (Union[42, 67] ➤ ({} - Pure - Total))
+            b@{module[8:0]} = (42 ➤ ({} - Pure - Total))
             x@{module[1:0]} = (True ➤ ({} - Pure - Total))
             #return = (Never ➤ ({} - Pure - Total))
         "##},
@@ -1454,16 +1527,12 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        builtins:
-            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
-        builtins[1:6]:
-            #return = (Never ➤ ({} - Pure - Total))
         module:
             a@{module[1:0]} = (0 ➤ ({} - Pure - Total))
             a@{module[4:4]} = (Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] ➤ ({} - Pure - Total)) ⊔ #deferred{(a@{module[4:8]}) + (1)}
             b@{module[6:0]} = (Union[@class(builtins[1:6]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] ➤ ({} - Pure - Total)) ⊔ #deferred{a@{module[6:4]}}
             #return = (Never ➤ ({} - Pure - Total))
+            #raise = {Exception(type=Any, origin=Unknown)}
         "##},  // TODO: fix this when operations are implemented
     )]
     #[case::simple_function_definition(
@@ -1474,11 +1543,6 @@ mod tests {
         result = add_two(42, 67)
         "##},
         indoc! {r##"
-        builtins:
-            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
-        builtins[1:6]:
-            #return = (Never ➤ ({} - Pure - Total))
         module:
             add_two@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
             result@{module[4:0]} = (Never ➤ ({} - Pure - Total))
@@ -1497,11 +1561,6 @@ mod tests {
         result = A.b
         "##},
         indoc! {r##"
-        builtins:
-            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
-        builtins[1:6]:
-            #return = (Never ➤ ({} - Pure - Total))
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             result@{module[4:0]} = (5 ➤ ({} - Pure - Total))
@@ -1520,11 +1579,6 @@ mod tests {
         result = a.b
         "##},
         indoc! {r##"
-        builtins:
-            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
-        builtins[1:6]:
-            #return = (Never ➤ ({} - Pure - Total))
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             a@{module[4:0]} = (@class(module[1:6]) ➤ ({} - Pure - Total))
@@ -1544,11 +1598,6 @@ mod tests {
         result = A.foo
         "##},
         indoc! {r##"
-        builtins:
-            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
-        builtins[1:6]:
-            #return = (Never ➤ ({} - Pure - Total))
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             result@{module[5:0]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
@@ -1570,11 +1619,6 @@ mod tests {
         result = a.foo
         "##},
         indoc! {r##"
-        builtins:
-            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
-        builtins[1:6]:
-            #return = (Never ➤ ({} - Pure - Total))
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             a@{module[5:0]} = (@class(module[1:6]) ➤ ({} - Pure - Total))
@@ -1597,19 +1641,31 @@ mod tests {
         CONST = 5
         "##},
         indoc! {r##"
-        builtins:
-            int@{builtins[1:6]} = (class(builtins[1:6]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
-        builtins[1:6]:
-            #return = (Never ➤ ({} - Pure - Total))
         module:
-            CONST@{module[6:0]} = (5 ➤ ({} - Pure - Total))
+            #return = (Never ➤ ({} - Pure - Total))
+            #raise = {Exception(type=@class(builtins[4:6]), origin=Specified)}
+        module[1:4]:
+            #return = (Never ➤ ({Exception(type=@class(builtins[4:6]), origin=Specified)} - Pure - Total))
+        "##},
+    )]
+    #[case::forward_reference_function_call(
+        indoc! {r##"
+        def foo():
+            return CONST
+
+        CONST = 5
+
+        result = foo()
+        "##},
+        indoc! {r##"
+        module:
+            CONST@{module[4:0]} = (5 ➤ ({} - Pure - Total))
             foo@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
-            result@{module[4:0]} = (Never ➤ ({} - Pure - Total))
+            result@{module[6:0]} = (5 ➤ ({} - Pure - Total))
             #return = (Never ➤ ({} - Pure - Total))
         module[1:4]:
             #return = (5 ➤ ({} - Pure - Total))
-        "##},  // TODO: should raise an exception when calling the function
+        "##},
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
         init_logger();
@@ -1626,7 +1682,8 @@ mod tests {
                 ),
             ]),
         };
-        let dependent_graph = analyse_program(&cfg_importer, HashSet::from_iter([module_name]));
+        let dependent_graph =
+            analyse_program(&cfg_importer, HashSet::from_iter([module_name.clone()]));
 
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 
@@ -1637,9 +1694,13 @@ mod tests {
 
         let mut actual_types = String::new();
         for (qualified_location, abstract_state) in &program_evaluation.states {
+            if qualified_location.module_name != module_name {
+                continue;
+            }
             let program_entity_constraints =
                 &dependent_graph.nodes[&ModuleNode::Module(qualified_location.module_name.clone())];
             let return_value = abstract_state.return_value.clone();
+            let raised_exceptions = abstract_state.raised_exceptions.clone();
 
             actual_types.push_str(&format!("{}:\n", qualified_location));
             for (variable, ty) in abstract_state.variables() {
@@ -1656,6 +1717,10 @@ mod tests {
                     )
             {
                 actual_types.push_str(&format!("    #return = {}\n", return_type));
+            }
+
+            if !raised_exceptions.exceptions.is_empty() {
+                actual_types.push_str(&format!("    #raise = {}\n", raised_exceptions));
             }
         }
 
