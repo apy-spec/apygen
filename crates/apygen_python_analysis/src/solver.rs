@@ -442,6 +442,14 @@ impl<'a> ExpressionEvaluator<'a> {
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression_function: &ExpressionFunction,
     ) -> Option<PyTypeEval> {
+        if abstract_state.contains(&self.qualified_location) {
+            analyse_program_entity(
+                abstract_state,
+                self.program_entity_constraints,
+                &expression_function.location,
+            )
+            .unwrap();
+        }
         Some(PyTypeEval::with_default_effects(Type::new_literal(
             TypeLiteral::Function(LiteralFunction {
                 value: Arc::new(FunctionType {
@@ -468,6 +476,12 @@ impl<'a> ExpressionEvaluator<'a> {
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression_class: &ExpressionClass,
     ) -> Option<PyTypeEval> {
+        analyse_program_entity(
+            abstract_state,
+            self.program_entity_constraints,
+            &expression_class.location,
+        )
+        .unwrap();
         Some(PyTypeEval::with_default_effects(Type::new_literal(
             TypeLiteral::Class(LiteralClass {
                 value: Arc::new(ClassType {

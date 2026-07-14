@@ -2,6 +2,9 @@ pub trait AbstractState {
     type Key;
     type AbstractValue;
 
+    fn contains(&self, key: &Self::Key) -> bool {
+        self.get(key).is_some()
+    }
     fn get(&self, key: &Self::Key) -> Option<&Self::AbstractValue>;
     fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::AbstractValue>;
     fn get_or_insert(
