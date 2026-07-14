@@ -1260,7 +1260,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
             &qualified_location,
         )?;
 
-        new_analysis_state.states.extend(proxy.proxy.states);
+        new_analysis_state.extend(proxy.proxy.states);
 
         Ok(new_analysis_state)
     }
