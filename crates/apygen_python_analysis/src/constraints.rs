@@ -8,8 +8,8 @@ use apy::OneOrMany;
 use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
 use apygen_analysis::cfg::nodes::Number;
 use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint, Ranged, TextRange, nodes};
-use apygen_analysis::fmt::{fmt_display_sequence, fmt_display_set};
-use apygen_analysis::lattice::Join;
+use apygen_analysis::fmt::fmt_display_sequence;
+use apygen_analysis::lattice::{Join, OrdJoin};
 use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use apygen_finder::filesystem::Filesystem;
 use apygen_finder::pathfinder::FinderSpec;
@@ -518,10 +518,32 @@ impl<T: Display> Display for IncludeConstraint<T> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ReturnConstraint {
+    pub expression: Arc<Expression>,
+    pub origin: Option<QualifiedLocation>,
+}
+
+impl ReturnConstraint {
+    pub fn new(expression: Arc<Expression>, origin: Option<QualifiedLocation>) -> Self {
+        Self { expression, origin }
+    }
+}
+
+impl Display for ReturnConstraint {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#return({}", self.expression)?;
+        if let Some(origin) = &self.origin {
+            write!(f, ", origin={}", origin)?;
+        }
+        f.write_str(")")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ConstraintNode {
     Entry,
     TypeConstraint(IncludeConstraint<Arc<Expression>>),
-    ReturnConstraint(Arc<Expression>),
+    ReturnConstraint(ReturnConstraint),
     DefinedVariableConstraint(ExpressionVariable),
     Empty(QualifiedLocation),
     TypeExit,
@@ -534,7 +556,7 @@ impl Display for ConstraintNode {
         match self {
             ConstraintNode::Entry => f.write_str("#entry"),
             ConstraintNode::TypeConstraint(constraint) => write!(f, "{}", constraint),
-            ConstraintNode::ReturnConstraint(constraint) => write!(f, "#return({})", constraint),
+            ConstraintNode::ReturnConstraint(constraint) => write!(f, "{}", constraint),
             ConstraintNode::DefinedVariableConstraint(defined_variable) => {
                 write!(f, "#defined({})", defined_variable)
             }
@@ -670,25 +692,23 @@ impl SubProgramEntityContext {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ReturnStatus {
+    #[default]
+    NotReturning,
+    Returning,
+}
+
+impl OrdJoin for ReturnStatus {}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ProgramEntityAbstractEnvironment {
+    pub return_status: ReturnStatus,
     pub current_nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>,
     pub variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<QualifiedLocation>>,
     pub constraint_graph: ConstraintGraph,
     pub imports: imbl::OrdSet<ModuleName>,
     pub sub_program_entities: imbl::OrdMap<ProgramEntity, SubProgramEntityContext>,
-}
-
-impl Default for ProgramEntityAbstractEnvironment {
-    fn default() -> Self {
-        Self {
-            current_nodes: imbl::OrdMap::unit(ConstraintNode::Entry, imbl::OrdSet::default()),
-            variable_locations: imbl::OrdMap::default(),
-            constraint_graph: ConstraintGraph::default(),
-            imports: imbl::OrdSet::default(),
-            sub_program_entities: imbl::OrdMap::default(),
-        }
-    }
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
@@ -1745,7 +1765,10 @@ impl<'a> ConstraintsBuilder<'a> {
             value_eval.variables,
         );
 
-        let node = ConstraintNode::ReturnConstraint(Arc::new(value_eval.value.clone()));
+        let node = ConstraintNode::ReturnConstraint(ReturnConstraint::new(
+            Arc::new(value_eval.value.clone()),
+            Some(self.gen_qualified_location(stmt_return.range)),
+        ));
 
         for (from, guard) in target_abstract_environment.current_nodes.as_ref() {
             target_abstract_environment.constraint_graph.add_edge(
@@ -1757,6 +1780,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         target_abstract_environment.current_nodes =
             imbl::OrdMap::unit(node, imbl::OrdSet::default());
+        target_abstract_environment.return_status = ReturnStatus::Returning;
 
         Ok(target_abstract_environment)
     }
@@ -2152,6 +2176,10 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 
         let mut entry_state = ProgramEntityAbstractEnvironment::default();
 
+        entry_state
+            .current_nodes
+            .insert(ConstraintNode::Entry, imbl::OrdSet::default());
+
         if let Some(abstract_parent_state) = self.abstract_parent_state {
             if let Some(context) = abstract_parent_state
                 .state
@@ -2213,52 +2241,73 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
 
         if *to == ProgramPoint::Exit {
             for (from, guards) in target_abstract_environment.current_nodes.as_ref() {
-                let edges = if guards.is_empty() {
-                    if edge_datas
-                        .iter()
-                        .all(|edge_data| matches!(edge_data, EdgeData::UnhandledException))
-                    {
-                        imbl::OrdMap::default()
-                    } else {
-                        imbl::OrdMap::unit(ConstraintNode::TypeExit, guards.clone())
-                    }
+                let are_all_exceptions = edge_datas
+                    .iter()
+                    .all(|edge_data| matches!(edge_data, EdgeData::UnhandledException));
+
+                let (can_return, can_raise) = if guards.is_empty() {
+                    (!are_all_exceptions, false)
                 } else {
                     guards
                         .iter()
-                        .filter_map(|guard| match guard {
+                        .map(|guard| match guard {
                             Guard::Raise { .. }
                                 if edge_datas.contains(&EdgeData::UnhandledException) =>
                             {
-                                Some(imbl::OrdMap::unit(
-                                    ConstraintNode::ExceptionExit,
-                                    imbl::OrdSet::unit(guard.clone()),
-                                ))
+                                (false, true)
                             }
-                            _ => {
-                                if edge_datas.iter().all(|edge_data| {
-                                    matches!(edge_data, EdgeData::UnhandledException)
-                                }) {
-                                    None
-                                } else {
-                                    Some(imbl::OrdMap::unit(
-                                        ConstraintNode::TypeExit,
-                                        imbl::OrdSet::unit(guard.clone()),
-                                    ))
-                                }
-                            }
+                            _ => (!are_all_exceptions, false),
                         })
-                        .fold(imbl::OrdMap::new(), |acc, edges| acc.join(&edges))
+                        .fold(
+                            (false, false),
+                            |(acc_can_return, acc_can_raise), (can_return, can_raise)| {
+                                (acc_can_return || can_return, acc_can_raise || can_raise)
+                            },
+                        )
                 };
 
-                for (node, guard) in edges {
+                if can_return {
+                    if matches!(
+                        target_abstract_environment.return_status,
+                        ReturnStatus::Returning
+                    ) {
+                        target_abstract_environment.constraint_graph.add_edge(
+                            from.clone(),
+                            ConstraintNode::TypeExit,
+                            guards.clone(),
+                        );
+                    } else {
+                        target_abstract_environment.return_status = ReturnStatus::Returning;
+                        let return_node = ConstraintNode::ReturnConstraint(ReturnConstraint::new(
+                            Arc::new(Expression::LiteralNone),
+                            None,
+                        ));
+                        target_abstract_environment.constraint_graph.add_edge(
+                            from.clone(),
+                            return_node.clone(),
+                            guards.clone(),
+                        );
+                        target_abstract_environment.constraint_graph.add_edge(
+                            return_node.clone(),
+                            ConstraintNode::TypeExit,
+                            imbl::OrdSet::default(),
+                        );
+                    }
+                    target_abstract_environment.constraint_graph.add_edge(
+                        ConstraintNode::TypeExit,
+                        ConstraintNode::Exit,
+                        imbl::OrdSet::default(),
+                    );
+                }
+                if can_raise {
                     target_abstract_environment.constraint_graph.add_edge(
                         from.clone(),
-                        node.clone(),
-                        guard.clone(),
+                        ConstraintNode::ExceptionExit,
+                        guards.clone(),
                     );
                     target_abstract_environment.constraint_graph.add_edge(
-                        node,
-                        ConstraintNode::Exit,
+                        ConstraintNode::ExceptionExit,
+                        ConstraintNode::TypeExit,
                         imbl::OrdSet::default(),
                     );
                 }
@@ -2640,6 +2689,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "#import(some_module) ⊑ some_module@{module[1:7]}";
+            "#return(None)";
             "#defined(some_module@{module[1:7]})";
             "#type_exit";
             "#exception_exit";
@@ -2647,9 +2697,10 @@ mod tests {
             "#entry" -> "#import(some_module) ⊑ some_module@{module[1:7]}" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exception_exit" [label="#raise(#import(some_module))"];
             "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#defined(some_module@{module[1:7]})" [label=""];
-            "#defined(some_module@{module[1:7]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(some_module@{module[1:7]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset!["some_module"],
@@ -2660,6 +2711,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "#import(some_module) ⊑ mod@{module[1:22]}";
+            "#return(None)";
             "#defined(mod@{module[1:22]})";
             "#type_exit";
             "#exception_exit";
@@ -2667,9 +2719,10 @@ mod tests {
             "#entry" -> "#import(some_module) ⊑ mod@{module[1:22]}" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exception_exit" [label="#raise(#import(some_module))"];
             "#import(some_module) ⊑ mod@{module[1:22]}" -> "#defined(mod@{module[1:22]})" [label=""];
-            "#defined(mod@{module[1:22]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(mod@{module[1:22]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset!["some_module"],
@@ -2681,6 +2734,7 @@ mod tests {
             "#entry";
             "#import(some_module) ⊑ some_module@{module[1:7]}";
             "#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule";
+            "#return(None)";
             "#defined(some_module@{module[1:7]})";
             "#type_exit";
             "#exception_exit";
@@ -2688,11 +2742,12 @@ mod tests {
             "#entry" -> "#import(some_module) ⊑ some_module@{module[1:7]}" [label="#succeed(#import(some_module))"];
             "#entry" -> "#exception_exit" [label="#raise(#import(some_module))"];
             "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#defined(some_module@{module[1:7]})" [label=""];
-            "#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule" -> "#type_exit" [label=""];
+            "#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule" -> "#return(None)" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
             "#defined(some_module@{module[1:7]})" -> "#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule" [label="#succeed(#import(some_module.submodule))"];
             "#defined(some_module@{module[1:7]})" -> "#exception_exit" [label="#raise(#import(some_module.submodule))"];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset!["some_module.submodule"],
@@ -2705,6 +2760,7 @@ mod tests {
             "#import(some_module) ⊑ some_module@{module[1:7]}";
             "#import(some_module) ⊑ some_module@{module[1:20]}";
             "#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule";
+            "#return(None)";
             "#defined(some_module@{module[1:7]})";
             "#defined(some_module@{module[1:20]})";
             "#type_exit";
@@ -2714,13 +2770,14 @@ mod tests {
             "#entry" -> "#exception_exit" [label="#raise(#import(some_module))"];
             "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#defined(some_module@{module[1:7]})" [label=""];
             "#import(some_module) ⊑ some_module@{module[1:20]}" -> "#defined(some_module@{module[1:20]})" [label=""];
-            "#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule" -> "#type_exit" [label=""];
+            "#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule" -> "#return(None)" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
             "#defined(some_module@{module[1:7]})" -> "#import(some_module) ⊑ some_module@{module[1:20]}" [label="#succeed(#import(some_module))"];
             "#defined(some_module@{module[1:7]})" -> "#exception_exit" [label="#raise(#import(some_module))"];
             "#defined(some_module@{module[1:20]})" -> "#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule" [label="#succeed(#import(some_module.submodule))"];
             "#defined(some_module@{module[1:20]})" -> "#exception_exit" [label="#raise(#import(some_module.submodule))"];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset!["some_module", "some_module.submodule"],
@@ -2732,6 +2789,7 @@ mod tests {
             "#entry";
             "#import(another_module) ⊑ another_module@{module[1:20]}";
             "#import(some_module) ⊑ some_module@{module[1:7]}";
+            "#return(None)";
             "#defined(another_module@{module[1:20]})";
             "#defined(some_module@{module[1:7]})";
             "#type_exit";
@@ -2741,11 +2799,12 @@ mod tests {
             "#entry" -> "#exception_exit" [label="#raise(#import(some_module))"];
             "#import(another_module) ⊑ another_module@{module[1:20]}" -> "#defined(another_module@{module[1:20]})" [label=""];
             "#import(some_module) ⊑ some_module@{module[1:7]}" -> "#defined(some_module@{module[1:7]})" [label=""];
-            "#defined(another_module@{module[1:20]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(another_module@{module[1:20]})" -> "#return(None)" [label=""];
             "#defined(some_module@{module[1:7]})" -> "#import(another_module) ⊑ another_module@{module[1:20]}" [label="#succeed(#import(another_module))"];
             "#defined(some_module@{module[1:7]})" -> "#exception_exit" [label="#raise(#import(another_module))"];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset!["some_module", "another_module"],
@@ -2757,6 +2816,7 @@ mod tests {
             "#entry";
             "#import(another_module) ⊑ mod@{module[1:45]}";
             "#import(some_module) ⊑ mod@{module[1:22]}";
+            "#return(None)";
             "#defined(mod@{module[1:22]})";
             "#defined(mod@{module[1:45]})";
             "#type_exit";
@@ -2766,11 +2826,12 @@ mod tests {
             "#entry" -> "#exception_exit" [label="#raise(#import(some_module))"];
             "#import(another_module) ⊑ mod@{module[1:45]}" -> "#defined(mod@{module[1:45]})" [label=""];
             "#import(some_module) ⊑ mod@{module[1:22]}" -> "#defined(mod@{module[1:22]})" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
             "#defined(mod@{module[1:22]})" -> "#import(another_module) ⊑ mod@{module[1:45]}" [label="#succeed(#import(another_module))"];
             "#defined(mod@{module[1:22]})" -> "#exception_exit" [label="#raise(#import(another_module))"];
-            "#defined(mod@{module[1:45]})" -> "#type_exit" [label=""];
+            "#defined(mod@{module[1:45]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset!["some_module", "another_module"],
@@ -2781,12 +2842,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "42 ⊑ a@{module[1:0]}";
+            "#return(None)";
             "#defined(a@{module[1:0]})";
             "#type_exit";
             "#exit";
             "#entry" -> "42 ⊑ a@{module[1:0]}" [label=""];
             "42 ⊑ a@{module[1:0]}" -> "#defined(a@{module[1:0]})" [label=""];
-            "#defined(a@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(a@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
         }
         "##},
@@ -2798,12 +2861,14 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "4200000000000000000000000000 ⊑ a@{module[1:0]}";
+            "#return(None)";
             "#defined(a@{module[1:0]})";
             "#type_exit";
             "#exit";
             "#entry" -> "4200000000000000000000000000 ⊑ a@{module[1:0]}" [label=""];
             "4200000000000000000000000000 ⊑ a@{module[1:0]}" -> "#defined(a@{module[1:0]})" [label=""];
-            "#defined(a@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(a@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
         }
         "##},
@@ -2815,6 +2880,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) + (67) ⊑ add@{module[1:0]}";
+            "#return(None)";
             "#defined(add@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -2822,9 +2888,10 @@ mod tests {
             "#entry" -> "(42) + (67) ⊑ add@{module[1:0]}" [label="#succeed((42) + (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) + (67))"];
             "(42) + (67) ⊑ add@{module[1:0]}" -> "#defined(add@{module[1:0]})" [label=""];
-            "#defined(add@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(add@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -2835,6 +2902,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) - (67) ⊑ sub@{module[1:0]}";
+            "#return(None)";
             "#defined(sub@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -2842,9 +2910,10 @@ mod tests {
             "#entry" -> "(42) - (67) ⊑ sub@{module[1:0]}" [label="#succeed((42) - (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) - (67))"];
             "(42) - (67) ⊑ sub@{module[1:0]}" -> "#defined(sub@{module[1:0]})" [label=""];
-            "#defined(sub@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(sub@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -2855,6 +2924,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) * (67) ⊑ mult@{module[1:0]}";
+            "#return(None)";
             "#defined(mult@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -2862,9 +2932,10 @@ mod tests {
             "#entry" -> "(42) * (67) ⊑ mult@{module[1:0]}" [label="#succeed((42) * (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) * (67))"];
             "(42) * (67) ⊑ mult@{module[1:0]}" -> "#defined(mult@{module[1:0]})" [label=""];
-            "#defined(mult@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(mult@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -2875,6 +2946,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) @ (67) ⊑ mat_mult@{module[1:0]}";
+            "#return(None)";
             "#defined(mat_mult@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -2882,9 +2954,10 @@ mod tests {
             "#entry" -> "(42) @ (67) ⊑ mat_mult@{module[1:0]}" [label="#succeed((42) @ (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) @ (67))"];
             "(42) @ (67) ⊑ mat_mult@{module[1:0]}" -> "#defined(mat_mult@{module[1:0]})" [label=""];
-            "#defined(mat_mult@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(mat_mult@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -2895,6 +2968,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) / (67) ⊑ div@{module[1:0]}";
+            "#return(None)";
             "#defined(div@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -2902,9 +2976,10 @@ mod tests {
             "#entry" -> "(42) / (67) ⊑ div@{module[1:0]}" [label="#succeed((42) / (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) / (67))"];
             "(42) / (67) ⊑ div@{module[1:0]}" -> "#defined(div@{module[1:0]})" [label=""];
-            "#defined(div@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(div@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -2915,6 +2990,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) // (67) ⊑ floor_div@{module[1:0]}";
+            "#return(None)";
             "#defined(floor_div@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -2922,9 +2998,10 @@ mod tests {
             "#entry" -> "(42) // (67) ⊑ floor_div@{module[1:0]}" [label="#succeed((42) // (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) // (67))"];
             "(42) // (67) ⊑ floor_div@{module[1:0]}" -> "#defined(floor_div@{module[1:0]})" [label=""];
-            "#defined(floor_div@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(floor_div@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -2935,6 +3012,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) % (67) ⊑ mod@{module[1:0]}";
+            "#return(None)";
             "#defined(mod@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -2942,9 +3020,10 @@ mod tests {
             "#entry" -> "(42) % (67) ⊑ mod@{module[1:0]}" [label="#succeed((42) % (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) % (67))"];
             "(42) % (67) ⊑ mod@{module[1:0]}" -> "#defined(mod@{module[1:0]})" [label=""];
-            "#defined(mod@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(mod@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -2955,6 +3034,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) ** (67) ⊑ pow@{module[1:0]}";
+            "#return(None)";
             "#defined(pow@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -2962,9 +3042,10 @@ mod tests {
             "#entry" -> "(42) ** (67) ⊑ pow@{module[1:0]}" [label="#succeed((42) ** (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) ** (67))"];
             "(42) ** (67) ⊑ pow@{module[1:0]}" -> "#defined(pow@{module[1:0]})" [label=""];
-            "#defined(pow@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(pow@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -2975,6 +3056,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) << (67) ⊑ shl@{module[1:0]}";
+            "#return(None)";
             "#defined(shl@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -2982,9 +3064,10 @@ mod tests {
             "#entry" -> "(42) << (67) ⊑ shl@{module[1:0]}" [label="#succeed((42) << (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) << (67))"];
             "(42) << (67) ⊑ shl@{module[1:0]}" -> "#defined(shl@{module[1:0]})" [label=""];
-            "#defined(shl@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(shl@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -2995,6 +3078,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) >> (67) ⊑ shr@{module[1:0]}";
+            "#return(None)";
             "#defined(shr@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3002,9 +3086,10 @@ mod tests {
             "#entry" -> "(42) >> (67) ⊑ shr@{module[1:0]}" [label="#succeed((42) >> (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) >> (67))"];
             "(42) >> (67) ⊑ shr@{module[1:0]}" -> "#defined(shr@{module[1:0]})" [label=""];
-            "#defined(shr@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(shr@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3015,6 +3100,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) | (67) ⊑ bit_or@{module[1:0]}";
+            "#return(None)";
             "#defined(bit_or@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3022,9 +3108,10 @@ mod tests {
             "#entry" -> "(42) | (67) ⊑ bit_or@{module[1:0]}" [label="#succeed((42) | (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) | (67))"];
             "(42) | (67) ⊑ bit_or@{module[1:0]}" -> "#defined(bit_or@{module[1:0]})" [label=""];
-            "#defined(bit_or@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(bit_or@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3035,6 +3122,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) ^ (67) ⊑ bit_xor@{module[1:0]}";
+            "#return(None)";
             "#defined(bit_xor@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3042,9 +3130,10 @@ mod tests {
             "#entry" -> "(42) ^ (67) ⊑ bit_xor@{module[1:0]}" [label="#succeed((42) ^ (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) ^ (67))"];
             "(42) ^ (67) ⊑ bit_xor@{module[1:0]}" -> "#defined(bit_xor@{module[1:0]})" [label=""];
-            "#defined(bit_xor@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(bit_xor@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3055,6 +3144,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) & (67) ⊑ bit_and@{module[1:0]}";
+            "#return(None)";
             "#defined(bit_and@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3062,9 +3152,10 @@ mod tests {
             "#entry" -> "(42) & (67) ⊑ bit_and@{module[1:0]}" [label="#succeed((42) & (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) & (67))"];
             "(42) & (67) ⊑ bit_and@{module[1:0]}" -> "#defined(bit_and@{module[1:0]})" [label=""];
-            "#defined(bit_and@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(bit_and@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3075,6 +3166,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) and (67) ⊑ and_@{module[1:0]}";
+            "#return(None)";
             "#defined(and_@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3082,9 +3174,10 @@ mod tests {
             "#entry" -> "(42) and (67) ⊑ and_@{module[1:0]}" [label="#succeed((42) and (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) and (67))"];
             "(42) and (67) ⊑ and_@{module[1:0]}" -> "#defined(and_@{module[1:0]})" [label=""];
-            "#defined(and_@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(and_@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3095,6 +3188,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) or (67) ⊑ or_@{module[1:0]}";
+            "#return(None)";
             "#defined(or_@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3102,9 +3196,10 @@ mod tests {
             "#entry" -> "(42) or (67) ⊑ or_@{module[1:0]}" [label="#succeed((42) or (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) or (67))"];
             "(42) or (67) ⊑ or_@{module[1:0]}" -> "#defined(or_@{module[1:0]})" [label=""];
-            "#defined(or_@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(or_@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3115,6 +3210,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) == (67) ⊑ eq@{module[1:0]}";
+            "#return(None)";
             "#defined(eq@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3122,9 +3218,10 @@ mod tests {
             "#entry" -> "(42) == (67) ⊑ eq@{module[1:0]}" [label="#succeed((42) == (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) == (67))"];
             "(42) == (67) ⊑ eq@{module[1:0]}" -> "#defined(eq@{module[1:0]})" [label=""];
-            "#defined(eq@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(eq@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3135,6 +3232,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) != (67) ⊑ not_eq@{module[1:0]}";
+            "#return(None)";
             "#defined(not_eq@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3142,9 +3240,10 @@ mod tests {
             "#entry" -> "(42) != (67) ⊑ not_eq@{module[1:0]}" [label="#succeed((42) != (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) != (67))"];
             "(42) != (67) ⊑ not_eq@{module[1:0]}" -> "#defined(not_eq@{module[1:0]})" [label=""];
-            "#defined(not_eq@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(not_eq@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3155,6 +3254,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) < (67) ⊑ lt@{module[1:0]}";
+            "#return(None)";
             "#defined(lt@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3162,9 +3262,10 @@ mod tests {
             "#entry" -> "(42) < (67) ⊑ lt@{module[1:0]}" [label="#succeed((42) < (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) < (67))"];
             "(42) < (67) ⊑ lt@{module[1:0]}" -> "#defined(lt@{module[1:0]})" [label=""];
-            "#defined(lt@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(lt@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3175,6 +3276,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) > (67) ⊑ gt@{module[1:0]}";
+            "#return(None)";
             "#defined(gt@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3182,9 +3284,10 @@ mod tests {
             "#entry" -> "(42) > (67) ⊑ gt@{module[1:0]}" [label="#succeed((42) > (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) > (67))"];
             "(42) > (67) ⊑ gt@{module[1:0]}" -> "#defined(gt@{module[1:0]})" [label=""];
-            "#defined(gt@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(gt@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3195,6 +3298,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) <= (67) ⊑ lte@{module[1:0]}";
+            "#return(None)";
             "#defined(lte@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3202,9 +3306,10 @@ mod tests {
             "#entry" -> "(42) <= (67) ⊑ lte@{module[1:0]}" [label="#succeed((42) <= (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) <= (67))"];
             "(42) <= (67) ⊑ lte@{module[1:0]}" -> "#defined(lte@{module[1:0]})" [label=""];
-            "#defined(lte@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(lte@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3215,6 +3320,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) >= (67) ⊑ gte@{module[1:0]}";
+            "#return(None)";
             "#defined(gte@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3222,9 +3328,10 @@ mod tests {
             "#entry" -> "(42) >= (67) ⊑ gte@{module[1:0]}" [label="#succeed((42) >= (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) >= (67))"];
             "(42) >= (67) ⊑ gte@{module[1:0]}" -> "#defined(gte@{module[1:0]})" [label=""];
-            "#defined(gte@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(gte@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3235,6 +3342,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) is (67) ⊑ is_@{module[1:0]}";
+            "#return(None)";
             "#defined(is_@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3242,9 +3350,10 @@ mod tests {
             "#entry" -> "(42) is (67) ⊑ is_@{module[1:0]}" [label="#succeed((42) is (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) is (67))"];
             "(42) is (67) ⊑ is_@{module[1:0]}" -> "#defined(is_@{module[1:0]})" [label=""];
-            "#defined(is_@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(is_@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3255,6 +3364,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) is not (67) ⊑ is_not@{module[1:0]}";
+            "#return(None)";
             "#defined(is_not@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3262,9 +3372,10 @@ mod tests {
             "#entry" -> "(42) is not (67) ⊑ is_not@{module[1:0]}" [label="#succeed((42) is not (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) is not (67))"];
             "(42) is not (67) ⊑ is_not@{module[1:0]}" -> "#defined(is_not@{module[1:0]})" [label=""];
-            "#defined(is_not@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(is_not@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3275,6 +3386,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) in (67) ⊑ in_@{module[1:0]}";
+            "#return(None)";
             "#defined(in_@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3282,9 +3394,10 @@ mod tests {
             "#entry" -> "(42) in (67) ⊑ in_@{module[1:0]}" [label="#succeed((42) in (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) in (67))"];
             "(42) in (67) ⊑ in_@{module[1:0]}" -> "#defined(in_@{module[1:0]})" [label=""];
-            "#defined(in_@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(in_@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3295,6 +3408,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "(42) not in (67) ⊑ not_in@{module[1:0]}";
+            "#return(None)";
             "#defined(not_in@{module[1:0]})";
             "#type_exit";
             "#exception_exit";
@@ -3302,9 +3416,10 @@ mod tests {
             "#entry" -> "(42) not in (67) ⊑ not_in@{module[1:0]}" [label="#succeed((42) not in (67))"];
             "#entry" -> "#exception_exit" [label="#raise((42) not in (67))"];
             "(42) not in (67) ⊑ not_in@{module[1:0]}" -> "#defined(not_in@{module[1:0]})" [label=""];
-            "#defined(not_in@{module[1:0]})" -> "#type_exit" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
+            "#defined(not_in@{module[1:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3322,6 +3437,7 @@ mod tests {
             "a@{module[1:0]} ⊑ a@{module[3:8]}";
             "(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]}";
             "4 ⊑ a@{module[1:0]}";
+            "#return(None)";
             "#defined(a@{module[1:0]})";
             "#defined(b@{module[3:0]})";
             "#type_exit";
@@ -3334,11 +3450,12 @@ mod tests {
             "a@{module[1:0]} ⊑ a@{module[3:8]}" -> "#exception_exit" [label="#raise((a@{module[3:4]}) + (a@{module[3:8]}))"];
             "(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]}" -> "#defined(b@{module[3:0]})" [label=""];
             "4 ⊑ a@{module[1:0]}" -> "#defined(a@{module[1:0]})" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
             "#defined(a@{module[1:0]})" -> "a@{module[1:0]} ⊑ a@{module[3:4]}" [label=""];
             "#defined(a@{module[1:0]})" -> "a@{module[1:0]} ⊑ a@{module[3:8]}" [label=""];
-            "#defined(b@{module[3:0]})" -> "#type_exit" [label=""];
+            "#defined(b@{module[3:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3364,6 +3481,7 @@ mod tests {
             "42 ⊑ a@{module[4:4]}";
             "67 ⊑ a@{module[6:4]}";
             "True ⊑ x@{module[1:0]}";
+            "#return(None)";
             "#defined(a@{module[4:4]})";
             "#defined(a@{module[6:4]})";
             "#defined(b@{module[8:0]})";
@@ -3382,17 +3500,18 @@ mod tests {
             "42 ⊑ a@{module[4:4]}" -> "#defined(a@{module[4:4]})" [label=""];
             "67 ⊑ a@{module[6:4]}" -> "#defined(a@{module[6:4]})" [label=""];
             "True ⊑ x@{module[1:0]}" -> "#defined(x@{module[1:0]})" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
             "#defined(a@{module[4:4]})" -> "a@{module[4:4]} ⊑ a@{module[8:4]}" [label=""];
             "#defined(a@{module[4:4]})" -> "a@{module[6:4]} ⊑ a@{module[8:4]}" [label=""];
             "#defined(a@{module[6:4]})" -> "a@{module[4:4]} ⊑ a@{module[8:4]}" [label=""];
             "#defined(a@{module[6:4]})" -> "a@{module[6:4]} ⊑ a@{module[8:4]}" [label=""];
-            "#defined(b@{module[8:0]})" -> "#type_exit" [label=""];
+            "#defined(b@{module[8:0]})" -> "#return(None)" [label=""];
             "#defined(x@{module[1:0]})" -> "x@{module[1:0]} ⊑ x@{module[3:3]}" [label=""];
             "#empty(module[3:0])" -> "42 ⊑ a@{module[4:4]}" [label="#is_true(x@{module[3:3]})"];
             "#empty(module[3:0])" -> "67 ⊑ a@{module[6:4]}" [label="#is_false(x@{module[3:3]})"];
             "#empty(module[3:0])" -> "#exception_exit" [label="#raise(x@{module[3:3]})"];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3416,6 +3535,7 @@ mod tests {
             "a@{module[6:4]} ⊑ b@{module[6:0]}";
             "(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]}";
             "0 ⊑ a@{module[1:0]}";
+            "#return(None)";
             "#defined(a@{module[1:0]})";
             "#defined(a@{module[4:4]})";
             "#defined(b@{module[6:0]})";
@@ -3433,16 +3553,17 @@ mod tests {
             "a@{module[6:4]} ⊑ b@{module[6:0]}" -> "#defined(b@{module[6:0]})" [label=""];
             "(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]}" -> "#defined(a@{module[4:4]})" [label=""];
             "0 ⊑ a@{module[1:0]}" -> "#defined(a@{module[1:0]})" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
             "#defined(a@{module[1:0]})" -> "a@{module[1:0]} ⊑ a@{module[3:6]}" [label=""];
             "#defined(a@{module[1:0]})" -> "a@{module[4:4]} ⊑ a@{module[3:6]}" [label=""];
             "#defined(a@{module[4:4]})" -> "a@{module[1:0]} ⊑ a@{module[3:6]}" [label=""];
             "#defined(a@{module[4:4]})" -> "a@{module[4:4]} ⊑ a@{module[3:6]}" [label=""];
-            "#defined(b@{module[6:0]})" -> "#type_exit" [label=""];
+            "#defined(b@{module[6:0]})" -> "#return(None)" [label=""];
             "#empty(module[3:0])" -> "a@{module[3:6]} ⊑ a@{module[4:8]}" [label="#is_true((a@{module[3:6]}) < (5))"];
             "#empty(module[3:0])" -> "a@{module[3:6]} ⊑ a@{module[6:4]}" [label="#is_false((a@{module[3:6]}) < (5))"];
             "#empty(module[3:0])" -> "#exception_exit" [label="#raise((a@{module[3:6]}) < (5))"];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3460,6 +3581,7 @@ mod tests {
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}";
             "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}";
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}";
+            "#return(None)";
             "#defined(add_two@{module[1:4]})";
             "#defined(result@{module[4:0]})";
             "#type_exit";
@@ -3471,10 +3593,11 @@ mod tests {
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exception_exit" [label="#raise((add_two@{module[4:9]})(42, 67))"];
             "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" -> "#defined(add_two@{module[1:4]})" [label=""];
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" -> "#defined(result@{module[4:0]})" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
             "#defined(add_two@{module[1:4]})" -> "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" [label=""];
-            "#defined(result@{module[4:0]})" -> "#type_exit" [label=""];
+            "#defined(result@{module[4:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         "##},
         ordset![],
@@ -3542,9 +3665,11 @@ mod tests {
         }
         digraph "builtins" {
             "#entry";
+            "#return(None)";
             "#type_exit";
             "#exit";
-            "#entry" -> "#type_exit" [label=""];
+            "#entry" -> "#return(None)" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
             "#type_exit" -> "#exit" [label=""];
         }
         digraph "module" {
@@ -3552,6 +3677,7 @@ mod tests {
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}";
             "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}";
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}";
+            "#return(None)";
             "#defined(add_two@{module[1:4]})";
             "#defined(result@{module[4:0]})";
             "#type_exit";
@@ -3563,23 +3689,24 @@ mod tests {
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exception_exit" [label="#raise((add_two@{module[4:9]})(42, 67))"];
             "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" -> "#defined(add_two@{module[1:4]})" [label=""];
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" -> "#defined(result@{module[4:0]})" [label=""];
+            "#return(None)" -> "#type_exit" [label=""];
             "#defined(add_two@{module[1:4]})" -> "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" [label=""];
-            "#defined(result@{module[4:0]})" -> "#type_exit" [label=""];
+            "#defined(result@{module[4:0]})" -> "#return(None)" [label=""];
             "#type_exit" -> "#exit" [label=""];
-            "#exception_exit" -> "#exit" [label=""];
+            "#exception_exit" -> "#type_exit" [label=""];
         }
         digraph "module[1:4]" {
             "#entry";
             "a@{module[1:12]} ⊑ a@{module[1:4][2:11]}";
             "b@{module[1:15]} ⊑ b@{module[1:4][2:15]}";
-            "#return((a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]}))";
+            "#return((a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]}), origin=module[1:4][2:4])";
             "#type_exit";
             "#exit";
             "#entry" -> "a@{module[1:12]} ⊑ a@{module[1:4][2:11]}" [label=""];
             "#entry" -> "b@{module[1:15]} ⊑ b@{module[1:4][2:15]}" [label=""];
-            "a@{module[1:12]} ⊑ a@{module[1:4][2:11]}" -> "#return((a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]}))" [label=""];
-            "b@{module[1:15]} ⊑ b@{module[1:4][2:15]}" -> "#return((a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]}))" [label=""];
-            "#return((a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]}))" -> "#type_exit" [label=""];
+            "a@{module[1:12]} ⊑ a@{module[1:4][2:11]}" -> "#return((a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]}), origin=module[1:4][2:4])" [label=""];
+            "b@{module[1:15]} ⊑ b@{module[1:4][2:15]}" -> "#return((a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]}), origin=module[1:4][2:4])" [label=""];
+            "#return((a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]}), origin=module[1:4][2:4])" -> "#type_exit" [label=""];
             "#type_exit" -> "#exit" [label=""];
         }
         "##},

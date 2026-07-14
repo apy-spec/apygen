@@ -1039,11 +1039,11 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                     imbl::OrdSet::unit(expression.location.clone()),
                 );
             }
-            ConstraintNode::ReturnConstraint(expression) => {
+            ConstraintNode::ReturnConstraint(constraint) => {
                 let evaluation_state =
                     program_evaluation.get_or_insert_default(self.qualified_location.clone());
 
-                evaluation_state.return_value = imbl::OrdSet::unit(expression.clone());
+                evaluation_state.return_value = imbl::OrdSet::unit(constraint.expression.clone());
             }
             _ => {}
         }
@@ -1523,7 +1523,7 @@ mod tests {
             a@{module[4:4]} = (42 ➤ ({} - Pure - Total))
             b@{module[8:0]} = (42 ➤ ({} - Pure - Total))
             x@{module[1:0]} = (True ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
+            #return = (None ➤ ({} - Pure - Total))
         "##},
     )]
     #[case::simple_while_statement(
@@ -1540,7 +1540,7 @@ mod tests {
             a@{module[1:0]} = (0 ➤ ({} - Pure - Total))
             a@{module[4:4]} = (Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] ➤ ({} - Pure - Total)) ⊔ #deferred{(a@{module[4:8]}) + (1)}
             b@{module[6:0]} = (Union[@class(builtins[1:6]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] ➤ ({} - Pure - Total)) ⊔ #deferred{a@{module[6:4]}}
-            #return = (Never ➤ ({} - Pure - Total))
+            #return = (None ➤ ({} - Pure - Total))
             #raise = {Exception(type=Any, origin=Unknown)}
         "##},  // TODO: fix this when operations are implemented
     )]
@@ -1572,10 +1572,10 @@ mod tests {
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             result@{module[4:0]} = (5 ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
+            #return = (None ➤ ({} - Pure - Total))
         module[1:6]:
             b@{module[1:6][2:4]} = (5 ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
+            #return = (None ➤ ({} - Pure - Total))
         "##},
     )]
     #[case::simple_attribute_access(
@@ -1591,10 +1591,10 @@ mod tests {
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             a@{module[4:0]} = (@class(module[1:6]) ➤ ({} - Pure - Total))
             result@{module[5:0]} = (5 ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
+            #return = (None ➤ ({} - Pure - Total))
         module[1:6]:
             b@{module[1:6][2:4]} = (5 ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
+            #return = (None ➤ ({} - Pure - Total))
         "##},
     )]
     #[case::simple_class_function_access(
@@ -1609,10 +1609,10 @@ mod tests {
         module:
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             result@{module[5:0]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
+            #return = (None ➤ ({} - Pure - Total))
         module[1:6]:
             foo@{module[1:6][2:8]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
+            #return = (None ➤ ({} - Pure - Total))
         module[1:6][2:8]:
             #return = (5 ➤ ({} - Pure - Total))
         "##},
@@ -1631,10 +1631,10 @@ mod tests {
             A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
             a@{module[5:0]} = (@class(module[1:6]) ➤ ({} - Pure - Total))
             result@{module[6:0]} = (method(class(module[1:6])[], function(module[1:6][2:8])) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
+            #return = (None ➤ ({} - Pure - Total))
         module[1:6]:
             foo@{module[1:6][2:8]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
+            #return = (None ➤ ({} - Pure - Total))
         module[1:6][2:8]:
             #return = (5 ➤ ({} - Pure - Total))
         "##},
@@ -1671,7 +1671,7 @@ mod tests {
             CONST@{module[4:0]} = (5 ➤ ({} - Pure - Total))
             foo@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
             result@{module[6:0]} = (5 ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
+            #return = (None ➤ ({} - Pure - Total))
         module[1:4]:
             #return = (5 ➤ ({} - Pure - Total))
         "##},
