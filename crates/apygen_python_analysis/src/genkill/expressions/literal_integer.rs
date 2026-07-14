@@ -1,10 +1,12 @@
-use crate::abstract_environment::{Exception, ExceptionOrigin, LiteralBoolean, LiteralFloat, LiteralInteger, Type};
+use crate::abstract_environment::{
+    Exception, ExceptionOrigin, LiteralBoolean, LiteralFloat, LiteralInteger, Type,
+};
+use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions;
 use crate::genkill::expressions::PyTypeEval;
 use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
 use num_traits::{Pow, ToPrimitive};
-use crate::constraints::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(literal_integer: &LiteralInteger) -> bool {
     match literal_integer {
@@ -95,7 +97,10 @@ pub fn call_binary_op(
         }
         BinaryOperator::Div => {
             if right.is_zero() {
-                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
+                return PyTypeEval::raise(Exception::builtins(
+                    "ZeroDivisionError",
+                    ExceptionOrigin::Unknown,
+                ));
             }
 
             let (left, right) = match (left, right) {
@@ -124,14 +129,20 @@ pub fn call_binary_op(
         }
         BinaryOperator::FloorDiv => {
             if right.is_zero() {
-                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
+                return PyTypeEval::raise(Exception::builtins(
+                    "ZeroDivisionError",
+                    ExceptionOrigin::Unknown,
+                ));
             }
 
             Type::new_integer_literal(left / right)
         }
         BinaryOperator::Mod => {
             if right.is_zero() {
-                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
+                return PyTypeEval::raise(Exception::builtins(
+                    "ZeroDivisionError",
+                    ExceptionOrigin::Unknown,
+                ));
             }
 
             Type::new_integer_literal(left % right)
@@ -167,7 +178,9 @@ pub fn call_binary_op(
         BinaryOperator::BitOr => Type::new_integer_literal(left | right),
         BinaryOperator::BitXor => Type::new_integer_literal(left ^ right),
         BinaryOperator::BitAnd => Type::new_integer_literal(left & right),
-        BinaryOperator::MatMult => return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown)),
-        _ => todo!(),
+        BinaryOperator::MatMult => {
+            return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown));
+        }
+        _ => return PyTypeEval::unknown(),
     })
 }
