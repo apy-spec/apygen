@@ -38,7 +38,7 @@ pub trait AbstractState {
     ) -> &mut Self::AbstractValue;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AbstractStateProxy<'a, S: AbstractState, P: AbstractState> {
     pub abstract_state: &'a S,
     pub proxy: P,
@@ -59,13 +59,18 @@ impl<'a, S: AbstractState, P: AbstractState> AbstractStateProxy<'a, S, P> {
     }
 }
 
+impl<S: AbstractState, P: AbstractState + Clone> Clone for AbstractStateProxy<'_, S, P> {
+    fn clone(&self) -> Self {
+        Self::new(self.abstract_state, self.proxy.clone())
+    }
+}
+
 impl<
-    'a,
     K: Clone,
     A: Clone,
     S: AbstractState<Key = K, AbstractValue = A>,
     P: AbstractState<Key = K, AbstractValue = A>,
-> AbstractState for AbstractStateProxy<'a, S, P>
+> AbstractState for AbstractStateProxy<'_, S, P>
 {
     type Key = K;
     type AbstractValue = A;
