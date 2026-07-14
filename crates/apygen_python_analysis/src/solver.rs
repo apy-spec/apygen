@@ -183,39 +183,26 @@ impl<
     }
 }
 
-pub struct ConstraintSolver<
-    's,
-    S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
-> {
-    pub qualified_location: &'s QualifiedLocation,
-    pub program_entity_constraints: &'s imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
-    pub program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation>,
+pub struct ExpressionEvaluator<'a> {
+    pub qualified_location: &'a QualifiedLocation,
+    pub program_entity_constraints: &'a imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
 }
 
-impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>>
-    ConstraintSolver<'s, S>
-{
+impl<'a> ExpressionEvaluator<'a> {
     pub fn new(
-        qualified_location: &'s QualifiedLocation,
-        program_entity_constraints: &'s imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
-        program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation>,
+        qualified_location: &'a QualifiedLocation,
+        program_entity_constraints: &'a imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
     ) -> Self {
         Self {
             qualified_location,
             program_entity_constraints,
-            program_evaluation,
         }
     }
 
-    pub fn constraints(&self) -> Option<&ProgramEntityConstraints> {
-        self.program_entity_constraints
-            .get(&self.qualified_location)
+    pub fn with_qualified_location(&self, qualified_location: &'a QualifiedLocation) -> Self {
+        Self::new(qualified_location, self.program_entity_constraints)
     }
-}
 
-impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq>
-    ConstraintSolver<'s, S>
-{
     pub fn get_variable_type(
         abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
         module_name: &ModuleName,
@@ -254,7 +241,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
     }
 
     pub fn type_instance(
-        abstract_state: &AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
         ty: &TypeLiteral,
     ) -> Option<TypeInstance2> {
         match ty {
@@ -343,7 +330,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
         }
     }
 
-    pub fn simplify(
+    pub fn simplify<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
     ) -> Option<()> {
@@ -395,7 +385,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
         Some(())
     }
 
-    pub fn evaluate_expression_variable(
+    pub fn evaluate_expression_variable<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression_variable: &ExpressionVariable,
@@ -422,7 +415,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
         evaluation.as_py_type_eval().cloned()
     }
 
-    pub fn evaluate_expression_annotated(
+    pub fn evaluate_expression_annotated<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression_annotated: &ExpressionAnnotated,
@@ -438,7 +434,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
         )))
     }
 
-    pub fn evaluate_expression_function(
+    pub fn evaluate_expression_function<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression_function: &ExpressionFunction,
@@ -461,7 +460,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
         )))
     }
 
-    pub fn evaluate_expression_class(
+    pub fn evaluate_expression_class<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression_class: &ExpressionClass,
@@ -486,7 +488,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
     }
 
     /// References: https://docs.python.org/3/howto/descriptor.html
-    fn evaluate_attributes(
+    fn evaluate_attributes<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         value_ty: &Type,
@@ -580,7 +585,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
         }
     }
 
-    pub fn evaluate_expression_attribute(
+    pub fn evaluate_expression_attribute<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression_attribute: &ExpressionAttribute,
@@ -600,7 +608,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
         )
     }
 
-    pub fn evaluate_expression_call(
+    pub fn evaluate_expression_call<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression_call: &ExpressionCall,
@@ -682,7 +693,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
         }
     }
 
-    pub fn evaluate_binary_operation(
+    pub fn evaluate_binary_operation<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         left_ty: &Type,
@@ -747,7 +761,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
         }
     }
 
-    pub fn evaluate_expression_binary(
+    pub fn evaluate_expression_binary<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression_binary: &ExpressionBinary,
@@ -776,7 +793,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
         Some(PyTypeEval::new(ty, effects))
     }
 
-    pub fn evaluate_expression(
+    pub fn evaluate_expression<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression: &Arc<Expression>,
@@ -842,6 +862,40 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
     }
 }
 
+pub struct ConstraintSolver<
+    's,
+    S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+> {
+    pub qualified_location: &'s QualifiedLocation,
+    pub program_entity_constraints: &'s imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
+    pub program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation>,
+}
+
+impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>>
+    ConstraintSolver<'s, S>
+{
+    pub fn new(
+        qualified_location: &'s QualifiedLocation,
+        program_entity_constraints: &'s imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
+        program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation>,
+    ) -> Self {
+        Self {
+            qualified_location,
+            program_entity_constraints,
+            program_evaluation,
+        }
+    }
+
+    pub fn constraints(&self) -> Option<&ProgramEntityConstraints> {
+        self.program_entity_constraints
+            .get(&self.qualified_location)
+    }
+
+    pub fn evaluator(&self) -> ExpressionEvaluator<'_> {
+        ExpressionEvaluator::new(self.qualified_location, self.program_entity_constraints)
+    }
+}
+
 impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq>
     GraphAnalyser for ConstraintSolver<'s, S>
 {
@@ -889,7 +943,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                         expressions
                             .iter()
                             .fold(ExpressionEval::default(), |acc, expression| {
-                                acc.join(&match self.evaluate_expression(
+                                acc.join(&match self.evaluator().evaluate_expression(
                                     &mut program_evaluation,
                                     &Arc::new(expression.clone()),
                                 ) {
@@ -918,14 +972,16 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                 }
             }
             ConstraintNode::TypeConstraint(constraint) => {
-                let expression_eval =
-                    match self.evaluate_expression(&mut program_evaluation, &constraint.left) {
-                        Some(type_eval) => ExpressionEval::new(type_eval, imbl::OrdSet::default()),
-                        None => ExpressionEval::new(
-                            PyTypeEval::never(),
-                            imbl::OrdSet::unit(constraint.left.clone()),
-                        ),
-                    };
+                let expression_eval = match self
+                    .evaluator()
+                    .evaluate_expression(&mut program_evaluation, &constraint.left)
+                {
+                    Some(type_eval) => ExpressionEval::new(type_eval, imbl::OrdSet::default()),
+                    None => ExpressionEval::new(
+                        PyTypeEval::never(),
+                        imbl::OrdSet::unit(constraint.left.clone()),
+                    ),
+                };
 
                 let evaluation_state =
                     program_evaluation.get_or_insert_default(self.qualified_location.clone());
@@ -1025,7 +1081,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
             left.proxy.join(&right.proxy),
         );
 
-        self.simplify(&mut new_abstract_state);
+        self.evaluator().simplify(&mut new_abstract_state);
 
         if let Some(evaluation_state) = new_abstract_state.get(&self.qualified_location) {
             let new_evaluations = evaluation_state
@@ -1041,7 +1097,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                                     new_type_union.add_type(
                                         if let Type::Literal(type_literal) = ty.as_ref() {
                                             Arc::new(
-                                                Self::type_instance(
+                                                ExpressionEvaluator::type_instance(
                                                     &new_abstract_state,
                                                     type_literal,
                                                 )
