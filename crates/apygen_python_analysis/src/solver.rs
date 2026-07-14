@@ -1106,6 +1106,53 @@ pub fn evaluate_expression(
     }
 }
 
+pub fn evaluate_program_entity<
+    A: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Debug + Eq + Clone,
+>(
+    abstract_state: &mut A,
+    program_entity: &ProgramEntity,
+    constraint_graph: &ConstraintGraph,
+    specification: &AbstractEnvironmentSpecification,
+) -> Result<(), Infallible> {
+    let solver_state = analysis(
+        &ConstraintSolver::new(
+            program_entity,
+            specification,
+            constraint_graph,
+            abstract_state,
+        ),
+        &mut LogAnalysisObserver::with_prefix(program_entity.location.to_string()),
+    )?;
+
+    let program_evaluation =
+        if let Some(program_evaluation) = solver_state.get(&ConstraintNode::TypeExit) {
+            program_evaluation.proxy.clone()
+        } else {
+            ProgramEvaluation::default()
+        };
+
+    let mut evaluation_state = program_evaluation.get_clone_or_default(&program_entity.location);
+
+    if let Some(exception_program_evaluation) = solver_state.get(&ConstraintNode::ExceptionExit) {
+        let exception_evaluation_state = exception_program_evaluation
+            .proxy
+            .get_clone_or_default(&program_entity.location);
+
+        evaluation_state.evaluations = evaluation_state
+            .evaluations
+            .join(&exception_evaluation_state.evaluations);
+        evaluation_state.raised_exceptions = evaluation_state
+            .raised_exceptions
+            .join(&exception_evaluation_state.raised_exceptions);
+    }
+
+    drop(solver_state);
+
+    abstract_state.insert(program_entity.location.clone(), evaluation_state);
+
+    Ok(())
+}
+
 pub struct ProgramEntityConstraintSolver<
     's,
     S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
@@ -1174,46 +1221,12 @@ impl<
 
         let abstract_environment = self.graph.nodes.get(&node).unwrap();
 
-        let solver_state = analysis(
-            &ConstraintSolver::new(
-                &entity,
-                &abstract_environment.specification,
-                &abstract_environment.constraint_graph,
-                &previous_state,
-            ),
-            &mut LogAnalysisObserver::with_prefix(node.to_string()),
+        evaluate_program_entity(
+            &mut previous_state,
+            entity,
+            &abstract_environment.constraint_graph,
+            &abstract_environment.specification,
         )?;
-
-        let program_evaluation =
-            if let Some(program_evaluation) = solver_state.get(&ConstraintNode::TypeExit) {
-                program_evaluation.proxy.clone()
-            } else {
-                ProgramEvaluation::default()
-            };
-
-        let mut evaluation_state = program_evaluation.get_clone_or_default(&entity.location);
-
-        if let Some(exception_program_evaluation) = solver_state.get(&ConstraintNode::ExceptionExit)
-        {
-            let exception_evaluation_state = exception_program_evaluation
-                .proxy
-                .get_clone_or_default(&entity.location);
-
-            evaluation_state.evaluations = evaluation_state
-                .evaluations
-                .join(&exception_evaluation_state.evaluations);
-            evaluation_state.raised_exceptions = evaluation_state
-                .raised_exceptions
-                .join(&exception_evaluation_state.raised_exceptions);
-        }
-
-        drop(solver_state);
-
-        previous_state
-            .proxy
-            .insert(entity.location.clone(), evaluation_state);
-
-        simplify(&mut previous_state, &entity.location);
 
         Ok(previous_state)
     }
