@@ -36,6 +36,11 @@ pub trait AbstractState {
         key: Self::Key,
         abstract_value: Self::AbstractValue,
     ) -> &mut Self::AbstractValue;
+    fn extend(&mut self, iterator: impl IntoIterator<Item = (Self::Key, Self::AbstractValue)>) {
+        for (key, abstract_value) in iterator {
+            self.insert(key, abstract_value);
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
