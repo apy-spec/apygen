@@ -1060,7 +1060,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
     ) -> Result<Option<Self::AbstractState>, Self::Error> {
         let mut new_abstract_state = abstract_state.clone();
 
-        let guard = self
+        let guards = self
             .constraints()
             .unwrap()
             .constraint_graph
@@ -1070,60 +1070,63 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
             .get(to)
             .unwrap();
 
-        match guard {
-            Guard::IsTrue(expression) => {
-                let eval = self
-                    .evaluator()
-                    .evaluate_expression(&mut new_abstract_state, expression);
+        let mut should_ignore = false;
 
-                if let Some(type_eval) = eval {
-                    if let Some(bool_value) = gen_bool_value(&type_eval.value) {
-                        if !bool_value {
-                            return Ok(None);
+        for guard in guards {
+            match guard {
+                Guard::IsTrue(expression) => {
+                    let eval = self
+                        .evaluator()
+                        .evaluate_expression(&mut new_abstract_state, expression);
+
+                    if let Some(type_eval) = eval {
+                        if let Some(bool_value) = gen_bool_value(&type_eval.value) {
+                            if !bool_value {
+                                should_ignore = true;
+                            }
                         }
                     }
                 }
-            }
-            Guard::IsFalse(expression) => {
-                let eval = self
-                    .evaluator()
-                    .evaluate_expression(&mut new_abstract_state, expression);
+                Guard::IsFalse(expression) => {
+                    let eval = self
+                        .evaluator()
+                        .evaluate_expression(&mut new_abstract_state, expression);
 
-                if let Some(type_eval) = eval {
-                    if let Some(bool_value) = gen_bool_value(&type_eval.value) {
-                        if bool_value {
-                            return Ok(None);
+                    if let Some(type_eval) = eval {
+                        if let Some(bool_value) = gen_bool_value(&type_eval.value) {
+                            if bool_value {
+                                should_ignore = true;
+                            }
                         }
                     }
                 }
-            }
-            Guard::Succeed(expression) => {
-                let eval = self
-                    .evaluator()
-                    .evaluate_expression(&mut new_abstract_state, expression);
+                Guard::Succeed(expression) => {
+                    let eval = self
+                        .evaluator()
+                        .evaluate_expression(&mut new_abstract_state, expression);
 
-                if let Some(type_eval) = eval {
-                    if is_type_unreachable!(type_eval.value) {
-                        return Ok(None);
+                    if let Some(type_eval) = eval {
+                        if is_type_unreachable!(type_eval.value) {
+                            should_ignore = true;
+                        }
+                    }
+                }
+                Guard::Raise { expression, .. } => {
+                    let eval = self
+                        .evaluator()
+                        .evaluate_expression(&mut new_abstract_state, expression);
+
+                    let evaluation_state =
+                        new_abstract_state.get_or_insert_default(self.qualified_location.clone());
+
+                    if let Some(type_eval) = eval {
+                        evaluation_state
+                            .raised_exceptions
+                            .exceptions
+                            .extend(type_eval.effects.exceptions.exceptions)
                     }
                 }
             }
-            Guard::Raise { expression, .. } => {
-                let eval = self
-                    .evaluator()
-                    .evaluate_expression(&mut new_abstract_state, expression);
-
-                let evaluation_state =
-                    new_abstract_state.get_or_insert_default(self.qualified_location.clone());
-
-                if let Some(type_eval) = eval {
-                    evaluation_state
-                        .raised_exceptions
-                        .exceptions
-                        .extend(type_eval.effects.exceptions.exceptions)
-                }
-            }
-            Guard::Multiple(_) => {}
         }
 
         if matches!(to, ConstraintNode::Exit) && self.qualified_location.locations.is_empty() {
@@ -1139,7 +1142,11 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
             }
         }
 
-        Ok(Some(new_abstract_state))
+        if should_ignore {
+            Ok(None)
+        } else {
+            Ok(Some(new_abstract_state))
+        }
     }
 
     fn get_abstract_state<'a>(
@@ -1320,27 +1327,29 @@ pub fn analyse_program_entity<
         &mut LogAnalysisObserver::with_prefix(qualified_location.to_string()),
     )?;
 
-    let program_evaluation =
+    let evaluation_state =
         if let Some(program_evaluation) = solver_state.get(&ConstraintNode::TypeExit) {
-            program_evaluation.proxy.clone()
+            let mut evaluation_state = program_evaluation.get_clone_or_default(qualified_location);
+
+            if let Some(exception_evaluation_state) = solver_state
+                .get(&ConstraintNode::ExceptionExit)
+                .and_then(|program_evaluation| program_evaluation.get(qualified_location))
+            {
+                evaluation_state.evaluations = evaluation_state
+                    .evaluations
+                    .join(&exception_evaluation_state.evaluations);
+                evaluation_state.raised_exceptions = evaluation_state
+                    .raised_exceptions
+                    .join(&exception_evaluation_state.raised_exceptions);
+            }
+
+            evaluation_state
         } else {
-            ProgramEvaluation::default()
+            solver_state
+                .get(&ConstraintNode::ExceptionExit)
+                .and_then(|program_evaluation| program_evaluation.get(qualified_location).cloned())
+                .unwrap_or_default()
         };
-
-    let mut evaluation_state = program_evaluation.get_clone_or_default(qualified_location);
-
-    if let Some(exception_program_evaluation) = solver_state.get(&ConstraintNode::ExceptionExit) {
-        let exception_evaluation_state = exception_program_evaluation
-            .proxy
-            .get_clone_or_default(&qualified_location);
-
-        evaluation_state.evaluations = evaluation_state
-            .evaluations
-            .join(&exception_evaluation_state.evaluations);
-        evaluation_state.raised_exceptions = evaluation_state
-            .raised_exceptions
-            .join(&exception_evaluation_state.raised_exceptions);
-    }
 
     let new_abstract_state = solver_state
         .get(&ConstraintNode::Exit)
@@ -1545,7 +1554,6 @@ mod tests {
         indoc! {r##"
         module:
             add_two@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
-            result@{module[4:0]} = (Never ➤ ({} - Pure - Total))
             #return = (Never ➤ ({} - Pure - Total))
         module[1:4]:
             a@{module[1:12]} = (@class(builtins[1:6]) ➤ ({} - Pure - Total))
@@ -1642,6 +1650,7 @@ mod tests {
         "##},
         indoc! {r##"
         module:
+            foo@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
             #return = (Never ➤ ({} - Pure - Total))
             #raise = {Exception(type=@class(builtins[4:6]), origin=Specified)}
         module[1:4]:
