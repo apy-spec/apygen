@@ -5,7 +5,7 @@ use crate::abstract_environment::{
     WIDTH_LIMIT,
 };
 use crate::constraints::{
-    BinaryOperator, ConstraintNode, DependentGraph, Expression, ExpressionAnnotated,
+    BinaryOperator, Constraint, ConstraintNode, DependentGraph, Expression, ExpressionAnnotated,
     ExpressionAttribute, ExpressionBinary, ExpressionCall, ExpressionClass, ExpressionFunction,
     ExpressionSubscript, ExpressionUnary, ExpressionVariable, Guard, ModuleName, ModuleNode,
     ProgramEntityConstraints, QualifiedLocation, VariableName,
@@ -1024,6 +1024,78 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
     pub fn evaluator(&self) -> ExpressionEvaluator<'_> {
         ExpressionEvaluator::new(self.qualified_location, self.program_entity_constraints)
     }
+
+    pub fn evaluate_constraint(
+        &self,
+        program_evaluation: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        constraint: &Constraint,
+    ) where
+        S: Eq,
+    {
+        match constraint {
+            Constraint::Type(type_constraint) => {
+                let (ty, raised_exceptions) = match self
+                    .evaluator()
+                    .evaluate_expression(program_evaluation, &type_constraint.left)
+                {
+                    Some(type_eval) => (
+                        Deferred::known(type_eval.value),
+                        Deferred::known(type_eval.effects.exceptions),
+                    ),
+                    None => (
+                        Deferred::unknown(imbl::OrdSet::unit(type_constraint.left.clone())),
+                        Deferred::unknown(imbl::OrdSet::unit(type_constraint.left.clone())),
+                    ),
+                };
+
+                let evaluation_state =
+                    program_evaluation.get_or_insert_default(self.qualified_location.clone());
+
+                evaluation_state
+                    .types
+                    .entry(type_constraint.right.clone())
+                    .and_modify(|previous_eval| *previous_eval = previous_eval.join(&ty))
+                    .or_insert(ty);
+                evaluation_state.raised_exceptions =
+                    evaluation_state.raised_exceptions.join(&raised_exceptions);
+            }
+            Constraint::Return(return_constraint) => {
+                let (ty, raised_exceptions) = match self
+                    .evaluator()
+                    .evaluate_expression(program_evaluation, &return_constraint.expression)
+                {
+                    Some(type_eval) => (
+                        Deferred::known(type_eval.value),
+                        Deferred::known(type_eval.effects.exceptions),
+                    ),
+                    None => (
+                        Deferred::unknown(imbl::OrdSet::unit(return_constraint.expression.clone())),
+                        Deferred::unknown(imbl::OrdSet::unit(return_constraint.expression.clone())),
+                    ),
+                };
+
+                let evaluation_state =
+                    program_evaluation.get_or_insert_default(self.qualified_location.clone());
+
+                evaluation_state.return_value = ty;
+                evaluation_state.raised_exceptions = raised_exceptions.join(&raised_exceptions);
+            }
+            Constraint::DefinedVariable(expression) => {
+                let evaluation_state =
+                    program_evaluation.get_or_insert_default(self.qualified_location.clone());
+
+                evaluation_state.defined_variables.names.insert(
+                    expression.name.clone(),
+                    imbl::OrdSet::unit(expression.location.clone()),
+                );
+            }
+            Constraint::Multiple(constraints) => {
+                for constraint in constraints {
+                    self.evaluate_constraint(program_evaluation, constraint);
+                }
+            }
+        }
+    }
 }
 
 impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq>
@@ -1107,61 +1179,8 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                         evaluation_state.raised_exceptions.join(&raised_exceptions);
                 }
             }
-            ConstraintNode::TypeConstraint(constraint) => {
-                let (ty, raised_exceptions) = match self
-                    .evaluator()
-                    .evaluate_expression(&mut program_evaluation, &constraint.left)
-                {
-                    Some(type_eval) => (
-                        Deferred::known(type_eval.value),
-                        Deferred::known(type_eval.effects.exceptions),
-                    ),
-                    None => (
-                        Deferred::unknown(imbl::OrdSet::unit(constraint.left.clone())),
-                        Deferred::unknown(imbl::OrdSet::unit(constraint.left.clone())),
-                    ),
-                };
-
-                let evaluation_state =
-                    program_evaluation.get_or_insert_default(self.qualified_location.clone());
-
-                evaluation_state
-                    .types
-                    .entry(constraint.right.clone())
-                    .and_modify(|previous_eval| *previous_eval = previous_eval.join(&ty))
-                    .or_insert(ty);
-                evaluation_state.raised_exceptions =
-                    evaluation_state.raised_exceptions.join(&raised_exceptions);
-            }
-            ConstraintNode::DefinedVariableConstraint(expression) => {
-                let evaluation_state =
-                    program_evaluation.get_or_insert_default(self.qualified_location.clone());
-
-                evaluation_state.defined_variables.names.insert(
-                    expression.name.clone(),
-                    imbl::OrdSet::unit(expression.location.clone()),
-                );
-            }
-            ConstraintNode::ReturnConstraint(constraint) => {
-                let (ty, raised_exceptions) = match self
-                    .evaluator()
-                    .evaluate_expression(&mut program_evaluation, &constraint.expression)
-                {
-                    Some(type_eval) => (
-                        Deferred::known(type_eval.value),
-                        Deferred::known(type_eval.effects.exceptions),
-                    ),
-                    None => (
-                        Deferred::unknown(imbl::OrdSet::unit(constraint.expression.clone())),
-                        Deferred::unknown(imbl::OrdSet::unit(constraint.expression.clone())),
-                    ),
-                };
-
-                let evaluation_state =
-                    program_evaluation.get_or_insert_default(self.qualified_location.clone());
-
-                evaluation_state.return_value = ty;
-                evaluation_state.raised_exceptions = raised_exceptions.join(&raised_exceptions);
+            ConstraintNode::Constraint(constraint) => {
+                self.evaluate_constraint(&mut program_evaluation, constraint);
             }
             _ => {}
         }
@@ -1188,7 +1207,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
             .get(to)
             .unwrap();
 
-        let mut should_ignore = false;
+        let mut should_ignore = !guards.is_empty();
 
         for guard in guards {
             match guard {
@@ -1200,10 +1219,11 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                     if let Some(type_eval) = eval {
                         if let Some(bool_value) = gen_bool_value(&type_eval.value) {
                             if !bool_value {
-                                should_ignore = true;
+                                continue;
                             }
                         }
                     }
+                    should_ignore = false;
                 }
                 Guard::IsFalse(expression) => {
                     let eval = self
@@ -1213,10 +1233,11 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                     if let Some(type_eval) = eval {
                         if let Some(bool_value) = gen_bool_value(&type_eval.value) {
                             if bool_value {
-                                should_ignore = true;
+                                continue;
                             }
                         }
                     }
+                    should_ignore = false;
                 }
                 Guard::Succeed(expression) => {
                     let eval = self
@@ -1225,9 +1246,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
 
                     if let Some(type_eval) = eval {
                         if is_type_unreachable!(type_eval.value) {
-                            should_ignore = true;
+                            continue;
                         }
                     }
+                    should_ignore = false;
                 }
                 Guard::Raise { expression, .. } => {
                     let eval = self
@@ -1244,6 +1266,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                             .exceptions
                             .extend(type_eval.effects.exceptions.exceptions)
                     }
+                    should_ignore = false;
                 }
             }
         }
@@ -1658,7 +1681,7 @@ mod tests {
         module:
             a@{module[1:0]} = 0
             a@{module[4:4]} = Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] ⊔ #deferred{(a@{module[4:8]}) + (1)}
-            b@{module[6:0]} = Union[@class(int@builtins[1:6]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] ⊔ #deferred{a@{module[6:4]}}
+            b@{module[6:0]} = Never ⊔ #deferred{a@{module[6:4]}}
             #raise = {Exception(type=Any, origin=Unknown)} ⊔ #deferred{a@{module[3:6]}, a@{module[4:4]}, (a@{module[4:8]}) + (1)}
             #return = None
         "##},  // TODO: fix this when operations are implemented
@@ -1673,13 +1696,12 @@ mod tests {
         indoc! {r##"
         module:
             add_two@{module[1:4]} = function(add_two@module[1:4])
-            result@{module[4:0]} = Never ⊔ #deferred{(add_two@{module[4:9]})(42, 67)}
             #raise = {}
-            #return = None
+            #return = Never
         module[1:4]:
             a@{module[1:12]} = @class(int@builtins[1:6])
             b@{module[1:20]} = Never
-            #raise = {} ⊔ #deferred{#annotated(int@{module[1:15]}), (a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]})}
+            #raise = {}
             #return = Never
         "##},
     )]
@@ -1849,10 +1871,7 @@ mod tests {
                 "    #raise = {}\n",
                 abstract_state.raised_exceptions
             ));
-            actual_types.push_str(&format!(
-                "    #return = {}\n",
-                abstract_state.return_value.value
-            ));
+            actual_types.push_str(&format!("    #return = {}\n", abstract_state.return_value));
         }
 
         assert_eq!(expected_types, actual_types, "{actual_types}");

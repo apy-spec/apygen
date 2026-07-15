@@ -20,8 +20,26 @@ modules:
         final: false
         deprecated: false
         visibility: PUBLIC
-        attributes: {}
-        typing_attributes: {}
+        attributes:
+          __init__:
+            kind: FUNCTION
+            signature:
+              return_type: None
+              summary: ""
+              description: ""
+              generics: {}
+              parameters: []
+              raises: []
+              partial: false
+              pure: false
+              deprecated: false
+              visibility: PUBLIC
+            async: false
+            override: false
+            abstract: false
+            final: false
+        typing_attributes:
+          {}
       a:
         kind: VARIABLE
         type:
