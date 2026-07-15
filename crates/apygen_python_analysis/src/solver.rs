@@ -457,20 +457,20 @@ impl<'a> ExpressionEvaluator<'a> {
             analyse_program_entity(
                 abstract_state,
                 self.program_entity_constraints,
-                &expression_function.location,
+                &expression_function.identifier.location,
             )
             .unwrap();
         }
         Some(PyTypeEval::with_default_effects(Type::new_literal(
             TypeLiteral::Function(LiteralFunction {
                 value: Arc::new(FunctionType {
-                    name: Arc::new(Identifier::parse("todo")),
+                    name: expression_function.identifier.name.clone(),
                     location: apygen_analysis::namespace::Location::at_exit(
                         apygen_analysis::namespace::NamespaceLocation::from(Arc::new(
                             QualifiedName::parse("todo"),
                         )),
                     ),
-                    qualified_location: expression_function.location.clone(),
+                    qualified_location: expression_function.identifier.location.clone(),
                     generics: Default::default(),
                     parameters: Default::default(),
                     is_async: expression_function.is_async,
@@ -490,19 +490,19 @@ impl<'a> ExpressionEvaluator<'a> {
         analyse_program_entity(
             abstract_state,
             self.program_entity_constraints,
-            &expression_class.location,
+            &expression_class.identifier.location,
         )
         .unwrap();
         Some(PyTypeEval::with_default_effects(Type::new_literal(
             TypeLiteral::Class(LiteralClass {
                 value: Arc::new(ClassType {
-                    name: Arc::new(Identifier::parse("todo")),
+                    name: expression_class.identifier.name.clone(),
                     location: apygen_analysis::namespace::Location::at_exit(
                         apygen_analysis::namespace::NamespaceLocation::from(Arc::new(
                             QualifiedName::parse("todo"),
                         )),
                     ),
-                    qualified_location: expression_class.location.clone(),
+                    qualified_location: expression_class.identifier.location.clone(),
                     generics: Default::default(),
                     bases: Default::default(),
                     keyword_arguments: Default::default(),

@@ -144,15 +144,37 @@ impl Display for ExpressionOverride {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ExpressionFunction {
+pub struct ProgramEntityIdentifier {
     pub location: QualifiedLocation,
+
+    pub name: VariableName,
+}
+
+impl ProgramEntityIdentifier {
+    pub fn new(location: QualifiedLocation, name: VariableName) -> Self {
+        Self { location, name }
+    }
+}
+
+impl Display for ProgramEntityIdentifier {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.name, self.location)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExpressionFunction {
+    pub identifier: ProgramEntityIdentifier,
 
     pub is_async: bool,
 }
 
 impl ExpressionFunction {
-    pub fn new(location: QualifiedLocation, is_async: bool) -> Self {
-        Self { location, is_async }
+    pub fn new(identifier: ProgramEntityIdentifier, is_async: bool) -> Self {
+        Self {
+            identifier,
+            is_async,
+        }
     }
 }
 
@@ -160,26 +182,26 @@ impl Display for ExpressionFunction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "#function(location={}, async={})",
-            self.location, self.is_async
+            "#function(identifier={}, async={})",
+            self.identifier, self.is_async
         )
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionClass {
-    pub location: QualifiedLocation,
+    pub identifier: ProgramEntityIdentifier,
 }
 
 impl ExpressionClass {
-    pub fn new(location: QualifiedLocation) -> Self {
-        Self { location }
+    pub fn new(identifier: ProgramEntityIdentifier) -> Self {
+        Self { identifier }
     }
 }
 
 impl Display for ExpressionClass {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#class(location={})", self.location)
+        write!(f, "#class(identifier={})", self.identifier)
     }
 }
 
@@ -1702,7 +1724,10 @@ impl<'a> ConstraintsBuilder<'a> {
             location.clone(),
             self.gen_variable_name(program_point, &stmt_function_def.name)?,
             Arc::new(Expression::Function(ExpressionFunction::new(
-                location.clone(),
+                ProgramEntityIdentifier::new(
+                    location.clone(),
+                    Arc::new(Identifier::parse(&stmt_function_def.name.id)),
+                ),
                 stmt_function_def.is_async,
             ))),
         );
@@ -1737,7 +1762,12 @@ impl<'a> ConstraintsBuilder<'a> {
             &mut target_abstract_environment,
             location.clone(),
             self.gen_variable_name(program_point, &stmt_class_def.name)?,
-            Arc::new(Expression::Class(ExpressionClass::new(location.clone()))),
+            Arc::new(Expression::Class(ExpressionClass::new(
+                ProgramEntityIdentifier::new(
+                    location.clone(),
+                    Arc::new(Identifier::parse(&stmt_class_def.name.id)),
+                ),
+            ))),
         );
 
         target_abstract_environment.sub_program_entities.insert(
@@ -3618,7 +3648,7 @@ mod tests {
         digraph "Constraints" {
             "#entry";
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}";
-            "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}";
+            "#function(identifier=add_two@module[1:4], async=false) ⊑ add_two@{module[1:4]}";
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}";
             "#return(None)";
             "#defined(add_two@{module[1:4]})";
@@ -3627,11 +3657,11 @@ mod tests {
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" [label="#succeed(#function(location=module[1:4], async=false))"];
-            "#entry" -> "#exception_exit" [label="#raise(#function(location=module[1:4], async=false))"];
+            "#entry" -> "#function(identifier=add_two@module[1:4], async=false) ⊑ add_two@{module[1:4]}" [label="#succeed(#function(identifier=add_two@module[1:4], async=false))"];
+            "#entry" -> "#exception_exit" [label="#raise(#function(identifier=add_two@module[1:4], async=false))"];
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exception_exit" [label="#raise((add_two@{module[4:9]})(42, 67))"];
-            "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" -> "#defined(add_two@{module[1:4]})" [label=""];
+            "#function(identifier=add_two@module[1:4], async=false) ⊑ add_two@{module[1:4]}" -> "#defined(add_two@{module[1:4]})" [label=""];
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" -> "#defined(result@{module[4:0]})" [label=""];
             "#return(None)" -> "#type_exit" [label=""];
             "#defined(add_two@{module[1:4]})" -> "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" [label="#succeed(add_two@{module[1:4]})"];
@@ -3718,7 +3748,7 @@ mod tests {
         digraph "module" {
             "#entry";
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}";
-            "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}";
+            "#function(identifier=add_two@module[1:4], async=false) ⊑ add_two@{module[1:4]}";
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}";
             "#return(None)";
             "#defined(add_two@{module[1:4]})";
@@ -3727,11 +3757,11 @@ mod tests {
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" [label="#succeed(#function(location=module[1:4], async=false))"];
-            "#entry" -> "#exception_exit" [label="#raise(#function(location=module[1:4], async=false))"];
+            "#entry" -> "#function(identifier=add_two@module[1:4], async=false) ⊑ add_two@{module[1:4]}" [label="#succeed(#function(identifier=add_two@module[1:4], async=false))"];
+            "#entry" -> "#exception_exit" [label="#raise(#function(identifier=add_two@module[1:4], async=false))"];
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
             "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" -> "#exception_exit" [label="#raise((add_two@{module[4:9]})(42, 67))"];
-            "#function(location=module[1:4], async=false) ⊑ add_two@{module[1:4]}" -> "#defined(add_two@{module[1:4]})" [label=""];
+            "#function(identifier=add_two@module[1:4], async=false) ⊑ add_two@{module[1:4]}" -> "#defined(add_two@{module[1:4]})" [label=""];
             "(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}" -> "#defined(result@{module[4:0]})" [label=""];
             "#return(None)" -> "#type_exit" [label=""];
             "#defined(add_two@{module[1:4]})" -> "add_two@{module[1:4]} ⊑ add_two@{module[4:9]}" [label="#succeed(add_two@{module[1:4]})"];
@@ -3791,7 +3821,7 @@ mod tests {
         digraph "module" {
             "#entry";
             "foo@{module[1:4]} ⊑ foo@{module[6:9]}";
-            "#function(location=module[1:4], async=false) ⊑ foo@{module[1:4]}";
+            "#function(identifier=foo@module[1:4], async=false) ⊑ foo@{module[1:4]}";
             "(foo@{module[6:9]})() ⊑ result@{module[6:0]}";
             "5 ⊑ CONST@{module[4:0]}";
             "#return(None)";
@@ -3802,11 +3832,11 @@ mod tests {
             "#type_exit";
             "#exception_exit";
             "#exit";
-            "#entry" -> "#function(location=module[1:4], async=false) ⊑ foo@{module[1:4]}" [label="#succeed(#function(location=module[1:4], async=false))"];
-            "#entry" -> "#exception_exit" [label="#raise(#function(location=module[1:4], async=false))"];
+            "#entry" -> "#function(identifier=foo@module[1:4], async=false) ⊑ foo@{module[1:4]}" [label="#succeed(#function(identifier=foo@module[1:4], async=false))"];
+            "#entry" -> "#exception_exit" [label="#raise(#function(identifier=foo@module[1:4], async=false))"];
             "foo@{module[1:4]} ⊑ foo@{module[6:9]}" -> "(foo@{module[6:9]})() ⊑ result@{module[6:0]}" [label="#succeed((foo@{module[6:9]})())"];
             "foo@{module[1:4]} ⊑ foo@{module[6:9]}" -> "#exception_exit" [label="#raise((foo@{module[6:9]})())"];
-            "#function(location=module[1:4], async=false) ⊑ foo@{module[1:4]}" -> "#defined(foo@{module[1:4]})" [label=""];
+            "#function(identifier=foo@module[1:4], async=false) ⊑ foo@{module[1:4]}" -> "#defined(foo@{module[1:4]})" [label=""];
             "(foo@{module[6:9]})() ⊑ result@{module[6:0]}" -> "#defined(result@{module[6:0]})" [label=""];
             "5 ⊑ CONST@{module[4:0]}" -> "#defined(CONST@{module[4:0]})" [label=""];
             "#return(None)" -> "#type_exit" [label=""];
