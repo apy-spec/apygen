@@ -1736,7 +1736,8 @@ mod tests {
 
         let program_evaluation = analysis(&solver, &mut LogAnalysisObserver::default())
             .expect("analysis should work")
-            .abstract_states[&ModuleNode::Exit];
+            .abstract_states[&ModuleNode::Exit]
+            .clone();
 
         let mut actual_types = String::new();
         for (qualified_location, abstract_state) in &program_evaluation.states {
