@@ -688,14 +688,21 @@ impl ConstraintGraph {
     }
 
     pub fn dot(&self, graph_name: &str) -> String {
-        let mut nodes: imbl::OrdSet<&ConstraintNode> = imbl::OrdSet::new();
-        let mut edges: imbl::OrdMap<(&ConstraintNode, &ConstraintNode), &imbl::OrdSet<Guard>> =
-            imbl::OrdMap::new();
+        let mut nodes: imbl::OrdSet<String> = imbl::OrdSet::new();
+        let mut edges: imbl::OrdMap<(String, String), Vec<String>> = imbl::OrdMap::new();
         for (from, tos) in &self.edges {
+            let from_string = from.to_string().replace('"', r#"\""#);
+            nodes.insert(from_string.clone());
             for (to, guards) in tos {
-                nodes.insert(from);
-                nodes.insert(to);
-                edges.insert((from, to), guards);
+                let to_string = to.to_string().replace('"', r#"\""#);
+                nodes.insert(to_string.clone());
+                edges.insert(
+                    (from_string.clone(), to_string),
+                    guards
+                        .iter()
+                        .map(|guard| guard.to_string().replace('"', r#"\""#))
+                        .collect(),
+                );
             }
         }
 
