@@ -1,5 +1,5 @@
 use crate::abstract_environment::{
-    BUILTINS_MODULE, ClassType, DEPTH_LIMIT, Exception, ExceptionOrigin, FunctionType,
+    BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Exception, ExceptionOrigin, FunctionType,
     LiteralClass, LiteralFunction, LiteralMethod, RaisedExceptions, StructuralDepth,
     StructuralWidth, TYPES_MODULE, Type, TypeInstance2, TypeLiteral, TypeUnion, WIDTH_LIMIT,
 };
@@ -69,6 +69,14 @@ impl<T> Deferred<T> {
     pub fn as_value(&self) -> Option<&T> {
         if self.expressions.is_empty() {
             Some(&self.value)
+        } else {
+            None
+        }
+    }
+
+    pub fn to_value(self) -> Option<T> {
+        if self.expressions.is_empty() {
+            Some(self.value)
         } else {
             None
         }
@@ -221,26 +229,29 @@ impl<'a> ExpressionEvaluator<'a> {
 
         let locations = evaluation_state.defined_variables.names.get(name)?;
 
-        let mut base = Type::Never;
+        let ty = evaluation_state
+            .types
+            .get(&Expression::Variable(ExpressionVariable::new(
+                name.clone(),
+                locations.get_min().unwrap().clone(),
+            )))?
+            .as_value()?;
 
-        for location in locations {
-            base = base.join(
-                evaluation_state
-                    .types
-                    .get(&Expression::Variable(ExpressionVariable::new(
-                        name.clone(),
-                        location.clone(),
-                    )))?
-                    .as_value()?,
-            );
-        }
-
-        if base == Type::Never {
+        let Type::Literal(type_literal) = ty else {
             return None;
-        }
+        };
+
+        let base = match type_literal.as_ref() {
+            TypeLiteral::Class(literal_class) => Base::Class(literal_class.clone()),
+            TypeLiteral::TypeAlias(literal_type_alias) => {
+                Base::TypeAlias(literal_type_alias.clone())
+            }
+            TypeLiteral::Generic(literal_generic) => Base::Generic(literal_generic.clone()),
+            _ => return None,
+        };
 
         Some(TypeInstance2 {
-            base: Arc::new(base),
+            base,
             arguments: imbl::Vector::new(),
         })
     }
@@ -437,9 +448,22 @@ impl<'a> ExpressionEvaluator<'a> {
         let annotation_eval =
             self.evaluate_expression(abstract_state, &expression_annotated.annotation)?;
 
+        let Type::Literal(type_literal) = annotation_eval.value else {
+            return None;
+        };
+
+        let base = match type_literal.as_ref() {
+            TypeLiteral::Class(literal_class) => Base::Class(literal_class.clone()),
+            TypeLiteral::TypeAlias(literal_type_alias) => {
+                Base::TypeAlias(literal_type_alias.clone())
+            }
+            TypeLiteral::Generic(literal_generic) => Base::Generic(literal_generic.clone()),
+            _ => return None,
+        };
+
         Some(PyTypeEval::with_default_effects(Type::Instance2(
             TypeInstance2 {
-                base: Arc::new(annotation_eval.value.clone()),
+                base,
                 arguments: imbl::Vector::new(),
             },
         )))
@@ -470,7 +494,7 @@ impl<'a> ExpressionEvaluator<'a> {
                             QualifiedName::parse("todo"),
                         )),
                     ),
-                    qualified_location: expression_function.identifier.location.clone(),
+                    identifier: expression_function.identifier.clone(),
                     generics: Default::default(),
                     parameters: Default::default(),
                     is_async: expression_function.is_async,
@@ -502,7 +526,7 @@ impl<'a> ExpressionEvaluator<'a> {
                             QualifiedName::parse("todo"),
                         )),
                     ),
-                    qualified_location: expression_class.identifier.location.clone(),
+                    identifier: expression_class.identifier.clone(),
                     generics: Default::default(),
                     bases: Default::default(),
                     keyword_arguments: Default::default(),
@@ -526,7 +550,7 @@ impl<'a> ExpressionEvaluator<'a> {
         match value_ty {
             Type::Instance2(type_instance) => self.evaluate_attributes(
                 abstract_state,
-                &type_instance.base,
+                &type_instance.base.as_type(),
                 name,
                 Some(&type_instance.arguments),
             ),
@@ -549,14 +573,14 @@ impl<'a> ExpressionEvaluator<'a> {
                     // TODO: add support for descriptors
                     for class in method_resolution_order(literal_class)? {
                         let evaluation_state = if let Some(evaluation_state) =
-                            abstract_state.get(&class.value.qualified_location)
+                            abstract_state.get(&class.value.identifier.location)
                         {
                             evaluation_state
                         } else {
                             analyse_program_entity(
                                 abstract_state,
                                 self.program_entity_constraints,
-                                &class.value.qualified_location,
+                                &class.value.identifier.location,
                             )
                             .unwrap()
                         };
@@ -678,14 +702,14 @@ impl<'a> ExpressionEvaluator<'a> {
         match literal.as_ref() {
             TypeLiteral::Function(literal_function) => {
                 let evaluation_state = if let Some(evaluation_state) =
-                    abstract_state.get(&literal_function.value.qualified_location)
+                    abstract_state.get(&literal_function.value.identifier.location)
                 {
                     evaluation_state
                 } else {
                     analyse_program_entity(
                         abstract_state,
                         self.program_entity_constraints,
-                        &literal_function.value.qualified_location,
+                        &literal_function.value.identifier.location,
                     )
                     .unwrap()
                 };
@@ -696,12 +720,12 @@ impl<'a> ExpressionEvaluator<'a> {
                         .with_exceptions(evaluation_state.raised_exceptions.as_value()?.clone()),
                 ))
             }
-            TypeLiteral::Class(_) => Some(PyTypeEval::with_default_effects(Type::Instance2(
-                TypeInstance2 {
-                    base: Arc::new(literal_ty.clone()),
+            TypeLiteral::Class(literal_class) => Some(PyTypeEval::with_default_effects(
+                Type::Instance2(TypeInstance2 {
+                    base: Base::Class(literal_class.clone()),
                     arguments: imbl::Vector::new(),
-                },
-            ))),
+                }),
+            )),
             _ => None, // TODO: add support for classes, etc
         }
     }
@@ -1373,14 +1397,13 @@ pub fn analyse_program_entity<
                 .unwrap_or_default()
         };
 
-    let new_abstract_state = solver_state
-        .get(&ConstraintNode::Exit)
-        .cloned()
-        .expect("should always exist");
+    let new_abstract_state = solver_state.get(&ConstraintNode::Exit).cloned(); // TODO: should always exist
 
     drop(solver_state);
 
-    abstract_state.proxy = new_abstract_state.proxy;
+    if let Some(new_abstract_state) = new_abstract_state {
+        abstract_state.proxy = new_abstract_state.proxy;
+    }
 
     Ok(abstract_state.insert(qualified_location.clone(), evaluation_state))
 }
@@ -1562,7 +1585,7 @@ mod tests {
         module:
             a@{module[1:0]} = 0
             a@{module[4:4]} = Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] ⊔ #deferred{(a@{module[4:8]}) + (1)}
-            b@{module[6:0]} = Union[@class(builtins[1:6]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] ⊔ #deferred{a@{module[6:4]}}
+            b@{module[6:0]} = Union[@class(int@builtins[1:6]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] ⊔ #deferred{a@{module[6:4]}}
             #raise = {Exception(type=Any, origin=Unknown)} ⊔ #deferred{a@{module[3:6]}, a@{module[4:4]}, (a@{module[4:8]}) + (1)}
             #return = None
         "##},  // TODO: fix this when operations are implemented
@@ -1576,13 +1599,14 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            add_two@{module[1:4]} = function(module[1:4])
+            add_two@{module[1:4]} = function(add_two@module[1:4])
+            result@{module[4:0]} = Never ⊔ #deferred{(add_two@{module[4:9]})(42, 67)}
             #raise = {}
-            #return = Never
+            #return = None
         module[1:4]:
-            a@{module[1:12]} = @class(builtins[1:6])
+            a@{module[1:12]} = @class(int@builtins[1:6])
             b@{module[1:20]} = Never
-            #raise = {}
+            #raise = {} ⊔ #deferred{#annotated(int@{module[1:15]}), (a@{module[1:4][2:11]}) + (b@{module[1:4][2:15]})}
             #return = Never
         "##},
     )]
@@ -1595,7 +1619,7 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = class(module[1:6])
+            A@{module[1:6]} = class(A@module[1:6])
             result@{module[4:0]} = 5
             #raise = {}
             #return = None
@@ -1615,8 +1639,8 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = class(module[1:6])
-            a@{module[4:0]} = @class(module[1:6])
+            A@{module[1:6]} = class(A@module[1:6])
+            a@{module[4:0]} = @class(A@module[1:6])
             result@{module[5:0]} = 5
             #raise = {}
             #return = None
@@ -1636,12 +1660,12 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = class(module[1:6])
-            result@{module[5:0]} = function(module[1:6][2:8])
+            A@{module[1:6]} = class(A@module[1:6])
+            result@{module[5:0]} = function(foo@module[1:6][2:8])
             #raise = {}
             #return = None
         module[1:6]:
-            foo@{module[1:6][2:8]} = function(module[1:6][2:8])
+            foo@{module[1:6][2:8]} = function(foo@module[1:6][2:8])
             #raise = {}
             #return = None
         module[1:6][2:8]:
@@ -1660,13 +1684,13 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = class(module[1:6])
-            a@{module[5:0]} = @class(module[1:6])
-            result@{module[6:0]} = method(class(module[1:6])[], function(module[1:6][2:8]))
+            A@{module[1:6]} = class(A@module[1:6])
+            a@{module[5:0]} = @class(A@module[1:6])
+            result@{module[6:0]} = method(class(A@module[1:6])[], function(foo@module[1:6][2:8]))
             #raise = {}
             #return = None
         module[1:6]:
-            foo@{module[1:6][2:8]} = function(module[1:6][2:8])
+            foo@{module[1:6][2:8]} = function(foo@module[1:6][2:8])
             #raise = {}
             #return = None
         module[1:6][2:8]:
@@ -1685,11 +1709,11 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            foo@{module[1:4]} = function(module[1:4])
-            #raise = {Exception(type=@class(builtins[4:6]), origin=Specified)}
+            foo@{module[1:4]} = function(foo@module[1:4])
+            #raise = {Exception(type=@class(NameError@builtins[4:6]), origin=Specified)}
             #return = Never
         module[1:4]:
-            #raise = {Exception(type=@class(builtins[4:6]), origin=Specified)}
+            #raise = {Exception(type=@class(NameError@builtins[4:6]), origin=Specified)}
             #return = Never
         "##},
     )]
@@ -1705,7 +1729,7 @@ mod tests {
         indoc! {r##"
         module:
             CONST@{module[4:0]} = 5
-            foo@{module[1:4]} = function(module[1:4])
+            foo@{module[1:4]} = function(foo@module[1:4])
             result@{module[6:0]} = 5
             #raise = {}
             #return = None

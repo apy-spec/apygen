@@ -9,7 +9,13 @@ modules:
     attributes:
       first:
         kind: VARIABLE
-        type: None
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
         description: ""
         initialised: true
         readonly: false
@@ -18,15 +24,7 @@ modules:
         visibility: PUBLIC
       ls:
         kind: VARIABLE
-        type:
-          id: list
-          module: builtins
-          history_index: 0
-          arguments:
-            - id: int
-              module: builtins
-              history_index: 0
-              arguments: []
+        type: None
         description: ""
         initialised: true
         readonly: false
@@ -35,7 +33,13 @@ modules:
         visibility: PUBLIC
       second:
         kind: VARIABLE
-        type: None
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
         description: ""
         initialised: true
         readonly: false

@@ -252,7 +252,7 @@ mod tests {
         AbstractEnvironment, Attribute, ClassType, LiteralClass, LocalAttribute, Sourced, Type,
         TypeLiteral,
     };
-    use crate::constraints::QualifiedLocation;
+    use crate::constraints::{ProgramEntityIdentifier, QualifiedLocation};
     use crate::genkill::expressions::literal_class::method_resolution_order;
     use apy::v1::{Identifier, QualifiedName};
     use apygen_analysis::cfg::ProgramPoint;
@@ -318,14 +318,17 @@ mod tests {
                 Arc::new(Attribute::Local(LocalAttribute::new(Sourced::inferred(
                     Arc::new(Type::Literal(Arc::new(TypeLiteral::Class(LiteralClass {
                         value: Arc::new(ClassType {
-                            name: identifier,
+                            name: identifier.clone(),
                             location: Location {
                                 namespace_location: namespace_location.clone(),
                                 program_point: current_point,
                             },
-                            qualified_location: QualifiedLocation::new(
-                                namespace_location.module.clone(),
-                                Default::default(),
+                            identifier: ProgramEntityIdentifier::new(
+                                QualifiedLocation::new(
+                                    namespace_location.module.clone(),
+                                    Default::default(),
+                                ),
+                                identifier,
                             ),
                             generics: OrdMap::new(),
                             bases: bases

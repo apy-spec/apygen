@@ -1643,31 +1643,57 @@ impl<'a> ConstraintsBuilder<'a> {
             nodes::Expr::BoolOp(expr_bool_op) => {
                 self.evaluate_expr_bool_op(namespace, program_point, expr_bool_op)
             }
-            nodes::Expr::Named(_) => todo!(),
+            nodes::Expr::Named(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
             nodes::Expr::BinOp(expr_bin_op) => {
                 self.evaluate_expr_bin_op(namespace, program_point, expr_bin_op)
             }
             nodes::Expr::UnaryOp(expr_unary_op) => {
                 self.evaluate_expr_unary_op(namespace, program_point, expr_unary_op)
             }
-            nodes::Expr::Lambda(_) => todo!(),
-            nodes::Expr::If(_) => todo!(),
-            nodes::Expr::Dict(_) => todo!(),
-            nodes::Expr::Set(_) => todo!(),
-            nodes::Expr::ListComp(_) => todo!(),
-            nodes::Expr::SetComp(_) => todo!(),
-            nodes::Expr::DictComp(_) => todo!(),
-            nodes::Expr::Generator(_) => todo!(),
-            nodes::Expr::Await(_) => todo!(),
-            nodes::Expr::Yield(_) => todo!(),
-            nodes::Expr::YieldFrom(_) => todo!(),
+            nodes::Expr::Lambda(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::If(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::Dict(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::Set(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::ListComp(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::SetComp(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::DictComp(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::Generator(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::Await(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::Yield(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::YieldFrom(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
             nodes::Expr::Compare(expr_compare) => {
                 self.evaluate_expr_compare(namespace, program_point, expr_compare)
             }
             nodes::Expr::Call(expr_call) => {
                 self.evaluate_expr_call(namespace, program_point, expr_call)
             }
-            nodes::Expr::FString(_) => todo!(),
+            nodes::Expr::FString(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
             nodes::Expr::StringLiteral(expr_string_literal) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_string_literal(expr_string_literal),
             )),
@@ -1692,12 +1718,22 @@ impl<'a> ConstraintsBuilder<'a> {
             nodes::Expr::Subscript(expr_subscript) => {
                 self.evaluate_expr_subscript(namespace, program_point, expr_subscript)
             }
-            nodes::Expr::Starred(_) => todo!(),
+            nodes::Expr::Starred(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
             nodes::Expr::Name(expr_name) => self.evaluate_name(program_point, expr_name),
-            nodes::Expr::List(_) => todo!(),
-            nodes::Expr::Tuple(_) => todo!(),
-            nodes::Expr::Slice(_) => todo!(),
-            nodes::Expr::IpyEscapeCommand(_) => todo!(),
+            nodes::Expr::List(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::Tuple(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::Slice(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
+            nodes::Expr::IpyEscapeCommand(_) => Ok(ExpressionEval::only_value(
+                self.evaluate_expr_none_literal(),
+            )),
         }
     }
 
@@ -1969,7 +2005,7 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut current_nodes = imbl::OrdSet::default();
         for target_expr in &stmt_assign.targets {
             let Ok(target) = AssignmentTarget::try_from(target_expr) else {
-                todo!("add the right error");
+                continue; // TODO: fix
             };
 
             match target {
@@ -1981,11 +2017,11 @@ impl<'a> ConstraintsBuilder<'a> {
                         type_expression.clone(),
                     );
                 }
-                AssignmentTarget::Attribute { .. } => todo!(),
-                AssignmentTarget::Subscript { .. } => todo!(),
-                AssignmentTarget::Starred(_) => todo!(),
-                AssignmentTarget::Tuple(_) => todo!(),
-                AssignmentTarget::List(_) => todo!(),
+                AssignmentTarget::Attribute { .. } => {}
+                AssignmentTarget::Subscript { .. } => {}
+                AssignmentTarget::Starred(_) => {}
+                AssignmentTarget::Tuple(_) => {}
+                AssignmentTarget::List(_) => {}
             }
 
             current_nodes.extend(drain(
@@ -2037,8 +2073,8 @@ impl<'a> ConstraintsBuilder<'a> {
                     type_expression.clone(),
                 );
             }
-            AssignmentTarget::Attribute { .. } => todo!(),
-            AssignmentTarget::Subscript { .. } => todo!(),
+            AssignmentTarget::Attribute { .. } => {}
+            AssignmentTarget::Subscript { .. } => {}
             AssignmentTarget::Starred(_) => todo!("impossible"),
             AssignmentTarget::Tuple(_) => todo!("impossible"),
             AssignmentTarget::List(_) => todo!("impossible"),
@@ -2642,10 +2678,10 @@ pub fn analyse_program<C: CfgImporter + Sync>(
         let analysed_modules = worklist
             .drain()
             .par_bridge()
-            .map(|module_name| {
-                let cfg = cfg_importer
-                    .import_cfg(&module_name)
-                    .expect("Should build CFG");
+            .filter_map(|module_name| {
+                let Some(cfg) = cfg_importer.import_cfg(&module_name) else {
+                    return None;
+                };
 
                 let parent_state = if module_name != builtins_module_name {
                     Some(builtin_parent_state)
@@ -2653,7 +2689,7 @@ pub fn analyse_program<C: CfgImporter + Sync>(
                     None
                 };
 
-                (
+                Some((
                     ModuleNode::Module(module_name.clone()),
                     analyse_cfg(
                         ProgramEntity::new(
@@ -2664,7 +2700,7 @@ pub fn analyse_program<C: CfgImporter + Sync>(
                         &cfg,
                         parent_state,
                     ),
-                )
+                ))
             })
             .collect::<HashMap<_, _>>();
 

@@ -1,6 +1,6 @@
 use crate::analysis::lattice::ContextualLattice;
 use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
-use crate::constraints::QualifiedLocation;
+use crate::constraints::{ProgramEntityIdentifier, QualifiedLocation};
 pub use apy::OneOrMany;
 pub use apy::v1::{GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName};
 use apygen_analysis::fmt::fmt_display_wrapped;
@@ -326,7 +326,7 @@ pub struct FunctionType {
 
     pub location: Location<QualifiedName>,
 
-    pub qualified_location: QualifiedLocation,
+    pub identifier: ProgramEntityIdentifier,
 
     pub generics: imbl::OrdMap<String, GenericType>,
 
@@ -337,7 +337,7 @@ pub struct FunctionType {
 
 impl Display for FunctionType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "function({})", self.qualified_location)
+        write!(f, "function({})", self.identifier)
     }
 }
 
@@ -430,7 +430,7 @@ pub struct ClassType {
 
     pub location: Location<QualifiedName>,
 
-    pub qualified_location: QualifiedLocation,
+    pub identifier: ProgramEntityIdentifier,
 
     pub generics: imbl::OrdMap<String, GenericType>,
 
@@ -443,7 +443,7 @@ pub struct ClassType {
 
 impl Display for ClassType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "class({})", self.qualified_location)
+        write!(f, "class({})", self.identifier)
     }
 }
 
@@ -1161,11 +1161,7 @@ pub struct LiteralOverloadedFunction {
 impl Display for LiteralOverloadedFunction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if let Some(target) = &self.value.target {
-            write!(
-                f,
-                "overloaded_function({})",
-                target.value.qualified_location
-            )
+            write!(f, "overloaded_function({})", target.value.identifier)
         } else {
             write!(f, "overloaded_function")
         }
@@ -1525,8 +1521,59 @@ impl Display for TypeInstance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Base {
+    Class(LiteralClass),
+    TypeAlias(LiteralTypeAlias),
+    Generic(LiteralGeneric),
+}
+
+impl Base {
+    pub fn as_type(&self) -> Type {
+        match self {
+            Base::Class(class) => Type::Literal(Arc::new(TypeLiteral::Class(class.clone()))),
+            Base::TypeAlias(type_alias) => {
+                Type::Literal(Arc::new(TypeLiteral::TypeAlias(type_alias.clone())))
+            }
+            Base::Generic(generic) => {
+                Type::Literal(Arc::new(TypeLiteral::Generic(generic.clone())))
+            }
+        }
+    }
+}
+
+impl Display for Base {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Base::Class(class) => write!(f, "{}", class),
+            Base::TypeAlias(type_alias) => write!(f, "{}", type_alias),
+            Base::Generic(generic) => write!(f, "{}", generic),
+        }
+    }
+}
+
+impl StructuralDepth for Base {
+    fn depth(&self) -> usize {
+        match self {
+            Base::Class(class) => class.depth(),
+            Base::TypeAlias(type_alias) => type_alias.depth(),
+            Base::Generic(generic) => generic.depth(),
+        }
+    }
+}
+
+impl StructuralWidth for Base {
+    fn width(&self) -> usize {
+        match self {
+            Base::Class(class) => class.width(),
+            Base::TypeAlias(type_alias) => type_alias.width(),
+            Base::Generic(generic) => generic.width(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypeInstance2 {
-    pub base: Arc<Type>,
+    pub base: Base,
     pub arguments: imbl::Vector<Arc<Type>>,
 }
 

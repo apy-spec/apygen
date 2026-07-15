@@ -3,13 +3,7 @@ modules:
   simple_class_inheritance:
     summary: ""
     description: ""
-    raises:
-      - exception_type:
-          id: TypeError
-          module: builtins
-          history_index: 0
-          arguments: []
-        description: ""
+    raises: []
     partial: false
     visibility: PUBLIC
     attributes:
@@ -26,182 +20,33 @@ modules:
         final: false
         deprecated: false
         visibility: PUBLIC
-        attributes:
-          __init__:
-            kind: FUNCTION
-            signature:
-              return_type: None
-              summary: ""
-              description: ""
-              generics: {}
-              parameters:
-                - name: self
-                  kind: POSITIONAL_OR_KEYWORD
-                  type:
-                    id: Any
-                    module: typing
-                    history_index: 0
-                    arguments: []
-                  description: ""
-                  optional: false
-                  deprecated: false
-                - name: x
-                  kind: POSITIONAL_OR_KEYWORD
-                  type:
-                    id: int
-                    module: builtins
-                    history_index: 0
-                    arguments: []
-                  description: ""
-                  optional: false
-                  deprecated: false
-                - name: "y"
-                  kind: POSITIONAL_OR_KEYWORD
-                  type:
-                    id: int
-                    module: builtins
-                    history_index: 0
-                    arguments: []
-                  description: ""
-                  optional: false
-                  deprecated: false
-              raises:
-                []
-              partial: false
-              pure: false
-              deprecated: false
-              visibility: PUBLIC
-            async: false
-            override: false
-            abstract: false
-            final: false
-          x:
-            kind: VARIABLE
-            type:
-              id: int
-              module: builtins
-              history_index: 0
-              arguments: []
-            description: ""
-            initialised: true
-            readonly: false
-            final: false
-            deprecated: false
-            visibility: PUBLIC
-          "y":
-            kind: VARIABLE
-            type:
-              id: int
-              module: builtins
-              history_index: 0
-              arguments: []
-            description: ""
-            initialised: true
-            readonly: false
-            final: false
-            deprecated: false
-            visibility: PUBLIC
-        typing_attributes:
-          {}
+        attributes: {}
+        typing_attributes: {}
       Point3D:
         kind: CLASS
         summary: ""
         description: ""
         generics: {}
-        bases:
-          - id: Point2D
-            module: simple_class_inheritance
-            history_index: 0
-            arguments: []
-        keyword_arguments:
-          {}
+        bases: []
+        keyword_arguments: {}
         raises: []
         partial: false
         abstract: false
         final: false
         deprecated: false
         visibility: PUBLIC
-        attributes:
-          __init__:
-            kind: FUNCTION
-            signature:
-              return_type: None
-              summary: ""
-              description: ""
-              generics: {}
-              parameters:
-                - name: self
-                  kind: POSITIONAL_OR_KEYWORD
-                  type:
-                    id: Any
-                    module: typing
-                    history_index: 0
-                    arguments: []
-                  description: ""
-                  optional: false
-                  deprecated: false
-                - name: x
-                  kind: POSITIONAL_OR_KEYWORD
-                  type:
-                    id: int
-                    module: builtins
-                    history_index: 0
-                    arguments: []
-                  description: ""
-                  optional: false
-                  deprecated: false
-                - name: "y"
-                  kind: POSITIONAL_OR_KEYWORD
-                  type:
-                    id: int
-                    module: builtins
-                    history_index: 0
-                    arguments: []
-                  description: ""
-                  optional: false
-                  deprecated: false
-                - name: z
-                  kind: POSITIONAL_OR_KEYWORD
-                  type:
-                    id: int
-                    module: builtins
-                    history_index: 0
-                    arguments: []
-                  description: ""
-                  optional: false
-                  deprecated: false
-              raises:
-                []
-              partial: false
-              pure: false
-              deprecated: false
-              visibility: PUBLIC
-            async: false
-            override: false
-            abstract: false
-            final: false
-          z:
-            kind: VARIABLE
-            type:
-              id: int
-              module: builtins
-              history_index: 0
-              arguments: []
-            description: ""
-            initialised: true
-            readonly: false
-            final: false
-            deprecated: false
-            visibility: PUBLIC
-        typing_attributes:
-          {}
+        attributes: {}
+        typing_attributes: {}
       a:
         kind: VARIABLE
         type:
-          id: int
-          module: builtins
-          history_index: 0
-          arguments: []
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "3"
         description: ""
         initialised: true
         readonly: false
@@ -211,10 +56,13 @@ modules:
       b:
         kind: VARIABLE
         type:
-          id: int
-          module: builtins
-          history_index: 0
-          arguments: []
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "4"
         description: ""
         initialised: true
         readonly: false
@@ -224,62 +72,13 @@ modules:
       c:
         kind: VARIABLE
         type:
-          id: int
-          module: builtins
-          history_index: 0
-          arguments: []
-        description: ""
-        initialised: true
-        readonly: false
-        final: false
-        deprecated: false
-        visibility: PUBLIC
-      point:
-        kind: VARIABLE
-        type:
-          id: Point3D
-          module: simple_class_inheritance
-          history_index: 0
-          arguments: []
-        description: ""
-        initialised: true
-        readonly: false
-        final: false
-        deprecated: false
-        visibility: PUBLIC
-      point_x:
-        kind: VARIABLE
-        type:
-          id: int
-          module: builtins
-          history_index: 0
-          arguments: []
-        description: ""
-        initialised: true
-        readonly: false
-        final: false
-        deprecated: false
-        visibility: PUBLIC
-      point_y:
-        kind: VARIABLE
-        type:
-          id: int
-          module: builtins
-          history_index: 0
-          arguments: []
-        description: ""
-        initialised: true
-        readonly: false
-        final: false
-        deprecated: false
-        visibility: PUBLIC
-      point_z:
-        kind: VARIABLE
-        type:
-          id: int
-          module: builtins
-          history_index: 0
-          arguments: []
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "5"
         description: ""
         initialised: true
         readonly: false

@@ -3,23 +3,20 @@ modules:
   simple_function_argument_inference:
     summary: ""
     description: ""
-    raises:
-      - exception_type:
-          id: Any
-          module: typing
-          history_index: 0
-          arguments: []
-        description: ""
+    raises: []
     partial: false
     visibility: PUBLIC
     attributes:
       a:
         kind: VARIABLE
         type:
-          id: int
-          module: builtins
-          history_index: 0
-          arguments: []
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "3"
         description: ""
         initialised: true
         readonly: false
@@ -30,41 +27,17 @@ modules:
         kind: FUNCTION
         signature:
           return_type:
-            id: Any
-            module: typing
-            history_index: 0
-            arguments: []
+            reference:
+              id: Never
+              module: typing
+              history_index: 0
+            arguments:
+              []
           summary: ""
           description: ""
           generics: {}
-          parameters:
-            - name: x
-              kind: POSITIONAL_OR_KEYWORD
-              type:
-                id: Any
-                module: typing
-                history_index: 0
-                arguments: []
-              description: ""
-              optional: false
-              deprecated: false
-            - name: "y"
-              kind: POSITIONAL_OR_KEYWORD
-              type:
-                id: Any
-                module: typing
-                history_index: 0
-                arguments: []
-              description: ""
-              optional: false
-              deprecated: false
-          raises:
-            - exception_type:
-                id: Any
-                module: typing
-                history_index: 0
-                arguments: []
-              description: ""
+          parameters: []
+          raises: []
           partial: false
           pure: false
           deprecated: false
@@ -76,23 +49,13 @@ modules:
       b:
         kind: VARIABLE
         type:
-          id: int
-          module: builtins
-          history_index: 0
-          arguments: []
-        description: ""
-        initialised: true
-        readonly: false
-        final: false
-        deprecated: false
-        visibility: PUBLIC
-      result:
-        kind: VARIABLE
-        type:
-          id: Any
-          module: typing
-          history_index: 0
-          arguments: []
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "4"
         description: ""
         initialised: true
         readonly: false

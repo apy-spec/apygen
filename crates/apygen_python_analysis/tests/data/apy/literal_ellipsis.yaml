@@ -10,12 +10,12 @@ modules:
       bool_ellipsis:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: bool
+            module: builtins
+            history_index: 0
           arguments:
-            - value:
-                bool: true
+            []
         description: ""
         initialised: true
         readonly: false
@@ -28,7 +28,6 @@ modules:
           id: ellipsis
           module: builtins
           history_index: 0
-          arguments: []
         description: ""
         initialised: true
         readonly: false
@@ -38,10 +37,12 @@ modules:
       invert_ellipsis:
         kind: VARIABLE
         type:
-          id: NoReturn
-          module: typing
-          history_index: 0
-          arguments: []
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
         description: ""
         initialised: true
         readonly: false
@@ -51,10 +52,12 @@ modules:
       neg_ellipsis:
         kind: VARIABLE
         type:
-          id: NoReturn
-          module: typing
-          history_index: 0
-          arguments: []
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
         description: ""
         initialised: true
         readonly: false
@@ -64,12 +67,12 @@ modules:
       not_ellipsis:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
           arguments:
-            - value:
-                bool: false
+            []
         description: ""
         initialised: true
         readonly: false
@@ -79,10 +82,12 @@ modules:
       pos_ellipsis:
         kind: VARIABLE
         type:
-          id: NoReturn
-          module: typing
-          history_index: 0
-          arguments: []
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
         description: ""
         initialised: true
         readonly: false

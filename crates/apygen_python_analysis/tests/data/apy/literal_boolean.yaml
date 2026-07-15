@@ -10,9 +10,10 @@ modules:
       add_false_false:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
           arguments:
             - value:
                 int: "0"
@@ -25,9 +26,10 @@ modules:
       add_false_true:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
           arguments:
             - value:
                 int: "1"
@@ -40,9 +42,10 @@ modules:
       add_true_false:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
           arguments:
             - value:
                 int: "1"
@@ -55,9 +58,10 @@ modules:
       add_true_true:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
           arguments:
             - value:
                 int: "2"
@@ -70,12 +74,12 @@ modules:
       bool_false:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: bool
+            module: builtins
+            history_index: 0
           arguments:
-            - value:
-                bool: false
+            []
         description: ""
         initialised: true
         readonly: false
@@ -85,12 +89,12 @@ modules:
       bool_true:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: bool
+            module: builtins
+            history_index: 0
           arguments:
-            - value:
-                bool: true
+            []
         description: ""
         initialised: true
         readonly: false
@@ -100,9 +104,10 @@ modules:
       false_value:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
           arguments:
             - value:
                 bool: false
@@ -115,12 +120,12 @@ modules:
       int_false:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: int
+            module: builtins
+            history_index: 0
           arguments:
-            - value:
-                int: "0"
+            []
         description: ""
         initialised: true
         readonly: false
@@ -130,12 +135,12 @@ modules:
       int_true:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: int
+            module: builtins
+            history_index: 0
           arguments:
-            - value:
-                int: "1"
+            []
         description: ""
         initialised: true
         readonly: false
@@ -145,12 +150,12 @@ modules:
       invert_false:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
           arguments:
-            - value:
-                int: "-1"
+            []
         description: ""
         initialised: true
         readonly: false
@@ -160,12 +165,12 @@ modules:
       invert_true:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
           arguments:
-            - value:
-                int: "-2"
+            []
         description: ""
         initialised: true
         readonly: false
@@ -175,12 +180,12 @@ modules:
       neg_false:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
           arguments:
-            - value:
-                int: "0"
+            []
         description: ""
         initialised: true
         readonly: false
@@ -190,12 +195,12 @@ modules:
       neg_true:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
           arguments:
-            - value:
-                int: "-1"
+            []
         description: ""
         initialised: true
         readonly: false
@@ -205,12 +210,12 @@ modules:
       not_false:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
           arguments:
-            - value:
-                bool: true
+            []
         description: ""
         initialised: true
         readonly: false
@@ -220,12 +225,12 @@ modules:
       not_true:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
           arguments:
-            - value:
-                bool: false
+            []
         description: ""
         initialised: true
         readonly: false
@@ -235,12 +240,12 @@ modules:
       pos_false:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
           arguments:
-            - value:
-                int: "0"
+            []
         description: ""
         initialised: true
         readonly: false
@@ -250,12 +255,12 @@ modules:
       pos_true:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
           arguments:
-            - value:
-                int: "1"
+            []
         description: ""
         initialised: true
         readonly: false
@@ -265,9 +270,10 @@ modules:
       true_value:
         kind: VARIABLE
         type:
-          id: Literal
-          module: typing
-          history_index: 0
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
           arguments:
             - value:
                 bool: true

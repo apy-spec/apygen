@@ -1,4 +1,3 @@
-use apygen_analysis::lattice::Join;
 use crate::abstract_environment::{
     AbstractEnvironment, Attribute, ClassType, Deprecation, Diagnostic, Exception, ExceptionOrigin,
     FunctionType, ImportedAttribute, ImportedModuleType, LiteralClass, LiteralFunction,
@@ -9,7 +8,7 @@ use crate::abstract_environment::{
 use crate::analysis::cfg::nodes::Stmt;
 use crate::analysis::cfg::{EdgeData, nodes};
 use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
-use crate::constraints::QualifiedLocation;
+use crate::constraints::{ProgramEntityIdentifier, QualifiedLocation};
 use crate::genkill::annotations::gen_annotation;
 use crate::genkill::assignment::AssignmentTarget;
 use crate::genkill::calls::BoundArguments;
@@ -18,6 +17,7 @@ use crate::genkill::visibility::gen_visibility;
 use crate::worklist::WorklistContext;
 use apy::OneOrMany;
 use apy::v1::{Identifier, ParseIdentifierError, ParseQualifiedNameError, QualifiedName};
+use apygen_analysis::lattice::Join;
 use imbl::Vector;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -507,9 +507,12 @@ pub fn gen_function_def(
         value: Arc::new(FunctionType {
             name: identifier.clone(),
             location: location.clone(),
-            qualified_location: QualifiedLocation::new(
-                location.namespace_location.module.clone(),
-                Default::default(),
+            identifier: ProgramEntityIdentifier::new(
+                QualifiedLocation::new(
+                    location.namespace_location.module.clone(),
+                    Default::default(),
+                ),
+                identifier.clone(),
             ),
             generics: imbl::OrdMap::new(),
             is_async: stmt_function_def.is_async,
@@ -623,11 +626,14 @@ pub fn gen_class_def(
             LocalAttribute::new(Sourced::inferred(Arc::new(Type::new_literal(
                 TypeLiteral::Class(LiteralClass {
                     value: Arc::new(ClassType {
-                        name: identifier,
+                        name: identifier.clone(),
                         location: location.clone(),
-                        qualified_location: QualifiedLocation::new(
-                            location.namespace_location.module.clone(),
-                            Default::default(),
+                        identifier: ProgramEntityIdentifier::new(
+                            QualifiedLocation::new(
+                                location.namespace_location.module.clone(),
+                                Default::default(),
+                            ),
+                            identifier,
                         ),
                         generics: imbl::OrdMap::new(),
                         bases,

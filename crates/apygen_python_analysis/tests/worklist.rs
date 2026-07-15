@@ -1,8 +1,14 @@
 use apy::v1::{Identifier, QualifiedName};
+use apygen_analysis::log::LogAnalysisObserver;
+use apygen_analysis::rayon::par_analysis;
 use apygen_finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
 use apygen_finder::pathfinder::PathFinder;
+use apygen_python_analysis::abstract_environment::BUILTINS_MODULE;
+use apygen_python_analysis::constraints::{ModuleNode, SpecCfgImporter, analyse_program};
 use apygen_python_analysis::converter::v1::convert_apy_v1;
-use apygen_python_analysis::worklist::cfg_worklist;
+use apygen_python_analysis::solver::ModuleConstraintSolver;
+use rayon::iter::ParallelBridge;
+use rayon::iter::ParallelIterator;
 use rstest::rstest;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -43,16 +49,35 @@ pub fn analyse_directory(
 
     let specs: HashMap<Identifier, _> = finder.get_specs();
 
-    let (namespaces, _) = cfg_worklist(
-        specs,
-        &target_modules
-            .iter()
-            .map(|name| name.identifiers.first().clone())
-            .collect::<HashSet<_>>(),
-    )
-    .expect("cfg_worklist should succeed");
+    let cfg_importer = SpecCfgImporter { specs };
 
-    let apy_v1 = convert_apy_v1(&namespaces, &target_modules);
+    let dependent_graph = analyse_program(&cfg_importer, target_modules);
+
+    let solver = ModuleConstraintSolver::new(&dependent_graph);
+
+    let program_evaluation = par_analysis(&solver, &mut LogAnalysisObserver::default())
+        .expect("analysis should work")
+        .abstract_states[&ModuleNode::Exit]
+        .clone();
+
+    let apy_v1 = convert_apy_v1(
+        &program_evaluation,
+        dependent_graph
+            .nodes
+            .keys()
+            .par_bridge()
+            .filter_map(|module_node| {
+                if let ModuleNode::Module(module_name) = module_node {
+                    if module_name.as_ref() != BUILTINS_MODULE {
+                        Some(module_name)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }),
+    );
 
     apy::Apy::V1(apy_v1)
 }
