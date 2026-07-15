@@ -1,10 +1,8 @@
-use crate::abstract_environment::{
-    Exception, ExceptionOrigin, LiteralBoolean, LiteralComplex, Type,
-};
+use crate::abstract_environment::{Exception, LiteralBoolean, LiteralComplex, Type};
+use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::PyTypeEval;
 use num_complex::Complex64;
 use num_traits::Pow;
-use crate::constraints::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(literal_complex: &LiteralComplex) -> bool {
     literal_complex.value.re != 0.0 || literal_complex.value.im != 0.0
@@ -35,7 +33,7 @@ pub fn call_dunder_neg(literal_complex: &LiteralComplex) -> Type {
 pub fn call_unary_op(literal_complex: &LiteralComplex, operator: UnaryOperator) -> PyTypeEval {
     PyTypeEval::with_default_effects(match operator {
         UnaryOperator::Invert => {
-            return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown));
+            return PyTypeEval::raise(Exception::any()); // TODO: fix
         }
         UnaryOperator::Not => call_not(literal_complex),
         UnaryOperator::UAdd => call_dunder_pos(literal_complex),
@@ -63,10 +61,7 @@ pub fn call_binary_op(
         }),
         BinaryOperator::Div => {
             if right.value.re == 0.0 && right.value.im == 0.0 {
-                return PyTypeEval::raise(Exception::builtins(
-                    "ZeroDivisionError",
-                    ExceptionOrigin::Unknown,
-                ));
+                return PyTypeEval::raise(Exception::any()); // TODO: fix
             }
 
             Type::new_complex_literal(LiteralComplex {
@@ -81,8 +76,8 @@ pub fn call_binary_op(
         | BinaryOperator::BitOr
         | BinaryOperator::BitXor
         | BinaryOperator::BitAnd => {
-            return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown));
-        },
-        _ => todo!()
+            return PyTypeEval::raise(Exception::any()); // TODO: fix
+        }
+        _ => todo!(),
     })
 }

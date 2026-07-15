@@ -1,9 +1,7 @@
-use crate::abstract_environment::{
-    Exception, ExceptionOrigin, LiteralBoolean, LiteralBytes, LiteralInteger, Type,
-};
+use crate::abstract_environment::{Exception, LiteralBoolean, LiteralBytes, LiteralInteger, Type};
+use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::PyTypeEval;
 use num_traits::ToPrimitive;
-use crate::constraints::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(literal_bytes: &LiteralBytes) -> bool {
     !literal_bytes.value.is_empty()
@@ -24,7 +22,7 @@ pub fn call_not(literal_bytes: &LiteralBytes) -> Type {
 pub fn call_unary_op(literal_bytes: &LiteralBytes, operator: UnaryOperator) -> PyTypeEval {
     match operator {
         UnaryOperator::Invert | UnaryOperator::UAdd | UnaryOperator::USub => {
-            PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown))
+            PyTypeEval::raise(Exception::any()) // TODO: fix
         }
         UnaryOperator::Not => PyTypeEval::with_default_effects(call_not(literal_bytes)),
     }
@@ -44,7 +42,7 @@ pub fn call_binary_op(
                 .cloned()
                 .collect(),
         }),
-        _ => return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown)),
+        _ => return PyTypeEval::raise(Exception::any()), // TODO: fix,
     })
 }
 

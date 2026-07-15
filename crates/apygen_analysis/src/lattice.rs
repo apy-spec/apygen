@@ -1,59 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map, hash_map};
-use std::convert::Infallible;
 use std::hash::Hash;
 use std::sync::Arc;
-
-pub trait ContextualLattice<C>: Sized {
-    type Error;
-
-    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error>;
-
-    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error>;
-}
-
-impl<C, T: ContextualLattice<C> + PartialEq + Eq> ContextualLattice<C> for Arc<T> {
-    type Error = T::Error;
-
-    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
-        if self == other {
-            return Ok(true);
-        }
-        self.as_ref().includes(context, other.as_ref())
-    }
-
-    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
-        if self == other {
-            return Ok(self.clone());
-        }
-        Ok(Arc::new(self.as_ref().join(context, other.as_ref())?))
-    }
-}
-
-impl<C, T: ContextualLattice<C> + Clone> ContextualLattice<C> for Option<T> {
-    type Error = T::Error;
-
-    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
-        Ok(match (self, other) {
-            (Some(self_lattice), Some(other_lattice)) => {
-                self_lattice.includes(context, other_lattice)?
-            }
-            (Some(_), None) => true,
-            (None, Some(_)) => false,
-            (None, None) => true,
-        })
-    }
-
-    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
-        Ok(match (self, other) {
-            (Some(self_lattice), Some(other_lattice)) => {
-                Some(self_lattice.join(context, other_lattice)?)
-            }
-            (Some(self_lattice), None) => Some(self_lattice.clone()),
-            (None, Some(other_lattice)) => Some(other_lattice.clone()),
-            (None, None) => None,
-        })
-    }
-}
 
 pub trait LatticeOrd {
     fn leq(&self, other: &Self) -> bool;

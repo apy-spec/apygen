@@ -7,6 +7,51 @@ modules:
     partial: false
     visibility: PUBLIC
     attributes:
+      bool_empty_bytes:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      bool_multiple_bytes:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      bool_single_bytes:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
       empty_bytes:
         kind: VARIABLE
         type:
@@ -37,6 +82,38 @@ modules:
                   - 101
                   - 115
                   - 116
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      not_empty_bytes:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                bool: true
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      not_single_bytes:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                bool: false
         description: ""
         initialised: true
         readonly: false

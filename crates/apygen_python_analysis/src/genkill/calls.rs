@@ -48,6 +48,20 @@ impl Arguments {
         }
     }
 
+    pub fn add_positional_argument(mut self, argument: Arc<Type>) -> Self {
+        self.positional.push(argument);
+        self
+    }
+
+    pub fn add_keyword_argument(
+        mut self,
+        identifier: Arc<Identifier>,
+        argument: Arc<Type>,
+    ) -> Self {
+        self.keyword.insert(identifier, argument);
+        self
+    }
+
     pub fn bind(&self, parameters: &imbl::Vector<Parameter>) -> Result<BoundArguments, BindError> {
         let mut bindings = BoundArguments::new();
         let mut positional_iter = self.positional.iter().cloned();
@@ -92,9 +106,7 @@ impl Arguments {
                         imbl::vector![var_positional_arguments.simplify()]
                     };
 
-                    let ty = Arc::new(Type::Instance(
-                        TypeInstance::builtins("tuple").with_arguments(arguments),
-                    ));
+                    let ty = Arc::new(Type::Any); // TODO: fix
 
                     bindings
                         .variables
@@ -136,9 +148,7 @@ impl Arguments {
                         imbl::vector![str_literal, var_keyword_arguments.simplify()]
                     };
 
-                    let ty = Arc::new(Type::Instance(
-                        TypeInstance::builtins("dict").with_arguments(arguments),
-                    ));
+                    let ty = Arc::new(Type::Any); // TODO: fix
 
                     bindings
                         .variables

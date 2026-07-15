@@ -11,36 +11,6 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: bool
-            module: builtins
-            history_index: 0
-          arguments:
-            []
-        description: ""
-        initialised: true
-        readonly: false
-        final: false
-        deprecated: false
-        visibility: PUBLIC
-      invert_none:
-        kind: VARIABLE
-        type:
-          reference:
-            id: Any
-            module: typing
-            history_index: 0
-          arguments:
-            []
-        description: ""
-        initialised: true
-        readonly: false
-        final: false
-        deprecated: false
-        visibility: PUBLIC
-      neg_none:
-        kind: VARIABLE
-        type:
-          reference:
             id: Any
             module: typing
             history_index: 0
@@ -55,36 +25,6 @@ modules:
       none_value:
         kind: VARIABLE
         type: None
-        description: ""
-        initialised: true
-        readonly: false
-        final: false
-        deprecated: false
-        visibility: PUBLIC
-      not_none:
-        kind: VARIABLE
-        type:
-          reference:
-            id: Any
-            module: typing
-            history_index: 0
-          arguments:
-            []
-        description: ""
-        initialised: true
-        readonly: false
-        final: false
-        deprecated: false
-        visibility: PUBLIC
-      pos_none:
-        kind: VARIABLE
-        type:
-          reference:
-            id: Any
-            module: typing
-            history_index: 0
-          arguments:
-            []
         description: ""
         initialised: true
         readonly: false

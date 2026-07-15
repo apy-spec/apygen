@@ -1,9 +1,8 @@
 use crate::abstract_environment::{
-    AbstractEnvironment, BUILTINS_MODULE, Base, LiteralBoolean, LiteralBytes, LiteralClass,
-    LiteralComplex, LiteralDict, LiteralFloat, LiteralFunction, LiteralGeneric,
-    LiteralImportedModule, LiteralInteger, LiteralList, LiteralString, LiteralTuple,
-    LiteralTypeAlias, QualifiedName, RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type,
-    TypeInstance2, TypeLiteral, TypeUnion,
+    BUILTINS_MODULE, Base, LiteralBoolean, LiteralBytes, LiteralClass, LiteralComplex, LiteralDict,
+    LiteralFloat, LiteralFunction, LiteralGeneric, LiteralImportedModule, LiteralInteger,
+    LiteralList, LiteralString, LiteralTuple, LiteralTypeAlias, QualifiedName, RaisedExceptions,
+    TYPES_MODULE, TYPING_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion,
 };
 use crate::constraints::{Expression, ExpressionVariable, ModuleName, QualifiedLocation};
 use crate::genkill::visibility::visibility_from_name;
@@ -168,15 +167,10 @@ pub fn convert_literal_class(
                     .map(|base| {
                         apy::v1::Type::Reference(
                             apy::v1::TypeReference::new(QualifiedName::from(
-                                base.value.name.as_ref().clone(),
+                                base.value.identifier.name.as_ref().clone(),
                             ))
                             .with_module(Some(
-                                base.value
-                                    .location
-                                    .namespace_location
-                                    .module
-                                    .as_ref()
-                                    .clone(),
+                                base.value.identifier.location.module_name.as_ref().clone(),
                             )),
                         )
                     })
@@ -314,7 +308,7 @@ pub fn convert_type_no_return() -> apy::v1::TypeInstance {
 
 pub fn convert_type_instance(
     program_evaluation: &ProgramEvaluation,
-    type_instance: &TypeInstance2,
+    type_instance: &TypeInstance,
 ) -> Option<apy::v1::TypeInstance> {
     let program_entity_identifier = match &type_instance.base {
         Base::Class(literal_class) => &literal_class.value.identifier,
@@ -388,7 +382,7 @@ pub fn convert_type(program_evaluation: &ProgramEvaluation, ty: &Type) -> Option
         Type::Instance(_) => convert_type_any(), // TODO: fix
         Type::Union(type_union) => convert_type_union(program_evaluation, type_union)?,
         Type::Intersection(_) => convert_type_intersection(),
-        Type::Instance2(type_instance) => convert_type_instance(program_evaluation, type_instance)?,
+        Type::Instance(type_instance) => convert_type_instance(program_evaluation, type_instance)?,
         Type::Literal(type_literal) => {
             match convert_type_literal(program_evaluation, type_literal)? {
                 ConvertedTypeLiteral::TypeInstance(ty) => ty,
@@ -454,7 +448,7 @@ pub fn convert_attribute(
         Type::Never => apy::v1::Type::Instance(convert_type_never()),
         Type::NoReturn => apy::v1::Type::Instance(convert_type_no_return()),
         Type::Instance(_) => apy::v1::Type::Instance(convert_type_any()), // TODO: fix
-        Type::Instance2(type_instance) => {
+        Type::Instance(type_instance) => {
             apy::v1::Type::Instance(convert_type_instance(program_evaluation, type_instance)?)
         }
         Type::Union(type_union) => {

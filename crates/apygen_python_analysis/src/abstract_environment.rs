@@ -1,5 +1,3 @@
-use crate::analysis::lattice::ContextualLattice;
-use crate::analysis::namespace::{Location, NamespaceLocation, Namespaces};
 use crate::constraints::{ProgramEntityIdentifier, QualifiedLocation};
 pub use apy::OneOrMany;
 pub use apy::v1::{GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName};
@@ -15,7 +13,6 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 use std::sync::Arc;
-use thiserror::Error;
 
 pub const BUILTINS_MODULE: &str = "builtins";
 pub const TYPES_MODULE: &str = "types";
@@ -92,34 +89,6 @@ impl<T: Join + Clone> Join for Sourced<T> {
             },
             (Source::Inferred, Source::Specified) => self.clone(),
             (Source::Specified, Source::Inferred) => other.clone(),
-        }
-    }
-}
-
-impl<C, T: ContextualLattice<C> + Clone> ContextualLattice<C> for Sourced<T> {
-    type Error = T::Error;
-
-    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
-        match (&self.source, &other.source) {
-            (Source::Specified, Source::Specified) => self.data.includes(context, &other.data),
-            (Source::Inferred, Source::Inferred) => self.data.includes(context, &other.data),
-            (Source::Inferred, Source::Specified) => Ok(false),
-            (Source::Specified, Source::Inferred) => Ok(true),
-        }
-    }
-
-    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
-        match (&self.source, &other.source) {
-            (Source::Specified, Source::Specified) => Ok(Sourced {
-                data: self.data.join(context, &other.data)?,
-                source: Source::Specified,
-            }),
-            (Source::Inferred, Source::Inferred) => Ok(Sourced {
-                data: self.data.join(context, &other.data)?,
-                source: Source::Inferred,
-            }),
-            (Source::Inferred, Source::Specified) => Ok(other.clone()),
-            (Source::Specified, Source::Inferred) => Ok(self.clone()),
         }
     }
 }
@@ -225,10 +194,6 @@ impl StructuralWidth for Parameter {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct GenericType {
-    pub name: Arc<Identifier>,
-
-    pub location: Location<QualifiedName>,
-
     pub kind: GenericKind,
 
     pub bound: Arc<Type>,
@@ -261,9 +226,9 @@ impl StructuralWidth for GenericType {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ExceptionOrigin {
     Unknown,
-    Raised(Location<QualifiedName>),
+    Raised(QualifiedLocation),
     Specified,
-    Propagated(NamespaceLocation<QualifiedName>),
+    Propagated(QualifiedLocation),
 }
 
 impl Display for ExceptionOrigin {
@@ -297,17 +262,6 @@ impl Exception {
     pub fn any() -> Self {
         Exception::new(Arc::new(Type::Any), ExceptionOrigin::Unknown)
     }
-
-    pub fn builtins(name: &str, origin: ExceptionOrigin) -> Self {
-        Exception::new(
-            Arc::new(Type::Instance(TypeInstance::builtins(name))),
-            origin,
-        )
-    }
-
-    pub fn type_error(origin: ExceptionOrigin) -> Self {
-        Exception::builtins("TypeError", origin)
-    }
 }
 
 impl Display for Exception {
@@ -322,10 +276,6 @@ impl Display for Exception {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FunctionType {
-    pub name: Arc<Identifier>,
-
-    pub location: Location<QualifiedName>,
-
     pub identifier: ProgramEntityIdentifier,
 
     pub generics: imbl::OrdMap<String, GenericType>,
@@ -401,10 +351,6 @@ pub enum TypeAliasKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypeAliasType {
-    pub name: Arc<Identifier>,
-
-    pub location: Location<QualifiedName>,
-
     pub alias: Arc<Type>,
 
     pub generics: imbl::OrdMap<String, GenericType>,
@@ -426,10 +372,6 @@ impl StructuralWidth for TypeAliasType {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ClassType {
-    pub name: Arc<Identifier>,
-
-    pub location: Location<QualifiedName>,
-
     pub identifier: ProgramEntityIdentifier,
 
     pub generics: imbl::OrdMap<String, GenericType>,
@@ -465,13 +407,7 @@ impl StructuralWidth for ClassType {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ImportedModuleType {
-    pub name: Arc<Identifier>,
-
-    pub location: Location<QualifiedName>,
-
     pub module: Arc<QualifiedName>,
-
-    pub submodules: imbl::OrdSet<Arc<QualifiedName>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1241,7 +1177,7 @@ pub struct LiteralTypeAlias {
 
 impl Display for LiteralTypeAlias {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "type_alias({})", self.value.location)
+        write!(f, "type_alias({})", self.value.alias)
     }
 }
 
@@ -1264,7 +1200,7 @@ pub struct LiteralGeneric {
 
 impl Display for LiteralGeneric {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "generic({})", self.value.location)
+        write!(f, "generic({})", self.value.bound)
     }
 }
 
@@ -1287,7 +1223,7 @@ pub struct LiteralImportedModule {
 
 impl Display for LiteralImportedModule {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "import({})", self.value.location)
+        write!(f, "import({})", self.value.module)
     }
 }
 
@@ -1432,95 +1368,6 @@ impl Display for TypeLiteral {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TypeInstance {
-    pub origin: Location<QualifiedName>,
-    pub name: Identifier,
-    pub arguments: imbl::Vector<Arc<Type>>,
-}
-
-impl TypeInstance {
-    pub fn new(origin: Location<QualifiedName>, name: Identifier) -> Self {
-        TypeInstance {
-            origin,
-            name,
-            arguments: imbl::Vector::new(),
-        }
-    }
-
-    pub fn builtins(name: &str) -> Self {
-        TypeInstance::new(
-            Location::from(QualifiedName::parse(BUILTINS_MODULE)),
-            Identifier::parse(name),
-        )
-    }
-
-    pub fn typing(name: &str) -> Self {
-        TypeInstance::new(
-            Location::from(QualifiedName::parse(TYPING_MODULE)),
-            Identifier::parse(name),
-        )
-    }
-
-    pub fn builtins_list(element_type: Arc<Type>) -> Self {
-        TypeInstance::builtins("list").with_arguments(imbl::vector![element_type])
-    }
-
-    pub fn builtins_tuple<I: IntoIterator<Item = Arc<Type>>>(element_types: I) -> Self {
-        TypeInstance::builtins("tuple").with_arguments(element_types.into_iter().collect())
-    }
-
-    pub fn builtins_dict(key_type: Arc<Type>, value_type: Arc<Type>) -> Self {
-        TypeInstance::builtins("dict").with_arguments(imbl::vector![key_type, value_type])
-    }
-
-    pub fn with_origin(mut self, origin: Location<QualifiedName>) -> Self {
-        self.origin = origin;
-        self
-    }
-
-    pub fn with_name(mut self, name: Identifier) -> Self {
-        self.name = name;
-        self
-    }
-
-    pub fn with_arguments(mut self, arguments: imbl::Vector<Arc<Type>>) -> Self {
-        self.arguments = arguments;
-        self
-    }
-}
-
-impl StructuralDepth for TypeInstance {
-    fn depth(&self) -> usize {
-        1 + self.arguments.depth()
-    }
-}
-
-impl StructuralWidth for TypeInstance {
-    fn width(&self) -> usize {
-        self.arguments.width()
-    }
-}
-
-impl Display for TypeInstance {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "@({}).{}", self.origin, self.name)?;
-
-        if !self.arguments.is_empty() {
-            write!(f, "[")?;
-            for (i, argument) in self.arguments.iter().enumerate() {
-                if i > 0 {
-                    write!(f, ", ")?;
-                }
-                write!(f, "{}", argument)?;
-            }
-            write!(f, "]")?;
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Base {
     Class(LiteralClass),
     TypeAlias(LiteralTypeAlias),
@@ -1572,24 +1419,24 @@ impl StructuralWidth for Base {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TypeInstance2 {
+pub struct TypeInstance {
     pub base: Base,
     pub arguments: imbl::Vector<Arc<Type>>,
 }
 
-impl StructuralDepth for TypeInstance2 {
+impl StructuralDepth for TypeInstance {
     fn depth(&self) -> usize {
         self.base.depth().max(self.arguments.depth())
     }
 }
 
-impl StructuralWidth for TypeInstance2 {
+impl StructuralWidth for TypeInstance {
     fn width(&self) -> usize {
         self.base.width() + self.arguments.width()
     }
 }
 
-impl Display for TypeInstance2 {
+impl Display for TypeInstance {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "@{}", self.base)?;
 
@@ -1692,7 +1539,6 @@ pub enum Type {
     Never,
     NoReturn,
     Instance(TypeInstance),
-    Instance2(TypeInstance2),
     Union(TypeUnion),
     Intersection(imbl::OrdSet<Arc<Type>>),
     Literal(Arc<TypeLiteral>),
@@ -1768,8 +1614,7 @@ impl LatticeOrd for Type {
             Type::Any => true,
             Type::Never => false,
             Type::NoReturn => false,
-            Type::Instance { .. } => true,
-            Type::Instance2(_) => true,
+            Type::Instance(_) => true,
             Type::Union(other_type_union) => {
                 if let Type::Union(self_type_union) = self {
                     self_type_union.types().leq(other_type_union.types())
@@ -1794,7 +1639,6 @@ impl StructuralDepth for Type {
         match self {
             Type::Any | Type::Never | Type::NoReturn => 1,
             Type::Instance(type_instance) => type_instance.depth(),
-            Type::Instance2(type_instance2) => type_instance2.depth(),
             Type::Union(type_union) => type_union.depth(),
             Type::Intersection(type_intersection) => type_intersection.depth(),
             Type::Literal(type_literal) => type_literal.depth(),
@@ -1807,7 +1651,6 @@ impl StructuralWidth for Type {
         match self {
             Type::Any | Type::Never | Type::NoReturn => 1,
             Type::Instance(type_instance) => type_instance.width(),
-            Type::Instance2(type_instance2) => type_instance2.width(),
             Type::Union(type_union) => type_union.width(),
             Type::Intersection(type_intersection) => type_intersection.width(),
             Type::Literal(type_literal) => type_literal.width(),
@@ -1822,7 +1665,6 @@ impl Display for Type {
             Type::Never => write!(f, "Never"),
             Type::NoReturn => write!(f, "NoReturn"),
             Type::Instance(type_instance) => write!(f, "{}", type_instance),
-            Type::Instance2(type_instance2) => write!(f, "{}", type_instance2),
             Type::Union(type_union) => write!(f, "{}", type_union),
             Type::Intersection(_) => write!(f, "Intersection"),
             Type::Literal(type_literal) => write!(f, "{}", type_literal),
@@ -1915,287 +1757,6 @@ impl Deprecation {
 impl OrdLatticeOrd for Deprecation {}
 impl OrdJoin for Deprecation {}
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct LocalAttribute {
-    pub attribute_type: Sourced<Arc<Type>>,
-
-    pub visibility: Sourced<Visibility>,
-
-    pub initialisation: Sourced<Initialisation>,
-
-    pub mutability: Sourced<Mutability>,
-
-    pub finality: Sourced<Finality>,
-
-    pub deprecation: Sourced<Deprecation>,
-}
-
-impl LocalAttribute {
-    pub fn new(attribute_type: Sourced<Arc<Type>>) -> Self {
-        LocalAttribute {
-            attribute_type,
-            visibility: Sourced::inferred(Visibility::default()),
-            initialisation: Sourced::inferred(Initialisation::default()),
-            mutability: Sourced::inferred(Mutability::default()),
-            finality: Sourced::inferred(Finality::default()),
-            deprecation: Sourced::inferred(Deprecation::default()),
-        }
-    }
-
-    pub fn with_attribute_type(mut self, attribute_type: Sourced<Arc<Type>>) -> Self {
-        self.attribute_type = attribute_type;
-        self
-    }
-
-    pub fn with_visibility(mut self, visibility: Sourced<Visibility>) -> Self {
-        self.visibility = visibility;
-        self
-    }
-
-    pub fn with_initialisation(mut self, initialisation: Sourced<Initialisation>) -> Self {
-        self.initialisation = initialisation;
-        self
-    }
-
-    pub fn with_mutability(mut self, mutability: Sourced<Mutability>) -> Self {
-        self.mutability = mutability;
-        self
-    }
-
-    pub fn with_finality(mut self, finality: Sourced<Finality>) -> Self {
-        self.finality = finality;
-        self
-    }
-
-    pub fn with_deprecation(mut self, deprecation: Sourced<Deprecation>) -> Self {
-        self.deprecation = deprecation;
-        self
-    }
-}
-
-impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C> for LocalAttribute {
-    type Error = GetAttributeError;
-
-    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
-        if self == other {
-            return Ok(true);
-        }
-
-        Ok(other.attribute_type.leq(&self.attribute_type)
-            && other.visibility.leq(&self.visibility)
-            && other.initialisation.leq(&self.initialisation)
-            && other.mutability.leq(&self.mutability)
-            && other.finality.leq(&self.finality)
-            && other.deprecation.leq(&self.deprecation))
-    }
-
-    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
-        if self == other {
-            return Ok(self.clone());
-        }
-
-        let mut attribute_type = self.attribute_type.join(&other.attribute_type);
-
-        if attribute_type.data.depth() > DEPTH_LIMIT {
-            attribute_type.data = Arc::new(Type::Any);
-        }
-
-        Ok(LocalAttribute {
-            attribute_type,
-            visibility: self.visibility.join(&other.visibility),
-            initialisation: self.initialisation.join(&other.initialisation),
-            mutability: self.mutability.join(&other.mutability),
-            finality: self.finality.join(&other.finality),
-            deprecation: self.deprecation.join(&other.deprecation),
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ImportedAttribute {
-    pub name: Identifier,
-
-    pub module: Arc<QualifiedName>,
-
-    pub visibility: Sourced<Visibility>,
-
-    pub deprecation: Sourced<Deprecation>,
-}
-
-impl ImportedAttribute {
-    pub fn resolve<'a>(
-        &'a self,
-        namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
-    ) -> Result<&'a LocalAttribute, GetAttributeError> {
-        get_attribute(namespaces, &Location::from(self.module.clone()), &self.name)?
-            .resolve(namespaces)
-    }
-
-    pub fn as_local(
-        &self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-    ) -> Result<LocalAttribute, GetAttributeError> {
-        let mut resolved_attribute = self.resolve(namespaces)?.clone();
-
-        resolved_attribute.visibility = self.visibility.clone();
-        resolved_attribute.deprecation = self.deprecation.clone();
-
-        Ok(resolved_attribute)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Attribute {
-    Imported(ImportedAttribute),
-    Local(LocalAttribute),
-}
-
-impl Attribute {
-    pub fn resolve<'a>(
-        &'a self,
-        namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
-    ) -> Result<&'a LocalAttribute, GetAttributeError> {
-        match self {
-            Attribute::Imported(imported_attribute) => imported_attribute.resolve(namespaces),
-            Attribute::Local(local_attribute) => Ok(local_attribute),
-        }
-    }
-
-    pub fn as_local(
-        &self,
-        namespaces: &impl Namespaces<QualifiedName, AbstractEnvironment>,
-    ) -> Result<LocalAttribute, GetAttributeError> {
-        match self {
-            Attribute::Imported(imported_attribute) => imported_attribute.as_local(namespaces),
-            Attribute::Local(local_attribute) => Ok(local_attribute.clone()),
-        }
-    }
-}
-
-impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C> for Attribute {
-    type Error = GetAttributeError;
-
-    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
-        if self == other {
-            return Ok(true);
-        }
-
-        self.as_local(context)?
-            .includes(context, &other.as_local(context)?)
-    }
-
-    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
-        if self == other {
-            return Ok(self.clone());
-        }
-
-        Ok(match (self, other) {
-            (Attribute::Local(self_local_attribute), Attribute::Local(other_local_attribute)) => {
-                Attribute::Local(self_local_attribute.join(context, other_local_attribute)?)
-            }
-            (
-                Attribute::Imported(self_imported_attribute),
-                Attribute::Imported(other_imported_attribute),
-            ) => {
-                if self_imported_attribute.name == other_imported_attribute.name
-                    && self_imported_attribute.module == other_imported_attribute.module
-                {
-                    Attribute::Imported(ImportedAttribute {
-                        name: self_imported_attribute.name.clone(),
-                        module: self_imported_attribute.module.clone(),
-                        visibility: self_imported_attribute
-                            .visibility
-                            .join(&other_imported_attribute.visibility),
-                        deprecation: self_imported_attribute
-                            .deprecation
-                            .join(&other_imported_attribute.deprecation),
-                    })
-                } else {
-                    Attribute::Local(
-                        self_imported_attribute
-                            .as_local(context)?
-                            .join(context, &other_imported_attribute.as_local(context)?)?,
-                    )
-                }
-            }
-            (
-                Attribute::Local(self_local_attribute),
-                Attribute::Imported(other_imported_attribute),
-            ) => Attribute::Local(
-                self_local_attribute.join(context, &other_imported_attribute.as_local(context)?)?,
-            ),
-            (
-                Attribute::Imported(self_imported_attribute),
-                Attribute::Local(other_local_attribute),
-            ) => Attribute::Local(
-                self_imported_attribute
-                    .as_local(context)?
-                    .join(context, other_local_attribute)?,
-            ),
-        })
-    }
-}
-
-#[derive(Error, Debug)]
-pub enum GetAttributeError {
-    #[error("the environment location does not exist: `{0:?}`")]
-    LocationNotFound(Location<QualifiedName>),
-    #[error("the attribute `{identifier}` does not exist at location `{location:?}`")]
-    AttributeNotFound {
-        location: Location<QualifiedName>,
-        identifier: Identifier,
-    },
-}
-
-pub fn get_attribute<'a>(
-    namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
-    location: &Location<QualifiedName>,
-    name: &Identifier,
-) -> Result<&'a Attribute, GetAttributeError> {
-    let Some(abstract_environment) = namespaces.get_abstract_environment(location) else {
-        return Err(GetAttributeError::LocationNotFound(location.clone()));
-    };
-
-    if let Some(attribute) = abstract_environment.attributes.get(name) {
-        return Ok(attribute);
-    };
-
-    Err(GetAttributeError::AttributeNotFound {
-        location: location.clone(),
-        identifier: name.clone(),
-    })
-}
-
-pub fn resolve_local_attribute<'a>(
-    namespaces: &'a impl Namespaces<QualifiedName, AbstractEnvironment>,
-    location: Location<QualifiedName>,
-    name: &'a Identifier,
-) -> Result<(Location<QualifiedName>, &'a Identifier, &'a LocalAttribute), GetAttributeError> {
-    let err = match get_attribute(namespaces, &location, name) {
-        Ok(attribute) => {
-            return Ok((location, name, attribute.resolve(namespaces)?));
-        }
-        Err(error) => error,
-    };
-
-    if let Some(parent_location) = location.namespace_location.parent_location() {
-        return resolve_local_attribute(namespaces, Location::at_exit(parent_location), name);
-    }
-
-    let builtins_namespace_location =
-        NamespaceLocation::from(Arc::new(QualifiedName::parse(BUILTINS_MODULE)));
-
-    if location.namespace_location != builtins_namespace_location {
-        return resolve_local_attribute(
-            namespaces,
-            Location::at_exit(builtins_namespace_location),
-            name,
-        );
-    }
-
-    Err(err)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Default, PartialOrd, Ord, Join, LatticeOrd)]
 pub struct RaisedExceptions {
     pub exceptions: imbl::OrdSet<Exception>,
@@ -2259,114 +1820,3 @@ impl Display for Pureness {
 
 impl OrdLatticeOrd for Pureness {}
 impl OrdJoin for Pureness {}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Diagnostic {
-    InvalidAnnotation { location: Location<QualifiedName> },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct AbstractEnvironment {
-    pub attributes: imbl::HashMap<Arc<Identifier>, Arc<Attribute>>,
-    pub returned_value: Option<Sourced<Arc<Type>>>,
-    pub raised_exceptions: Sourced<RaisedExceptions>,
-    pub completeness: Sourced<Completeness>,
-    pub pureness: Sourced<Pureness>,
-    pub diagnostics: imbl::HashSet<Diagnostic>,
-}
-
-impl AbstractEnvironment {
-    pub fn new() -> AbstractEnvironment {
-        Self::default()
-    }
-
-    pub fn with_attributes(
-        mut self,
-        attributes: imbl::HashMap<Arc<Identifier>, Arc<Attribute>>,
-    ) -> AbstractEnvironment {
-        self.attributes = attributes;
-        self
-    }
-
-    pub fn with_returned_value(mut self, value: Option<Sourced<Arc<Type>>>) -> AbstractEnvironment {
-        self.returned_value = value;
-        self
-    }
-
-    pub fn with_raised_exceptions(
-        mut self,
-        raised_exceptions: Sourced<RaisedExceptions>,
-    ) -> AbstractEnvironment {
-        self.raised_exceptions = raised_exceptions;
-        self
-    }
-
-    pub fn with_completeness(mut self, completeness: Sourced<Completeness>) -> AbstractEnvironment {
-        self.completeness = completeness;
-        self
-    }
-
-    pub fn with_pureness(mut self, pureness: Sourced<Pureness>) -> AbstractEnvironment {
-        self.pureness = pureness;
-        self
-    }
-
-    pub fn with_diagnostics(
-        mut self,
-        diagnostics: imbl::HashSet<Diagnostic>,
-    ) -> AbstractEnvironment {
-        self.diagnostics = diagnostics;
-        self
-    }
-}
-
-impl<C: Namespaces<QualifiedName, AbstractEnvironment>> ContextualLattice<C>
-    for AbstractEnvironment
-{
-    type Error = GetAttributeError;
-
-    fn includes(&self, context: &C, other: &Self) -> Result<bool, Self::Error> {
-        for (name, other_attribute) in &other.attributes {
-            match self.attributes.get(name) {
-                Some(self_attribute) => {
-                    if !self_attribute.includes(context, &other_attribute)? {
-                        return Ok(false);
-                    }
-                }
-                None => return Ok(false),
-            }
-        }
-
-        Ok(other.returned_value.leq(&self.returned_value)
-            && other.raised_exceptions.leq(&self.raised_exceptions)
-            && other.completeness.leq(&self.completeness)
-            && other.pureness.leq(&self.pureness)
-            && other.diagnostics.leq(&self.diagnostics))
-    }
-
-    fn join(&self, context: &C, other: &Self) -> Result<Self, Self::Error> {
-        let mut attributes = self.attributes.clone();
-
-        for (name, other_attribute) in &other.attributes {
-            match attributes.entry(name.clone()) {
-                imbl::hashmap::Entry::Occupied(mut entry) => {
-                    let self_attribute = entry.get_mut();
-
-                    *self_attribute = self_attribute.join(context, other_attribute)?;
-                }
-                imbl::hashmap::Entry::Vacant(entry) => {
-                    entry.insert(other_attribute.clone());
-                }
-            }
-        }
-
-        Ok(AbstractEnvironment {
-            attributes,
-            returned_value: self.returned_value.join(&other.returned_value),
-            raised_exceptions: self.raised_exceptions.join(&other.raised_exceptions),
-            completeness: self.completeness.join(&other.completeness),
-            pureness: self.pureness.join(&other.pureness),
-            diagnostics: self.diagnostics.join(&other.diagnostics),
-        })
-    }
-}

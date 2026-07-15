@@ -19,7 +19,6 @@ pub mod constraints;
 pub mod converter;
 pub mod genkill;
 pub mod solver;
-pub mod worklist;
 
 pub fn analyse_workdir(
     filesystem: impl Filesystem,

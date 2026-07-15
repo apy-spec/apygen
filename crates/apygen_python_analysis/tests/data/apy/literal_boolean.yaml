@@ -75,8 +75,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: bool
-            module: builtins
+            id: Any
+            module: typing
             history_index: 0
           arguments:
             []
@@ -90,8 +90,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: bool
-            module: builtins
+            id: Any
+            module: typing
             history_index: 0
           arguments:
             []
@@ -121,8 +121,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: int
-            module: builtins
+            id: Any
+            module: typing
             history_index: 0
           arguments:
             []
@@ -136,8 +136,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: int
-            module: builtins
+            id: Any
+            module: typing
             history_index: 0
           arguments:
             []
@@ -151,11 +151,12 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
+            id: Literal
             module: typing
             history_index: 0
           arguments:
-            []
+            - value:
+                int: "-1"
         description: ""
         initialised: true
         readonly: false
@@ -166,11 +167,12 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
+            id: Literal
             module: typing
             history_index: 0
           arguments:
-            []
+            - value:
+                int: "-2"
         description: ""
         initialised: true
         readonly: false
@@ -181,11 +183,12 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
+            id: Literal
             module: typing
             history_index: 0
           arguments:
-            []
+            - value:
+                int: "0"
         description: ""
         initialised: true
         readonly: false
@@ -196,11 +199,12 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
+            id: Literal
             module: typing
             history_index: 0
           arguments:
-            []
+            - value:
+                int: "-1"
         description: ""
         initialised: true
         readonly: false
@@ -211,11 +215,12 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
+            id: Literal
             module: typing
             history_index: 0
           arguments:
-            []
+            - value:
+                bool: true
         description: ""
         initialised: true
         readonly: false
@@ -226,11 +231,12 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
+            id: Literal
             module: typing
             history_index: 0
           arguments:
-            []
+            - value:
+                bool: false
         description: ""
         initialised: true
         readonly: false
@@ -241,11 +247,12 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
+            id: Literal
             module: typing
             history_index: 0
           arguments:
-            []
+            - value:
+                int: "0"
         description: ""
         initialised: true
         readonly: false
@@ -256,11 +263,12 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
+            id: Literal
             module: typing
             history_index: 0
           arguments:
-            []
+            - value:
+                int: "1"
         description: ""
         initialised: true
         readonly: false

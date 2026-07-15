@@ -1,13 +1,12 @@
 pub use apygen_cfg as cfg;
 use std::collections::BTreeSet;
 
+pub mod abstract_state;
+pub mod fmt;
 pub mod imbl;
 pub mod lattice;
 pub mod log;
-pub mod namespace;
 pub mod rayon;
-pub mod fmt;
-pub mod abstract_state;
 
 pub trait GraphAnalyser {
     type Node;

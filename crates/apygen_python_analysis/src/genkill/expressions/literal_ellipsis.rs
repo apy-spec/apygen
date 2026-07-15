@@ -1,4 +1,4 @@
-use crate::abstract_environment::{Exception, ExceptionOrigin, LiteralBoolean, Type};
+use crate::abstract_environment::{Exception, LiteralBoolean, Type};
 use crate::constraints::UnaryOperator;
 use crate::genkill::expressions::PyTypeEval;
 
@@ -21,7 +21,7 @@ pub fn call_not() -> Type {
 pub fn call_unary_op(operator: UnaryOperator) -> PyTypeEval {
     match operator {
         UnaryOperator::Invert | UnaryOperator::UAdd | UnaryOperator::USub => {
-            PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown))
+            PyTypeEval::raise(Exception::any()) // TODO: fix
         }
         UnaryOperator::Not => PyTypeEval::with_default_effects(call_not()),
     }

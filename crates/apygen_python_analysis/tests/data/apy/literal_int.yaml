@@ -11,11 +11,12 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
+            id: Literal
             module: typing
             history_index: 0
           arguments:
-            []
+            - value:
+                int: "-36893488147419103232"
         description: ""
         initialised: true
         readonly: false
@@ -38,7 +39,7 @@ modules:
         final: false
         deprecated: false
         visibility: PUBLIC
-      int_neg_value:
+      bool_big_int_neg_value:
         kind: VARIABLE
         type:
           reference:
@@ -47,6 +48,277 @@ modules:
             history_index: 0
           arguments:
             []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      bool_big_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      bool_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      bool_int_one:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      bool_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      bool_int_zero:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      float_big_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      float_big_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      float_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      float_int_one:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      float_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      float_int_zero:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      int_big_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      int_big_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      int_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      int_int_one:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      int_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      int_int_zero:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "-42"
         description: ""
         initialised: true
         readonly: false
@@ -86,6 +358,390 @@ modules:
         deprecated: false
         visibility: PUBLIC
       int_zero:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "0"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      invert_big_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "36893488147419103231"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      invert_big_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "-36893488147419103233"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      invert_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "41"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      invert_int_one:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "-2"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      invert_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "-43"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      invert_int_zero:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "-1"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      neg_big_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "36893488147419103232"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      neg_big_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "-36893488147419103232"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      neg_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "42"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      neg_int_one:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "-1"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      neg_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "-42"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      neg_int_zero:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "0"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      not_big_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                bool: false
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      not_big_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                bool: false
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      not_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                bool: false
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      not_int_one:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                bool: false
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      not_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                bool: false
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      not_int_zero:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                bool: true
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      pos_big_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "-36893488147419103232"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      pos_big_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "36893488147419103232"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      pos_int_neg_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "-42"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      pos_int_one:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "1"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      pos_int_value:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "42"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      pos_int_zero:
         kind: VARIABLE
         type:
           reference:

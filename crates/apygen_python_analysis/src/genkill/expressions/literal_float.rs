@@ -1,7 +1,7 @@
-use crate::abstract_environment::{Exception, ExceptionOrigin, LiteralBoolean, LiteralFloat, Type};
+use crate::abstract_environment::{Exception, LiteralBoolean, LiteralFloat, Type};
+use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::PyTypeEval;
 use num_traits::Pow;
-use crate::constraints::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(literal_float: &LiteralFloat) -> bool {
     literal_float.value != 0.0
@@ -34,7 +34,7 @@ pub fn call_dunder_neg(literal_float: &LiteralFloat) -> Type {
 pub fn call_unary_op(literal_float: &LiteralFloat, operator: UnaryOperator) -> PyTypeEval {
     PyTypeEval::with_default_effects(match operator {
         UnaryOperator::Invert => {
-            return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown));
+            return PyTypeEval::raise(Exception::any()); // TODO: fix
         }
         UnaryOperator::Not => call_not(literal_float),
         UnaryOperator::UAdd => call_dunder_pos(literal_float),
@@ -62,7 +62,7 @@ pub fn call_binary_op(
         }),
         BinaryOperator::Div => {
             if right.value == 0.0 {
-                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
+                return PyTypeEval::raise(Exception::any()); // TODO: fix
             }
 
             Type::new_float_literal(LiteralFloat {
@@ -71,7 +71,7 @@ pub fn call_binary_op(
         }
         BinaryOperator::FloorDiv => {
             if right.value == 0.0 {
-                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
+                return PyTypeEval::raise(Exception::any()); // TODO: fix
             }
 
             Type::new_float_literal(LiteralFloat {
@@ -80,7 +80,7 @@ pub fn call_binary_op(
         }
         BinaryOperator::Mod => {
             if right.value == 0.0 {
-                return PyTypeEval::raise(Exception::builtins("ZeroDivisionError", ExceptionOrigin::Unknown));
+                return PyTypeEval::raise(Exception::any()); // TODO: fix
             }
 
             Type::new_float_literal(LiteralFloat {
@@ -92,7 +92,7 @@ pub fn call_binary_op(
         | BinaryOperator::RShift
         | BinaryOperator::BitOr
         | BinaryOperator::BitXor
-        | BinaryOperator::BitAnd => return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown)),
+        | BinaryOperator::BitAnd => return PyTypeEval::raise(Exception::any()), // TODO: fix,
         _ => todo!(),
     })
 }

@@ -3,7 +3,6 @@ use crate::abstract_environment::{
     LiteralString,
 };
 use crate::genkill::assignment::AssignmentTarget;
-use crate::worklist::load_cfg;
 use apy::OneOrMany;
 use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
 use apygen_analysis::cfg::nodes::Number;
@@ -11,8 +10,8 @@ use apygen_analysis::cfg::{Cfg, EdgeData, NodeData, ProgramPoint, Ranged, TextRa
 use apygen_analysis::fmt::fmt_display_sequence;
 use apygen_analysis::lattice::{Join, OrdJoin};
 use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
-use apygen_finder::filesystem::Filesystem;
-use apygen_finder::pathfinder::FinderSpec;
+use apygen_finder::filesystem::{Error as FilesystemError, Filesystem};
+use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
 use imbl::ordmap::Entry;
 use num_bigint::BigInt;
 use num_complex::Complex64;
@@ -20,9 +19,39 @@ use num_traits::Num;
 use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
 use std::collections::{HashMap, HashSet};
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Display, Formatter, Write};
 use std::sync::Arc;
 use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum ImportModuleError {
+    #[error("Filesystem error: {0}")]
+    FilesystemError(#[from] FilesystemError),
+    #[error("Failed to parse module source code")]
+    CfgParseError(String),
+    #[error("Module spec does not have a source file loader")]
+    NonSourceFileLoader,
+}
+
+pub fn load_cfg(spec: &Spec<impl Filesystem>) -> Result<Cfg, ImportModuleError> {
+    match spec {
+        Spec::Module(ModuleSpec {
+            kind: ModuleKind::Source,
+            file_loader,
+            ..
+        })
+        | Spec::Module(ModuleSpec {
+            kind: ModuleKind::Extension,
+            stub_spec: Some(StubSpec { file_loader, .. }),
+            ..
+        })
+        | Spec::Stub(StubSpec { file_loader, .. }) => {
+            let source = file_loader.read_file()?;
+            Ok(Cfg::parse(&source).ok_or_else(|| ImportModuleError::CfgParseError(source))?)
+        }
+        _ => Err(ImportModuleError::NonSourceFileLoader),
+    }
+}
 
 pub type ModuleName = Arc<QualifiedName>;
 pub type VariableName = Arc<Identifier>;
@@ -342,9 +371,9 @@ pub enum BinaryOperator {
     NotIn,
 }
 
-impl Display for BinaryOperator {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let symbol = match self {
+impl BinaryOperator {
+    pub fn symbol(&self) -> &'static str {
+        match self {
             BinaryOperator::Add => "+",
             BinaryOperator::Sub => "-",
             BinaryOperator::Mult => "*",
@@ -370,9 +399,45 @@ impl Display for BinaryOperator {
             BinaryOperator::IsNot => "is not",
             BinaryOperator::In => "in",
             BinaryOperator::NotIn => "not in",
-        };
+        }
+    }
 
-        write!(f, "{}", symbol)
+    /// References:
+    /// - https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types
+    pub fn method_name(&self) -> Option<&'static str> {
+        match self {
+            BinaryOperator::Add => Some("add"),
+            BinaryOperator::Sub => Some("sub"),
+            BinaryOperator::Mult => Some("mul"),
+            BinaryOperator::MatMult => Some("matmul"),
+            BinaryOperator::Div => Some("truediv"),
+            BinaryOperator::FloorDiv => Some("floordiv"),
+            BinaryOperator::Mod => Some("mod"),
+            BinaryOperator::Pow => Some("pow"),
+            BinaryOperator::LShift => Some("lshift"),
+            BinaryOperator::RShift => Some("rshift"),
+            BinaryOperator::BitOr => Some("or"),
+            BinaryOperator::BitXor => Some("xor"),
+            BinaryOperator::BitAnd => Some("and"),
+            BinaryOperator::And => None,
+            BinaryOperator::Or => None,
+            BinaryOperator::Eq => Some("eq"),
+            BinaryOperator::NotEq => Some("ne"),
+            BinaryOperator::Lt => Some("lt"),
+            BinaryOperator::LtE => Some("le"),
+            BinaryOperator::Gt => Some("gt"),
+            BinaryOperator::GtE => Some("ge"),
+            BinaryOperator::Is => None,
+            BinaryOperator::IsNot => None,
+            BinaryOperator::In => Some("contains"),
+            BinaryOperator::NotIn => None,
+        }
+    }
+}
+
+impl Display for BinaryOperator {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.symbol())
     }
 }
 

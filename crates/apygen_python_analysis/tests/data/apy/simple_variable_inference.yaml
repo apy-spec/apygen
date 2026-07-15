@@ -26,11 +26,12 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
+            id: Literal
             module: typing
             history_index: 0
           arguments:
-            []
+            - value:
+                bool: false
         description: ""
         initialised: true
         readonly: false

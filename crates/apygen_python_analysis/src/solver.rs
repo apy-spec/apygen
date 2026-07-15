@@ -1,17 +1,20 @@
 use crate::abstract_environment::{
     BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Exception, ExceptionOrigin, FunctionType,
-    LiteralClass, LiteralFunction, LiteralMethod, RaisedExceptions, StructuralDepth,
-    StructuralWidth, TYPES_MODULE, Type, TypeInstance2, TypeLiteral, TypeUnion, WIDTH_LIMIT,
+    LiteralClass, LiteralFunction, LiteralList, LiteralMethod, LiteralTuple, RaisedExceptions,
+    StructuralDepth, StructuralWidth, TYPES_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion,
+    WIDTH_LIMIT,
 };
 use crate::constraints::{
     BinaryOperator, ConstraintNode, DependentGraph, Expression, ExpressionAnnotated,
     ExpressionAttribute, ExpressionBinary, ExpressionCall, ExpressionClass, ExpressionFunction,
-    ExpressionVariable, Guard, ModuleName, ModuleNode, ProgramEntityConstraints, QualifiedLocation,
-    VariableName,
+    ExpressionSubscript, ExpressionUnary, ExpressionVariable, Guard, ModuleName, ModuleNode,
+    ProgramEntityConstraints, QualifiedLocation, VariableName,
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::literal_class::method_resolution_order;
-use crate::genkill::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
+use crate::genkill::expressions::{
+    PyEffects, PyTypeEval, PyValueEval, gen_bool_value, type_literal,
+};
 use crate::{is_type_unreachable, pytype_consume_or_return_option};
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::abstract_state::{AbstractState, AbstractStateProxy};
@@ -221,7 +224,7 @@ impl<'a> ExpressionEvaluator<'a> {
         abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
         module_name: &ModuleName,
         name: &VariableName,
-    ) -> Option<TypeInstance2> {
+    ) -> Option<TypeInstance> {
         let evaluation_state = abstract_state.get(&QualifiedLocation::new(
             module_name.clone(),
             imbl::Vector::new(),
@@ -250,7 +253,7 @@ impl<'a> ExpressionEvaluator<'a> {
             _ => return None,
         };
 
-        Some(TypeInstance2 {
+        Some(TypeInstance {
             base,
             arguments: imbl::Vector::new(),
         })
@@ -259,7 +262,7 @@ impl<'a> ExpressionEvaluator<'a> {
     pub fn type_instance(
         abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
         ty: &TypeLiteral,
-    ) -> Option<TypeInstance2> {
+    ) -> Option<TypeInstance> {
         match ty {
             TypeLiteral::Integer(_) => Self::get_variable_type(
                 abstract_state,
@@ -423,7 +426,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 Some(PyTypeEval::new(
                     Type::Never,
                     PyEffects::new().with_exceptions(RaisedExceptions::raise(Exception::new(
-                        Arc::new(Type::Instance2(Self::get_variable_type(
+                        Arc::new(Type::Instance(Self::get_variable_type(
                             abstract_state,
                             &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
                             &Arc::new(Identifier::parse("NameError")),
@@ -461,8 +464,8 @@ impl<'a> ExpressionEvaluator<'a> {
             _ => return None,
         };
 
-        Some(PyTypeEval::with_default_effects(Type::Instance2(
-            TypeInstance2 {
+        Some(PyTypeEval::with_default_effects(Type::Instance(
+            TypeInstance {
                 base,
                 arguments: imbl::Vector::new(),
             },
@@ -488,12 +491,6 @@ impl<'a> ExpressionEvaluator<'a> {
         Some(PyTypeEval::with_default_effects(Type::new_literal(
             TypeLiteral::Function(LiteralFunction {
                 value: Arc::new(FunctionType {
-                    name: expression_function.identifier.name.clone(),
-                    location: apygen_analysis::namespace::Location::at_exit(
-                        apygen_analysis::namespace::NamespaceLocation::from(Arc::new(
-                            QualifiedName::parse("todo"),
-                        )),
-                    ),
                     identifier: expression_function.identifier.clone(),
                     generics: Default::default(),
                     parameters: Default::default(),
@@ -520,12 +517,6 @@ impl<'a> ExpressionEvaluator<'a> {
         Some(PyTypeEval::with_default_effects(Type::new_literal(
             TypeLiteral::Class(LiteralClass {
                 value: Arc::new(ClassType {
-                    name: expression_class.identifier.name.clone(),
-                    location: apygen_analysis::namespace::Location::at_exit(
-                        apygen_analysis::namespace::NamespaceLocation::from(Arc::new(
-                            QualifiedName::parse("todo"),
-                        )),
-                    ),
                     identifier: expression_class.identifier.clone(),
                     generics: Default::default(),
                     bases: Default::default(),
@@ -548,7 +539,7 @@ impl<'a> ExpressionEvaluator<'a> {
         instance_arguments: Option<&imbl::Vector<Arc<Type>>>,
     ) -> Option<PyTypeEval> {
         match value_ty {
-            Type::Instance2(type_instance) => self.evaluate_attributes(
+            Type::Instance(type_instance) => self.evaluate_attributes(
                 abstract_state,
                 &type_instance.base.as_type(),
                 name,
@@ -625,7 +616,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 }
                 _ => self.evaluate_attributes(
                     abstract_state,
-                    &Type::Instance2(Self::type_instance(abstract_state, type_literal)?),
+                    &Type::Instance(Self::type_instance(abstract_state, type_literal)?),
                     name,
                     None,
                 ),
@@ -657,6 +648,87 @@ impl<'a> ExpressionEvaluator<'a> {
         )
     }
 
+    pub fn evaluate_expression_subscript<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
+        &self,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        expression_subscript: &ExpressionSubscript,
+    ) -> Option<PyTypeEval> {
+        let mut effects = PyEffects::new();
+
+        let value_ty = pytype_consume_or_return_option!(
+            effects,
+            self.evaluate_expression(abstract_state, &expression_subscript.value)?
+        );
+        let get_item = self.evaluate_attributes(
+            abstract_state,
+            &value_ty,
+            &Arc::new(Identifier::parse("__getitem__")),
+            None,
+        )?;
+        let slice_ty = pytype_consume_or_return_option!(
+            effects,
+            self.evaluate_expression(abstract_state, &expression_subscript.slice)?
+        );
+
+        let ty = pytype_consume_or_return_option!(
+            effects,
+            self.evaluate_call(
+                abstract_state,
+                &get_item.value,
+                &Arguments::new().add_positional_argument(Arc::new(slice_ty))
+            )?
+        );
+
+        Some(PyTypeEval::new(ty, effects))
+    }
+
+    pub fn evaluate_call<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
+        &self,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        ty: &Type,
+        arguments: &Arguments,
+    ) -> Option<PyTypeEval> {
+        let Type::Literal(literal) = ty else {
+            return None; // TODO: add support for unions, etc
+        };
+
+        match literal.as_ref() {
+            TypeLiteral::Function(literal_function) => {
+                let evaluation_state = if let Some(evaluation_state) =
+                    abstract_state.get(&literal_function.value.identifier.location)
+                {
+                    evaluation_state
+                } else {
+                    analyse_program_entity(
+                        abstract_state,
+                        self.program_entity_constraints,
+                        &literal_function.value.identifier.location,
+                    )
+                    .unwrap()
+                };
+
+                Some(PyTypeEval::new(
+                    evaluation_state.return_value.as_value()?.clone(),
+                    PyEffects::new()
+                        .with_exceptions(evaluation_state.raised_exceptions.as_value()?.clone()),
+                ))
+            }
+            TypeLiteral::Class(literal_class) => Some(PyTypeEval::with_default_effects(
+                Type::Instance(TypeInstance {
+                    base: Base::Class(literal_class.clone()),
+                    arguments: imbl::Vector::new(),
+                }),
+            )),
+            _ => None, // TODO: add support for classes, etc
+        }
+    }
+
     pub fn evaluate_expression_call<
         's,
         S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
@@ -667,7 +739,7 @@ impl<'a> ExpressionEvaluator<'a> {
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
 
-        let literal_ty = pytype_consume_or_return_option!(
+        let ty = pytype_consume_or_return_option!(
             effects,
             self.evaluate_expression(abstract_state, &expression_call.target)?
         );
@@ -695,39 +767,36 @@ impl<'a> ExpressionEvaluator<'a> {
             }
         }
 
-        let Type::Literal(literal) = &literal_ty else {
-            return None; // TODO: add support for unions, etc
+        self.evaluate_call(abstract_state, &ty, &arguments)
+    }
+
+    pub fn evaluate_expression_unary<
+        's,
+        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    >(
+        &self,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        expression_unary: &ExpressionUnary,
+    ) -> Option<PyTypeEval> {
+        let mut effects = PyEffects::new();
+
+        let operand_ty = pytype_consume_or_return_option!(
+            effects,
+            self.evaluate_expression(abstract_state, &expression_unary.operand)?
+        );
+
+        let ty = match operand_ty {
+            Type::Literal(type_literal) => {
+                pytype_consume_or_return_option!(
+                    effects,
+                    type_literal::call_unary_op(type_literal.as_ref(), expression_unary.operator)
+                )
+            }
+            Type::Never | Type::NoReturn => unreachable!("operand_ty should not be unreachable"),
+            _ => return None,
         };
 
-        match literal.as_ref() {
-            TypeLiteral::Function(literal_function) => {
-                let evaluation_state = if let Some(evaluation_state) =
-                    abstract_state.get(&literal_function.value.identifier.location)
-                {
-                    evaluation_state
-                } else {
-                    analyse_program_entity(
-                        abstract_state,
-                        self.program_entity_constraints,
-                        &literal_function.value.identifier.location,
-                    )
-                    .unwrap()
-                };
-
-                Some(PyTypeEval::new(
-                    evaluation_state.return_value.as_value()?.clone(),
-                    PyEffects::new()
-                        .with_exceptions(evaluation_state.raised_exceptions.as_value()?.clone()),
-                ))
-            }
-            TypeLiteral::Class(literal_class) => Some(PyTypeEval::with_default_effects(
-                Type::Instance2(TypeInstance2 {
-                    base: Base::Class(literal_class.clone()),
-                    arguments: imbl::Vector::new(),
-                }),
-            )),
-            _ => None, // TODO: add support for classes, etc
-        }
+        Some(PyTypeEval::new(ty, effects))
     }
 
     pub fn evaluate_binary_operation<
@@ -865,11 +934,15 @@ impl<'a> ExpressionEvaluator<'a> {
             Expression::Attribute(expression_attribute) => {
                 self.evaluate_expression_attribute(abstract_state, expression_attribute)
             }
-            Expression::Subscript(_) => None,
+            Expression::Subscript(expression_subscript) => {
+                self.evaluate_expression_subscript(abstract_state, expression_subscript)
+            }
             Expression::Call(expression_call) => {
                 self.evaluate_expression_call(abstract_state, expression_call)
             }
-            Expression::Unary(_) => None,
+            Expression::Unary(expression_unary) => {
+                self.evaluate_expression_unary(abstract_state, expression_unary)
+            }
             Expression::Binary(expression_binary) => {
                 self.evaluate_expression_binary(abstract_state, expression_binary)
             }
@@ -1256,7 +1329,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                                                     &new_abstract_state,
                                                     type_literal,
                                                 )
-                                                .map(|type_instance| Type::Instance2(type_instance))
+                                                .map(|type_instance| Type::Instance(type_instance))
                                                 .unwrap_or(Type::Any),
                                             )
                                         } else {

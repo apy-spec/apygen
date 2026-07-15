@@ -1,8 +1,8 @@
-use crate::abstract_environment::{Exception, ExceptionOrigin, LiteralBoolean, LiteralInteger, LiteralString, Type};
+use crate::abstract_environment::{Exception, LiteralBoolean, LiteralInteger, LiteralString, Type};
+use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::PyTypeEval;
 use num_traits::ToPrimitive;
 use std::sync::Arc;
-use crate::constraints::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(literal_string: &LiteralString) -> bool {
     !literal_string.value.is_empty()
@@ -23,7 +23,7 @@ pub fn call_not(literal_string: &LiteralString) -> Type {
 pub fn call_unary_op(literal_string: &LiteralString, operator: UnaryOperator) -> PyTypeEval {
     match operator {
         UnaryOperator::Invert | UnaryOperator::UAdd | UnaryOperator::USub => {
-            PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown))
+            PyTypeEval::raise(Exception::any()) // TODO: fix
         }
         UnaryOperator::Not => PyTypeEval::with_default_effects(call_not(literal_string)),
     }
@@ -43,7 +43,7 @@ pub fn call_binary_op(
                 value: Arc::new(value),
             }
         }),
-        _ => return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown)),
+        _ => return PyTypeEval::raise(Exception::any()), // TODO: fix
     })
 }
 

@@ -1,6 +1,4 @@
-use crate::abstract_environment::{
-    Exception, ExceptionOrigin, LiteralBoolean, LiteralFloat, LiteralInteger, Type,
-};
+use crate::abstract_environment::{Exception, LiteralBoolean, LiteralFloat, LiteralInteger, Type};
 use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions;
 use crate::genkill::expressions::PyTypeEval;
@@ -97,10 +95,7 @@ pub fn call_binary_op(
         }
         BinaryOperator::Div => {
             if right.is_zero() {
-                return PyTypeEval::raise(Exception::builtins(
-                    "ZeroDivisionError",
-                    ExceptionOrigin::Unknown,
-                ));
+                return PyTypeEval::raise(Exception::any()); // TODO: fix
             }
 
             let (left, right) = match (left, right) {
@@ -129,20 +124,14 @@ pub fn call_binary_op(
         }
         BinaryOperator::FloorDiv => {
             if right.is_zero() {
-                return PyTypeEval::raise(Exception::builtins(
-                    "ZeroDivisionError",
-                    ExceptionOrigin::Unknown,
-                ));
+                return PyTypeEval::raise(Exception::any()); // TODO: fix
             }
 
             Type::new_integer_literal(left / right)
         }
         BinaryOperator::Mod => {
             if right.is_zero() {
-                return PyTypeEval::raise(Exception::builtins(
-                    "ZeroDivisionError",
-                    ExceptionOrigin::Unknown,
-                ));
+                return PyTypeEval::raise(Exception::any()); // TODO: fix
             }
 
             Type::new_integer_literal(left % right)
@@ -179,7 +168,7 @@ pub fn call_binary_op(
         BinaryOperator::BitXor => Type::new_integer_literal(left ^ right),
         BinaryOperator::BitAnd => Type::new_integer_literal(left & right),
         BinaryOperator::MatMult => {
-            return PyTypeEval::raise(Exception::type_error(ExceptionOrigin::Unknown));
+            return PyTypeEval::raise(Exception::any()); // TODO: fix
         }
         _ => return PyTypeEval::unknown(),
     })

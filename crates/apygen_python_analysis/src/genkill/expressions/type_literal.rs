@@ -4,7 +4,6 @@ use crate::abstract_environment::{
 use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::{self, PyTypeEval};
 use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::namespace::Location;
 
 pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
     match type_literal {
@@ -40,57 +39,6 @@ pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
         TypeLiteral::ImportedModule(_) => None,
     }
 }
-
-pub fn as_type_instance(type_literal: &TypeLiteral) -> TypeInstance {
-    match type_literal {
-        TypeLiteral::Integer(_) => TypeInstance::builtins("int"),
-        TypeLiteral::Boolean(_) => TypeInstance::builtins("bool"),
-        TypeLiteral::Float(_) => TypeInstance::builtins("float"),
-        TypeLiteral::Complex(_) => TypeInstance::builtins("complex"),
-        TypeLiteral::String(_) => TypeInstance::builtins("str"),
-        TypeLiteral::Bytes(_) => TypeInstance::builtins("bytes"),
-        TypeLiteral::None => TypeInstance::new(
-            Location::from(QualifiedName::parse(TYPES_MODULE)),
-            Identifier::parse("NoneType"),
-        ),
-        TypeLiteral::Ellipsis => TypeInstance::new(
-            Location::from(QualifiedName::parse(TYPES_MODULE)),
-            Identifier::parse("EllipsisType"),
-        ),
-        TypeLiteral::List(_) => TypeInstance::builtins("list"),
-        TypeLiteral::Tuple(_) => TypeInstance::builtins("tuple"),
-        TypeLiteral::Dict(_) => TypeInstance::builtins("dict"),
-        TypeLiteral::Function(_) => TypeInstance::new(
-            Location::from(QualifiedName::parse(TYPES_MODULE)),
-            Identifier::parse("FunctionType"),
-        ),
-        TypeLiteral::OverloadedFunction(_) => TypeInstance::new(
-            Location::from(QualifiedName::parse(TYPES_MODULE)),
-            Identifier::parse("FunctionType"),
-        ),
-        TypeLiteral::Method(_) => TypeInstance::new(
-            Location::from(QualifiedName::parse(TYPES_MODULE)),
-            Identifier::parse("MethodType"),
-        ),
-        TypeLiteral::Class(_) => TypeInstance::builtins("type"),
-        TypeLiteral::TypeAlias(literal_type_alias) => match literal_type_alias.value.kind {
-            TypeAliasKind::Type | TypeAliasKind::String => TypeInstance::builtins("type"),
-            TypeAliasKind::Statement => TypeInstance::new(
-                Location::from(QualifiedName::parse(TYPING_MODULE)),
-                Identifier::parse("TypeAliasType"),
-            ),
-        },
-        TypeLiteral::Generic(_) => TypeInstance::new(
-            Location::from(QualifiedName::parse(TYPING_MODULE)),
-            Identifier::parse("TypeVar"),
-        ),
-        TypeLiteral::ImportedModule(_) => TypeInstance::new(
-            Location::from(QualifiedName::parse(TYPES_MODULE)),
-            Identifier::parse("ModuleType"),
-        ),
-    }
-}
-
 pub fn call_binary_op(
     left: &TypeLiteral,
     operator: BinaryOperator,
