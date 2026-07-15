@@ -17,6 +17,16 @@ pub fn fmt_iterator<T>(
     Ok(())
 }
 
+pub fn fmt_display_iterator<T: Display>(
+    f: &mut Formatter<'_>,
+    iterator: impl Iterator<Item = T>,
+    separator: &str,
+) -> std::fmt::Result {
+    fmt_iterator(f, iterator, separator, |f, element| {
+        Display::fmt(&element, f)
+    })
+}
+
 pub fn fmt_wrapped<T>(
     f: &mut Formatter<'_>,
     iterator: impl Iterator<Item = T>,
