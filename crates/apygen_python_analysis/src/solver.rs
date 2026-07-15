@@ -45,65 +45,71 @@ impl Display for DefinedVariables {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Join)]
-pub struct ExpressionEval {
-    type_eval: PyTypeEval,
-    deferred: imbl::OrdSet<Arc<Expression>>,
+pub struct Deferred<T> {
+    value: T,
+    expressions: imbl::OrdSet<Arc<Expression>>,
 }
 
-impl ExpressionEval {
-    pub fn new(type_eval: PyTypeEval, deferred: imbl::OrdSet<Arc<Expression>>) -> Self {
-        Self {
-            type_eval,
-            deferred,
-        }
+impl<T> Deferred<T> {
+    pub fn new(value: T, expressions: imbl::OrdSet<Arc<Expression>>) -> Self {
+        Self { value, expressions }
     }
 
-    pub fn as_py_type_eval(&self) -> Option<&PyTypeEval> {
-        if self.deferred.is_empty() {
-            Some(&self.type_eval)
+    pub fn known(value: T) -> Self {
+        Self::new(value, imbl::OrdSet::default())
+    }
+
+    pub fn unknown(expressions: imbl::OrdSet<Arc<Expression>>) -> Self
+    where
+        T: Default,
+    {
+        Self::new(T::default(), expressions)
+    }
+
+    pub fn as_value(&self) -> Option<&T> {
+        if self.expressions.is_empty() {
+            Some(&self.value)
         } else {
             None
         }
     }
 }
 
-impl Display for ExpressionEval {
+impl<T: Display> Display for Deferred<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.deferred.is_empty() {
-            write!(f, "{}", self.type_eval)
+        if self.expressions.is_empty() {
+            write!(f, "{}", self.value)
         } else {
-            write!(f, "{} ⊔ #deferred", self.type_eval)?;
-            fmt_display_set(f, self.deferred.iter())
+            write!(f, "{} ⊔ #deferred", self.value)?;
+            fmt_display_set(f, self.expressions.iter())
         }
     }
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
 pub struct EvaluationState {
-    pub evaluations: imbl::OrdMap<Arc<Expression>, ExpressionEval>,
-    pub return_value: imbl::OrdSet<Arc<Expression>>,
-    pub raised_exceptions: RaisedExceptions,
+    pub types: imbl::OrdMap<Arc<Expression>, Deferred<Type>>,
+    pub return_value: Deferred<Type>,
+    pub raised_exceptions: Deferred<RaisedExceptions>,
     pub defined_variables: DefinedVariables,
 }
 
 impl Display for EvaluationState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("(evaluations: ")?;
-        fmt_set(f, self.evaluations.iter(), |f, (expression, eval)| {
+        fmt_set(f, self.types.iter(), |f, (expression, eval)| {
             write!(f, "{}: {}", expression, eval)
         })?;
-        f.write_str(", return: ")?;
-        fmt_display_set(f, self.return_value.iter())?;
         write!(
             f,
-            ", raised: {}, defined_variables = {})",
-            self.raised_exceptions, self.defined_variables
+            ", return: {}, raised: {}, defined_variables = {})",
+            self.return_value, self.raised_exceptions, self.defined_variables
         )
     }
 }
 
 impl EvaluationState {
-    pub fn variables(&self) -> impl Iterator<Item = (ExpressionVariable, ExpressionEval)> {
+    pub fn variables(&self) -> impl Iterator<Item = (ExpressionVariable, Deferred<Type>)> {
         self.defined_variables
             .names
             .iter()
@@ -114,7 +120,7 @@ impl EvaluationState {
 
                     (
                         expression_variable.clone(),
-                        self.evaluations
+                        self.types
                             .get(&Expression::Variable(expression_variable))
                             .cloned()
                             .unwrap_or_default(),
@@ -219,14 +225,13 @@ impl<'a> ExpressionEvaluator<'a> {
 
         for location in locations {
             base = base.join(
-                &evaluation_state
-                    .evaluations
+                evaluation_state
+                    .types
                     .get(&Expression::Variable(ExpressionVariable::new(
                         name.clone(),
                         location.clone(),
                     )))?
-                    .type_eval
-                    .value,
+                    .as_value()?,
             );
         }
 
@@ -337,37 +342,33 @@ impl<'a> ExpressionEvaluator<'a> {
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
     ) -> Option<()> {
-        let mut evaluations = abstract_state
-            .get(&self.qualified_location)?
-            .evaluations
-            .clone();
+        let mut types = abstract_state.get(&self.qualified_location)?.types.clone();
 
         loop {
             let mut changed = false;
 
-            evaluations = evaluations
+            types = types
                 .into_iter()
                 .map(|(expression, evaluation)| {
-                    if evaluation.deferred.is_empty() {
+                    if evaluation.expressions.is_empty() {
                         return (expression, evaluation);
                     }
 
-                    let mut eval =
-                        ExpressionEval::new(evaluation.type_eval.clone(), imbl::OrdSet::default());
+                    let mut ty = Deferred::new(evaluation.value.clone(), imbl::OrdSet::default());
 
-                    for expression in &evaluation.deferred {
+                    for expression in &evaluation.expressions {
                         match self.evaluate_expression(abstract_state, &expression) {
                             Some(type_eval) => {
-                                eval.type_eval = eval.type_eval.join(&type_eval);
+                                ty.value = ty.value.join(&type_eval.value);
                                 changed = true;
                             }
                             None => {
-                                eval.deferred.insert(expression.clone());
+                                ty.expressions.insert(expression.clone());
                             }
                         }
                     }
 
-                    (expression, eval)
+                    (expression, ty)
                 })
                 .collect();
 
@@ -375,7 +376,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 .get_mut(&self.qualified_location)
                 .expect("evaluation_state should exists");
 
-            evaluation_state.evaluations = evaluations.clone();
+            evaluation_state.types = types.clone();
 
             if !changed {
                 break;
@@ -397,8 +398,8 @@ impl<'a> ExpressionEvaluator<'a> {
 
         let evaluation_state = abstract_state.get(&parent_location)?;
 
-        let Some(evaluation) = evaluation_state
-            .evaluations
+        let Some(ty) = evaluation_state
+            .types
             .get(&Expression::Variable(expression_variable.clone()))
         else {
             return if evaluation_state
@@ -422,7 +423,7 @@ impl<'a> ExpressionEvaluator<'a> {
             };
         };
 
-        evaluation.as_py_type_eval().cloned()
+        Some(PyTypeEval::with_default_effects(ty.as_value()?.clone()))
     }
 
     pub fn evaluate_expression_annotated<
@@ -567,31 +568,31 @@ impl<'a> ExpressionEvaluator<'a> {
 
                         let mut eval = PyTypeEval::never();
                         for location in locations {
-                            let location_eval =
-                                evaluation_state.evaluations.get(&Expression::Variable(
-                                    ExpressionVariable::new(name.clone(), location.clone()),
-                                ))?;
-                            if !location_eval.deferred.is_empty() {
-                                return None;
-                            }
-                            eval = eval.join(&location_eval.type_eval.clone().map(|ty| {
-                                let Type::Literal(type_literal) = &ty else {
-                                    return ty;
-                                };
-                                let TypeLiteral::Function(literal_function) = type_literal.as_ref()
-                                else {
-                                    return ty;
-                                };
-                                let Some(arguments) = instance_arguments else {
-                                    return ty;
-                                };
+                            let mut ty = evaluation_state
+                                .types
+                                .get(&Expression::Variable(ExpressionVariable::new(
+                                    name.clone(),
+                                    location.clone(),
+                                )))?
+                                .as_value()?
+                                .clone();
 
-                                Type::new_literal(TypeLiteral::Method(LiteralMethod {
-                                    class: class.value.clone(),
-                                    function: literal_function.value.clone(),
-                                    arguments: arguments.clone(),
-                                }))
-                            }));
+                            if let Type::Literal(type_literal) = &ty {
+                                if let TypeLiteral::Function(literal_function) =
+                                    type_literal.as_ref()
+                                {
+                                    if let Some(arguments) = instance_arguments {
+                                        ty =
+                                            Type::new_literal(TypeLiteral::Method(LiteralMethod {
+                                                class: class.value.clone(),
+                                                function: literal_function.value.clone(),
+                                                arguments: arguments.clone(),
+                                            }));
+                                    }
+                                }
+                            };
+
+                            eval.value = eval.value.join(&ty);
                         }
 
                         return Some(eval);
@@ -689,17 +690,11 @@ impl<'a> ExpressionEvaluator<'a> {
                     .unwrap()
                 };
 
-                let return_value = evaluation_state.return_value.clone();
-                let raised_exceptions = evaluation_state.raised_exceptions.clone();
-
-                Some(
-                    self.with_qualified_location(&literal_function.value.qualified_location)
-                        .evaluate_expressions(
-                            abstract_state,
-                            return_value.iter().map(|expression| expression.as_ref()),
-                        )?
-                        .extend_effects(&PyEffects::new().with_exceptions(raised_exceptions)),
-                )
+                Some(PyTypeEval::new(
+                    evaluation_state.return_value.as_value()?.clone(),
+                    PyEffects::new()
+                        .with_exceptions(evaluation_state.raised_exceptions.as_value()?.clone()),
+                ))
             }
             TypeLiteral::Class(_) => Some(PyTypeEval::with_default_effects(Type::Instance2(
                 TypeInstance2 {
@@ -821,9 +816,11 @@ impl<'a> ExpressionEvaluator<'a> {
     ) -> Option<PyTypeEval> {
         if let Some(expression_eval) = abstract_state
             .get(self.qualified_location)
-            .and_then(|state| state.evaluations.get(expression))
+            .and_then(|state| state.types.get(expression))
         {
-            return expression_eval.as_py_type_eval().cloned();
+            return Some(PyTypeEval::with_default_effects(
+                expression_eval.as_value()?.clone(),
+            ));
         }
 
         match expression {
@@ -975,23 +972,28 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                 for (variable, expressions) in
                     self.constraints().unwrap().specification.arguments.as_ref()
                 {
-                    let expression_evals =
-                        expressions
-                            .iter()
-                            .fold(ExpressionEval::default(), |acc, expression| {
-                                acc.join(&match self.evaluator().evaluate_expression(
-                                    &mut program_evaluation,
-                                    &Arc::new(expression.clone()),
-                                ) {
-                                    Some(type_eval) => {
-                                        ExpressionEval::new(type_eval, imbl::OrdSet::default())
-                                    }
-                                    None => ExpressionEval::new(
-                                        PyTypeEval::never(),
-                                        imbl::OrdSet::unit(Arc::new(expression.clone())),
-                                    ),
-                                })
-                            });
+                    let mut ty: Deferred<Type> = Deferred::default();
+                    let mut raised_exceptions: Deferred<RaisedExceptions> = Deferred::default();
+                    for expression in expressions {
+                        match self
+                            .evaluator()
+                            .evaluate_expression(&mut program_evaluation, expression)
+                        {
+                            Some(type_eval) => {
+                                ty.value = ty.value.join(&type_eval.value);
+                                raised_exceptions
+                                    .value
+                                    .exceptions
+                                    .extend(type_eval.effects.exceptions.exceptions);
+                            }
+                            None => {
+                                ty.expressions.insert(Arc::new(expression.clone()));
+                                raised_exceptions
+                                    .expressions
+                                    .insert(Arc::new(expression.clone()));
+                            }
+                        }
+                    }
 
                     let evaluation_state =
                         program_evaluation.get_or_insert_default(self.qualified_location.clone());
@@ -1001,21 +1003,25 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                         imbl::OrdSet::unit(variable.location.clone()),
                     );
 
-                    evaluation_state.evaluations.insert(
-                        Arc::new(Expression::Variable(variable.clone())),
-                        expression_evals,
-                    );
+                    evaluation_state
+                        .types
+                        .insert(Arc::new(Expression::Variable(variable.clone())), ty);
+                    evaluation_state.raised_exceptions =
+                        evaluation_state.raised_exceptions.join(&raised_exceptions);
                 }
             }
             ConstraintNode::TypeConstraint(constraint) => {
-                let expression_eval = match self
+                let (ty, raised_exceptions) = match self
                     .evaluator()
                     .evaluate_expression(&mut program_evaluation, &constraint.left)
                 {
-                    Some(type_eval) => ExpressionEval::new(type_eval, imbl::OrdSet::default()),
-                    None => ExpressionEval::new(
-                        PyTypeEval::never(),
-                        imbl::OrdSet::unit(constraint.left.clone()),
+                    Some(type_eval) => (
+                        Deferred::known(type_eval.value),
+                        Deferred::known(type_eval.effects.exceptions),
+                    ),
+                    None => (
+                        Deferred::unknown(imbl::OrdSet::unit(constraint.left.clone())),
+                        Deferred::unknown(imbl::OrdSet::unit(constraint.left.clone())),
                     ),
                 };
 
@@ -1023,12 +1029,12 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                     program_evaluation.get_or_insert_default(self.qualified_location.clone());
 
                 evaluation_state
-                    .evaluations
+                    .types
                     .entry(constraint.right.clone())
-                    .and_modify(|previous_eval| {
-                        *previous_eval = previous_eval.join(&expression_eval)
-                    })
-                    .or_insert(expression_eval);
+                    .and_modify(|previous_eval| *previous_eval = previous_eval.join(&ty))
+                    .or_insert(ty);
+                evaluation_state.raised_exceptions =
+                    evaluation_state.raised_exceptions.join(&raised_exceptions);
             }
             ConstraintNode::DefinedVariableConstraint(expression) => {
                 let evaluation_state =
@@ -1040,10 +1046,25 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                 );
             }
             ConstraintNode::ReturnConstraint(constraint) => {
+                let (ty, raised_exceptions) = match self
+                    .evaluator()
+                    .evaluate_expression(&mut program_evaluation, &constraint.expression)
+                {
+                    Some(type_eval) => (
+                        Deferred::known(type_eval.value),
+                        Deferred::known(type_eval.effects.exceptions),
+                    ),
+                    None => (
+                        Deferred::unknown(imbl::OrdSet::unit(constraint.expression.clone())),
+                        Deferred::unknown(imbl::OrdSet::unit(constraint.expression.clone())),
+                    ),
+                };
+
                 let evaluation_state =
                     program_evaluation.get_or_insert_default(self.qualified_location.clone());
 
-                evaluation_state.return_value = imbl::OrdSet::unit(constraint.expression.clone());
+                evaluation_state.return_value = ty;
+                evaluation_state.raised_exceptions = raised_exceptions.join(&raised_exceptions);
             }
             _ => {}
         }
@@ -1122,6 +1143,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                     if let Some(type_eval) = eval {
                         evaluation_state
                             .raised_exceptions
+                            .value
                             .exceptions
                             .extend(type_eval.effects.exceptions.exceptions)
                     }
@@ -1194,12 +1216,12 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
 
         if let Some(evaluation_state) = new_abstract_state.get(&self.qualified_location) {
             let new_evaluations = evaluation_state
-                .evaluations
+                .types
                 .clone()
                 .into_iter()
                 .map(|(expression, mut eval)| {
-                    while eval.type_eval.value.width() > WIDTH_LIMIT {
-                        eval.type_eval.value = match eval.type_eval.value {
+                    while eval.value.width() > WIDTH_LIMIT {
+                        eval.value = match eval.value {
                             Type::Union(type_union) => {
                                 let mut new_type_union = TypeUnion::new();
                                 for ty in type_union.types() {
@@ -1224,8 +1246,8 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                         };
                     }
 
-                    if eval.type_eval.value.depth() > DEPTH_LIMIT {
-                        eval.type_eval.value = Type::Any;
+                    if eval.value.depth() > DEPTH_LIMIT {
+                        eval.value = Type::Any;
                     }
 
                     (expression, eval)
@@ -1235,7 +1257,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
             new_abstract_state
                 .get_mut(&self.qualified_location)
                 .expect("evaluation_state should exists")
-                .evaluations = new_evaluations;
+                .types = new_evaluations;
         }
 
         Ok(new_abstract_state)
@@ -1335,9 +1357,9 @@ pub fn analyse_program_entity<
                 .get(&ConstraintNode::ExceptionExit)
                 .and_then(|program_evaluation| program_evaluation.get(qualified_location))
             {
-                evaluation_state.evaluations = evaluation_state
-                    .evaluations
-                    .join(&exception_evaluation_state.evaluations);
+                evaluation_state.types = evaluation_state
+                    .types
+                    .join(&exception_evaluation_state.types);
                 evaluation_state.raised_exceptions = evaluation_state
                     .raised_exceptions
                     .join(&exception_evaluation_state.raised_exceptions);
@@ -1520,10 +1542,11 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            a@{module[4:4]} = (42 ➤ ({} - Pure - Total))
-            b@{module[8:0]} = (42 ➤ ({} - Pure - Total))
-            x@{module[1:0]} = (True ➤ ({} - Pure - Total))
-            #return = (None ➤ ({} - Pure - Total))
+            a@{module[4:4]} = 42
+            b@{module[8:0]} = 42
+            x@{module[1:0]} = True
+            #raise = {}
+            #return = None
         "##},
     )]
     #[case::simple_while_statement(
@@ -1537,11 +1560,11 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            a@{module[1:0]} = (0 ➤ ({} - Pure - Total))
-            a@{module[4:4]} = (Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] ➤ ({} - Pure - Total)) ⊔ #deferred{(a@{module[4:8]}) + (1)}
-            b@{module[6:0]} = (Union[@class(builtins[1:6]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] ➤ ({} - Pure - Total)) ⊔ #deferred{a@{module[6:4]}}
-            #return = (None ➤ ({} - Pure - Total))
-            #raise = {Exception(type=Any, origin=Unknown)}
+            a@{module[1:0]} = 0
+            a@{module[4:4]} = Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] ⊔ #deferred{(a@{module[4:8]}) + (1)}
+            b@{module[6:0]} = Union[@class(builtins[1:6]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] ⊔ #deferred{a@{module[6:4]}}
+            #raise = {Exception(type=Any, origin=Unknown)} ⊔ #deferred{a@{module[3:6]}, a@{module[4:4]}, (a@{module[4:8]}) + (1)}
+            #return = None
         "##},  // TODO: fix this when operations are implemented
     )]
     #[case::simple_function_definition(
@@ -1553,12 +1576,14 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            add_two@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
+            add_two@{module[1:4]} = function(module[1:4])
+            #raise = {}
+            #return = Never
         module[1:4]:
-            a@{module[1:12]} = (@class(builtins[1:6]) ➤ ({} - Pure - Total))
-            b@{module[1:20]} = (Never ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
+            a@{module[1:12]} = @class(builtins[1:6])
+            b@{module[1:20]} = Never
+            #raise = {}
+            #return = Never
         "##},
     )]
     #[case::simple_class_attribute_access(
@@ -1570,12 +1595,14 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
-            result@{module[4:0]} = (5 ➤ ({} - Pure - Total))
-            #return = (None ➤ ({} - Pure - Total))
+            A@{module[1:6]} = class(module[1:6])
+            result@{module[4:0]} = 5
+            #raise = {}
+            #return = None
         module[1:6]:
-            b@{module[1:6][2:4]} = (5 ➤ ({} - Pure - Total))
-            #return = (None ➤ ({} - Pure - Total))
+            b@{module[1:6][2:4]} = 5
+            #raise = {}
+            #return = None
         "##},
     )]
     #[case::simple_attribute_access(
@@ -1588,13 +1615,15 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
-            a@{module[4:0]} = (@class(module[1:6]) ➤ ({} - Pure - Total))
-            result@{module[5:0]} = (5 ➤ ({} - Pure - Total))
-            #return = (None ➤ ({} - Pure - Total))
+            A@{module[1:6]} = class(module[1:6])
+            a@{module[4:0]} = @class(module[1:6])
+            result@{module[5:0]} = 5
+            #raise = {}
+            #return = None
         module[1:6]:
-            b@{module[1:6][2:4]} = (5 ➤ ({} - Pure - Total))
-            #return = (None ➤ ({} - Pure - Total))
+            b@{module[1:6][2:4]} = 5
+            #raise = {}
+            #return = None
         "##},
     )]
     #[case::simple_class_function_access(
@@ -1607,14 +1636,17 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
-            result@{module[5:0]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
-            #return = (None ➤ ({} - Pure - Total))
+            A@{module[1:6]} = class(module[1:6])
+            result@{module[5:0]} = function(module[1:6][2:8])
+            #raise = {}
+            #return = None
         module[1:6]:
-            foo@{module[1:6][2:8]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
-            #return = (None ➤ ({} - Pure - Total))
+            foo@{module[1:6][2:8]} = function(module[1:6][2:8])
+            #raise = {}
+            #return = None
         module[1:6][2:8]:
-            #return = (5 ➤ ({} - Pure - Total))
+            #raise = {}
+            #return = 5
         "##},
     )]
     #[case::simple_method_access(
@@ -1628,15 +1660,18 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = (class(module[1:6]) ➤ ({} - Pure - Total))
-            a@{module[5:0]} = (@class(module[1:6]) ➤ ({} - Pure - Total))
-            result@{module[6:0]} = (method(class(module[1:6])[], function(module[1:6][2:8])) ➤ ({} - Pure - Total))
-            #return = (None ➤ ({} - Pure - Total))
+            A@{module[1:6]} = class(module[1:6])
+            a@{module[5:0]} = @class(module[1:6])
+            result@{module[6:0]} = method(class(module[1:6])[], function(module[1:6][2:8]))
+            #raise = {}
+            #return = None
         module[1:6]:
-            foo@{module[1:6][2:8]} = (function(module[1:6][2:8]) ➤ ({} - Pure - Total))
-            #return = (None ➤ ({} - Pure - Total))
+            foo@{module[1:6][2:8]} = function(module[1:6][2:8])
+            #raise = {}
+            #return = None
         module[1:6][2:8]:
-            #return = (5 ➤ ({} - Pure - Total))
+            #raise = {}
+            #return = 5
         "##},
     )]
     #[case::hard_function_call(
@@ -1650,11 +1685,12 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            foo@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
-            #return = (Never ➤ ({} - Pure - Total))
-            #raise = {Exception(type=@class(builtins[4:6]), origin=Specified)}
+            foo@{module[1:4]} = function(module[1:4])
+            #raise = {}
+            #return = Never
         module[1:4]:
-            #return = (Never ➤ ({Exception(type=@class(builtins[4:6]), origin=Specified)} - Pure - Total))
+            #raise = {}
+            #return = Never
         "##},
     )]
     #[case::forward_reference_function_call(
@@ -1668,12 +1704,14 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            CONST@{module[4:0]} = (5 ➤ ({} - Pure - Total))
-            foo@{module[1:4]} = (function(module[1:4]) ➤ ({} - Pure - Total))
-            result@{module[6:0]} = (5 ➤ ({} - Pure - Total))
-            #return = (None ➤ ({} - Pure - Total))
+            CONST@{module[4:0]} = 5
+            foo@{module[1:4]} = function(module[1:4])
+            result@{module[6:0]} = 5
+            #raise = {}
+            #return = None
         module[1:4]:
-            #return = (5 ➤ ({} - Pure - Total))
+            #raise = {}
+            #return = 5
         "##},
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
@@ -1706,31 +1744,18 @@ mod tests {
             if qualified_location.module_name != module_name {
                 continue;
             }
-            let program_entity_constraints =
-                &dependent_graph.nodes[&ModuleNode::Module(qualified_location.module_name.clone())];
-            let return_value = abstract_state.return_value.clone();
-            let raised_exceptions = abstract_state.raised_exceptions.clone();
-
             actual_types.push_str(&format!("{}:\n", qualified_location));
             for (variable, ty) in abstract_state.variables() {
                 actual_types.push_str(&format!("    {} = {}\n", variable, ty));
             }
-            if let Some(return_type) =
-                ExpressionEvaluator::new(qualified_location, program_entity_constraints)
-                    .evaluate_expressions(
-                        &mut AbstractStateProxy::new(
-                            &program_evaluation,
-                            ProgramEvaluation::default(),
-                        ),
-                        return_value.iter().map(|expression| expression.as_ref()),
-                    )
-            {
-                actual_types.push_str(&format!("    #return = {}\n", return_type));
-            }
-
-            if !raised_exceptions.exceptions.is_empty() {
-                actual_types.push_str(&format!("    #raise = {}\n", raised_exceptions));
-            }
+            actual_types.push_str(&format!(
+                "    #raise = {}\n",
+                abstract_state.raised_exceptions
+            ));
+            actual_types.push_str(&format!(
+                "    #return = {}\n",
+                abstract_state.return_value.value
+            ));
         }
 
         assert_eq!(expected_types, actual_types, "{actual_types}");
