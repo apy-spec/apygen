@@ -1686,10 +1686,10 @@ mod tests {
         indoc! {r##"
         module:
             foo@{module[1:4]} = function(module[1:4])
-            #raise = {}
+            #raise = {Exception(type=@class(builtins[4:6]), origin=Specified)}
             #return = Never
         module[1:4]:
-            #raise = {}
+            #raise = {Exception(type=@class(builtins[4:6]), origin=Specified)}
             #return = Never
         "##},
     )]
