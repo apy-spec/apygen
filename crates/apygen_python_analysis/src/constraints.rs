@@ -16,9 +16,10 @@ use imbl::ordmap::Entry;
 use num_bigint::BigInt;
 use num_complex::Complex64;
 use num_traits::Num;
+use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use thiserror::Error;
@@ -2815,9 +2816,41 @@ pub struct ProgramEntityConstraints {
     pub constraint_graph: ConstraintGraph,
 }
 
+pub fn create_constraints(
+    program_entity_analyses: BTreeMap<ProgramEntity, CfgAnalysis>,
+) -> (
+    imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
+    BTreeSet<ModuleName>,
+) {
+    let mut imports = BTreeSet::new();
+    let constraints = program_entity_analyses
+        .into_iter()
+        .map(|(program_entity, cfg_analysis)| {
+            imports.extend(cfg_analysis.environment.imports);
+            (
+                program_entity.location,
+                ProgramEntityConstraints {
+                    specification: cfg_analysis.specification.clone(),
+                    constraint_graph: ConstraintGraph::new(
+                        cfg_analysis.environment.nodes.clone(),
+                        cfg_analysis.environment.edges.into_iter().fold(
+                            imbl::OrdMap::default(),
+                            |mut acc, ((from, to), guards)| {
+                                acc.entry(from).or_default().insert(to, guards);
+                                acc
+                            },
+                        ),
+                    ),
+                },
+            )
+        })
+        .collect();
+    (constraints, imports)
+}
+
 pub fn analyse_program<C: CfgImporter + Sync>(
     cfg_importer: &C,
-    initial_modules: HashSet<ModuleName>,
+    initial_modules: impl Iterator<Item = ModuleName>,
 ) -> DependentGraph<ModuleNode, imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>> {
     let builtins_module_name = Arc::new(QualifiedName::parse(BUILTINS_MODULE));
 
@@ -2835,14 +2868,20 @@ pub fn analyse_program<C: CfgImporter + Sync>(
 
     let mut dependent_graph = DependentGraph::default();
 
-    let builtins_cfg_analysis = analyse_cfg(builtins_entity.clone(), &cfg, None);
+    let builtins_cfg_analyses = analyse_cfg(builtins_entity.clone(), &cfg, None);
 
-    let builtins_module_analysis = &builtins_cfg_analysis[&builtins_entity];
+    let builtins_module_analysis = &builtins_cfg_analyses[&builtins_entity];
 
     dependent_graph.add_dependent(ModuleNode::Entry, builtins_module_node.clone());
     dependent_graph.add_dependent(builtins_module_node.clone(), ModuleNode::Exit);
 
-    let mut worklist = initial_modules;
+    let mut worklist = initial_modules
+        .chain(
+            builtins_cfg_analyses
+                .values()
+                .flat_map(|cfg_analysis| cfg_analysis.environment.imports.iter().cloned()),
+        )
+        .collect::<BTreeSet<_>>();
 
     while !worklist.is_empty() {
         let builtin_parent_state = &ProgramEntityAbstractParentState::new(
@@ -2852,8 +2891,7 @@ pub fn analyse_program<C: CfgImporter + Sync>(
         );
 
         let analysed_modules = worklist
-            .drain()
-            .par_bridge()
+            .into_par_iter()
             .filter_map(|module_name| {
                 let Some(cfg) = cfg_importer.import_cfg(&module_name) else {
                     return None;
@@ -2865,22 +2903,22 @@ pub fn analyse_program<C: CfgImporter + Sync>(
                     None
                 };
 
-                Some((
-                    ModuleNode::Module(module_name.clone()),
-                    analyse_cfg(
-                        ProgramEntity::new(
-                            QualifiedLocation::from(module_name),
-                            ProgramPoint::Entry,
-                            ProgramEntityKind::Module,
-                        ),
-                        &cfg,
-                        parent_state,
+                let (constraints, imports) = create_constraints(analyse_cfg(
+                    ProgramEntity::new(
+                        QualifiedLocation::from(module_name.clone()),
+                        ProgramPoint::Entry,
+                        ProgramEntityKind::Module,
                     ),
-                ))
-            })
-            .collect::<HashMap<_, _>>();
+                    &cfg,
+                    parent_state,
+                ));
 
-        for (module_node, program_entity_constraints) in analysed_modules {
+                Some((ModuleNode::Module(module_name), constraints, imports))
+            })
+            .collect::<Vec<_>>();
+
+        worklist = BTreeSet::new();
+        for (module_node, constraints, imports) in analysed_modules {
             if module_node == builtins_module_node {
                 continue;
             }
@@ -2889,70 +2927,24 @@ pub fn analyse_program<C: CfgImporter + Sync>(
             dependent_graph.add_dependent(module_node.clone(), ModuleNode::Exit);
             dependent_graph.remove_dependent(builtins_module_node.clone(), ModuleNode::Exit);
 
-            for abstract_environment in program_entity_constraints.values() {
-                for import_module_name in &abstract_environment.environment.imports {
-                    let import_module_node = ModuleNode::Module(import_module_name.clone());
+            for import in imports {
+                let import_module_node = ModuleNode::Module(import.clone());
 
-                    dependent_graph.add_dependent(import_module_node.clone(), module_node.clone());
-                    dependent_graph.remove_dependent(import_module_node.clone(), ModuleNode::Exit);
+                dependent_graph.add_dependent(import_module_node.clone(), module_node.clone());
+                dependent_graph.remove_dependent(import_module_node.clone(), ModuleNode::Exit);
 
-                    if !dependent_graph.nodes.contains_key(&import_module_node) {
-                        worklist.insert(import_module_name.clone());
-                    }
+                if !dependent_graph.nodes.contains_key(&import_module_node) {
+                    worklist.insert(import.clone());
                 }
             }
 
-            dependent_graph.nodes.insert(
-                module_node,
-                program_entity_constraints
-                    .into_iter()
-                    .map(|(program_entity, cfg_analysis)| {
-                        (
-                            program_entity.location,
-                            ProgramEntityConstraints {
-                                specification: cfg_analysis.specification.clone(),
-                                constraint_graph: ConstraintGraph::new(
-                                    cfg_analysis.environment.nodes.clone(),
-                                    cfg_analysis.environment.edges.into_iter().fold(
-                                        imbl::OrdMap::default(),
-                                        |mut acc, ((from, to), guards)| {
-                                            acc.entry(from).or_default().insert(to, guards);
-                                            acc
-                                        },
-                                    ),
-                                ),
-                            },
-                        )
-                    })
-                    .collect(),
-            );
+            dependent_graph.nodes.insert(module_node, constraints);
         }
     }
 
-    dependent_graph.insert(
-        builtins_module_node,
-        builtins_cfg_analysis
-            .into_iter()
-            .map(|(program_entity, cfg_analysis)| {
-                (
-                    program_entity.location,
-                    ProgramEntityConstraints {
-                        specification: cfg_analysis.specification.clone(),
-                        constraint_graph: ConstraintGraph::new(
-                            cfg_analysis.environment.nodes.clone(),
-                            cfg_analysis.environment.edges.into_iter().fold(
-                                imbl::OrdMap::default(),
-                                |mut acc, ((from, to), guards)| {
-                                    acc.entry(from).or_default().insert(to, guards);
-                                    acc
-                                },
-                            ),
-                        ),
-                    },
-                )
-            })
-            .collect(),
-    );
+    let (constraints, _) = create_constraints(builtins_cfg_analyses);
+
+    dependent_graph.insert(builtins_module_node, constraints);
 
     dependent_graph
 }
@@ -3816,7 +3808,7 @@ mod tests {
                 ),
             ]),
         };
-        let dependent_graph = analyse_program(&cfg_importer, HashSet::from_iter([module_name]));
+        let dependent_graph = analyse_program(&cfg_importer, std::iter::once(module_name));
 
         let mut actual_dot = dependent_graph.dot("DependentGraph");
 

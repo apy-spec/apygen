@@ -50,7 +50,7 @@ pub fn analyse_workdir(
 
     let cfg_importer = SpecCfgImporter { specs };
 
-    let dependent_graph = analyse_program(&cfg_importer, target_modules);
+    let dependent_graph = analyse_program(&cfg_importer, target_modules.into_iter());
 
     let solver = ModuleConstraintSolver::new(&dependent_graph);
 

@@ -1,8 +1,7 @@
 use crate::abstract_environment::{
     BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Exception, ExceptionOrigin, FunctionType,
-    LiteralClass, LiteralFunction, LiteralList, LiteralMethod, LiteralTuple, RaisedExceptions,
-    StructuralDepth, StructuralWidth, TYPES_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion,
-    WIDTH_LIMIT,
+    LiteralClass, LiteralFunction, LiteralMethod, RaisedExceptions, StructuralDepth,
+    StructuralWidth, TYPES_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion, WIDTH_LIMIT,
 };
 use crate::constraints::{
     BinaryOperator, Constraint, ConstraintNode, DependentGraph, Expression, ExpressionAnnotated,
@@ -12,9 +11,7 @@ use crate::constraints::{
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::literal_class::method_resolution_order;
-use crate::genkill::expressions::{
-    PyEffects, PyTypeEval, PyValueEval, gen_bool_value, type_literal,
-};
+use crate::genkill::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
 use crate::{is_type_unreachable, pytype_consume_or_return_option};
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::abstract_state::{AbstractState, AbstractStateProxy};
@@ -1627,7 +1624,7 @@ mod tests {
     use apygen_analysis::log::LogAnalysisObserver;
     use indoc::indoc;
     use rstest::rstest;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     fn init_logger() {
         let _ = env_logger::builder().is_test(true).try_init();
@@ -1852,8 +1849,7 @@ mod tests {
                 ),
             ]),
         };
-        let dependent_graph =
-            analyse_program(&cfg_importer, HashSet::from_iter([module_name.clone()]));
+        let dependent_graph = analyse_program(&cfg_importer, std::iter::once(module_name.clone()));
 
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 

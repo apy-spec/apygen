@@ -1,14 +1,12 @@
-use apy::v1::{Identifier, QualifiedName};
+use apy::v1::Identifier;
 use apygen_finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
 use apygen_finder::pathfinder::PathFinder;
-use apygen_python_analysis::abstract_environment::BUILTINS_MODULE;
 use apygen_python_analysis::constraints::{SpecCfgImporter, analyse_program};
 use criterion::{Criterion, criterion_group, criterion_main};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 fn absolute_manifest_dir() -> AbsolutePathBuf {
     AbsolutePathBuf::try_from(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
@@ -41,9 +39,7 @@ fn build_constraints() {
 
     let cfg_importer = SpecCfgImporter { specs };
 
-    let builtins = Arc::new(QualifiedName::parse(BUILTINS_MODULE));
-
-    analyse_program(&cfg_importer, HashSet::from_iter([builtins.clone()]));
+    analyse_program(&cfg_importer, std::iter::empty());
 }
 
 fn bench_constraint_builder(criterion: &mut Criterion) {

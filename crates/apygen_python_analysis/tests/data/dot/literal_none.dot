@@ -1,9 +1,28 @@
 digraph "DependentGraph" {
+    "Module(_ast)";
+    "Module(_sitebuiltins)";
+    "Module(_typeshed)";
     "Module(builtins)";
     "Module(literal_none)";
+    "Module(sys)";
+    "Module(types)";
     "Entry" -> "Module(builtins)";
+    "Module(_ast)" -> "Exit";
+    "Module(_sitebuiltins)" -> "Exit";
+    "Module(_typeshed)" -> "Exit";
+    "Module(builtins)" -> "Module(_ast)";
+    "Module(builtins)" -> "Module(_sitebuiltins)";
+    "Module(builtins)" -> "Module(_typeshed)";
     "Module(builtins)" -> "Module(literal_none)";
+    "Module(builtins)" -> "Module(sys)";
+    "Module(builtins)" -> "Module(types)";
     "Module(literal_none)" -> "Exit";
+    "Module(sys)" -> "Module(_ast)";
+    "Module(sys)" -> "Module(_sitebuiltins)";
+    "Module(sys)" -> "Module(_typeshed)";
+    "Module(sys)" -> "Module(sys)";
+    "Module(sys)" -> "Module(types)";
+    "Module(types)" -> "Exit";
 }
 digraph "literal_none" {
     "Constraint()" [label="#return(None)"];

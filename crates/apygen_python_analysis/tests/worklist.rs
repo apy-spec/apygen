@@ -3,17 +3,14 @@ use apygen_analysis::log::LogAnalysisObserver;
 use apygen_analysis::rayon::par_analysis;
 use apygen_finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
 use apygen_finder::pathfinder::PathFinder;
-use apygen_python_analysis::abstract_environment::BUILTINS_MODULE;
 use apygen_python_analysis::constraints::{
     DependentGraph, ModuleNode, ProgramEntityConstraints, QualifiedLocation, SpecCfgImporter,
     analyse_program,
 };
 use apygen_python_analysis::converter::v1::convert_apy_v1;
 use apygen_python_analysis::solver::ModuleConstraintSolver;
-use rayon::iter::ParallelBridge;
-use rayon::iter::ParallelIterator;
 use rstest::rstest;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::path::PathBuf;
@@ -40,7 +37,7 @@ fn typeshed_dir() -> AbsolutePathBuf {
 
 pub fn analyse_directory(
     directory: AbsolutePathBuf,
-    target_modules: HashSet<Arc<QualifiedName>>,
+    target_module: Arc<QualifiedName>,
 ) -> (
     DependentGraph<ModuleNode, imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>>,
     apy::Apy,
@@ -57,7 +54,7 @@ pub fn analyse_directory(
 
     let cfg_importer = SpecCfgImporter { specs };
 
-    let dependent_graph = analyse_program(&cfg_importer, target_modules);
+    let dependent_graph = analyse_program(&cfg_importer, std::iter::once(target_module.clone()));
 
     let solver = ModuleConstraintSolver::new(&dependent_graph);
 
@@ -66,24 +63,7 @@ pub fn analyse_directory(
         .abstract_states[&ModuleNode::Exit]
         .clone();
 
-    let apy_v1 = convert_apy_v1(
-        &program_evaluation,
-        dependent_graph
-            .nodes
-            .keys()
-            .par_bridge()
-            .filter_map(|module_node| {
-                if let ModuleNode::Module(module_name) = module_node {
-                    if module_name.as_ref() != BUILTINS_MODULE {
-                        Some(module_name)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }),
-    );
+    let apy_v1 = convert_apy_v1(&program_evaluation, rayon::iter::once(&target_module));
 
     (dependent_graph, apy::Apy::V1(apy_v1))
 }
@@ -112,15 +92,15 @@ fn test_inference(#[case] module_name: String) {
     let absolute_manifest_dir = absolute_manifest_dir();
     let modules_dir = absolute_manifest_dir.join("tests/data/modules");
 
-    let (actual_dependent_graph, actual_apy) = analyse_directory(
-        modules_dir,
-        HashSet::from_iter([Arc::new(QualifiedName::parse(&module_name))]),
-    );
+    let module_qualified_name = Arc::new(QualifiedName::parse(&module_name));
+
+    let (actual_dependent_graph, actual_apy) =
+        analyse_directory(modules_dir, module_qualified_name.clone());
 
     let mut actual_dot = actual_dependent_graph.dot("DependentGraph");
     for program_entities in actual_dependent_graph.nodes.values() {
         for (qualified_location, abstract_environment) in program_entities {
-            if qualified_location.module_name.as_ref() == BUILTINS_MODULE {
+            if qualified_location.module_name != module_qualified_name {
                 continue;
             }
             actual_dot.push_str(
