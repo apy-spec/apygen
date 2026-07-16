@@ -1683,7 +1683,7 @@ mod tests {
             a@{module[1:0]} = 0
             a@{module[4:4]} = Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] ⊔ #deferred{(a@{module[4:8]}) + (1)}
             b@{module[6:0]} = Never ⊔ #deferred{a@{module[6:4]}}
-            #raise = {Exception(type=Any, origin=Unknown)} ⊔ #deferred{a@{module[3:6]}, a@{module[4:4]}, (a@{module[4:8]}) + (1)}
+            #raise = {Exception(type=Any, origin=Unknown)} ⊔ #deferred{a@{module[4:4]}, (a@{module[4:8]}) + (1)}
             #return = None
         "##},  // TODO: fix this when operations are implemented
     )]

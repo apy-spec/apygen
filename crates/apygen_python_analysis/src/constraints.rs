@@ -1150,10 +1150,6 @@ impl<'a> ConstraintsBuilder<'a> {
                         previous_expression_variables.insert(previous_expression_variable);
                     }
                 }
-
-                abstract_environment
-                    .variable_locations
-                    .insert(used_variable_name.clone(), used_locations.clone());
             } else {
                 // TODO: add support for forward references
             }
@@ -3586,9 +3582,9 @@ mod tests {
             "Constraint(location=1:0)" [label="{0 ⊑ a@{module[1:0]}, #defined(a@{module[1:0]})}"];
             "Constraint(location=3:6)" [label="{a@{module[1:0]} ⊑ a@{module[3:6]}, a@{module[4:4]} ⊑ a@{module[3:6]}}"];
             "Constraint(location=4:4)" [label="{(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]}, #defined(a@{module[4:4]})}"];
-            "Constraint(location=4:8)" [label="{a@{module[3:6]} ⊑ a@{module[4:8]}}"];
+            "Constraint(location=4:8)" [label="{a@{module[1:0]} ⊑ a@{module[4:8]}, a@{module[4:4]} ⊑ a@{module[4:8]}}"];
             "Constraint(location=6:0)" [label="{a@{module[6:4]} ⊑ b@{module[6:0]}, #defined(b@{module[6:0]})}"];
-            "Constraint(location=6:4)" [label="{a@{module[3:6]} ⊑ a@{module[6:4]}}"];
+            "Constraint(location=6:4)" [label="{a@{module[1:0]} ⊑ a@{module[6:4]}, a@{module[4:4]} ⊑ a@{module[6:4]}}"];
             "Constraint()" -> "TypeExit" [label=""];
             "Constraint(location=1:0)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[1:0]}) | #succeed(a@{module[4:4]})"];
             "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(a@{module[1:0]}) | #raise(a@{module[4:4]})"];
@@ -3600,13 +3596,13 @@ mod tests {
             "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[1:0]}) | #raise(a@{module[4:4]})"];
             "Constraint(location=4:8)" -> "Constraint(location=4:4)" [label="#succeed((a@{module[4:8]}) + (1))"];
             "Constraint(location=4:8)" -> "ExceptionExit" [label="#raise((a@{module[4:8]}) + (1))"];
-            "Constraint(location=4:8, id=#empty)" -> "Constraint(location=4:8)" [label="#succeed(a@{module[3:6]})"];
-            "Constraint(location=4:8, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[3:6]})"];
+            "Constraint(location=4:8, id=#empty)" -> "Constraint(location=4:8)" [label="#succeed(a@{module[1:0]}) | #succeed(a@{module[4:4]})"];
+            "Constraint(location=4:8, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[1:0]}) | #raise(a@{module[4:4]})"];
             "Constraint(location=6:0)" -> "Constraint()" [label=""];
             "Constraint(location=6:4)" -> "Constraint(location=6:0)" [label="#succeed(a@{module[6:4]})"];
             "Constraint(location=6:4)" -> "ExceptionExit" [label="#raise(a@{module[6:4]})"];
-            "Constraint(location=6:4, id=#empty)" -> "Constraint(location=6:4)" [label="#succeed(a@{module[3:6]})"];
-            "Constraint(location=6:4, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[3:6]})"];
+            "Constraint(location=6:4, id=#empty)" -> "Constraint(location=6:4)" [label="#succeed(a@{module[1:0]}) | #succeed(a@{module[4:4]})"];
+            "Constraint(location=6:4, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[1:0]}) | #raise(a@{module[4:4]})"];
             "Entry" -> "Constraint(location=1:0)" [label=""];
             "ExceptionExit" -> "TypeExit" [label=""];
             "TypeExit" -> "Exit" [label=""];
