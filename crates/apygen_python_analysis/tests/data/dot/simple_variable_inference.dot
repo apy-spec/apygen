@@ -1,0 +1,48 @@
+digraph "DependentGraph" {
+    "Module(builtins)";
+    "Module(simple_variable_inference)";
+    "Entry" -> "Module(builtins)";
+    "Module(builtins)" -> "Module(simple_variable_inference)";
+    "Module(simple_variable_inference)" -> "Exit";
+}
+digraph "simple_variable_inference" {
+    "Constraint()" [label="#return(None)"];
+    "Constraint(location=1:0)" [label="{5 ⊑ x@{simple_variable_inference[1:0]}, #defined(x@{simple_variable_inference[1:0]})}"];
+    "Constraint(location=2:0)" [label="{x@{simple_variable_inference[2:4]} ⊑ y@{simple_variable_inference[2:0]}, #defined(y@{simple_variable_inference[2:0]})}"];
+    "Constraint(location=2:4, id=x)" [label="{x@{simple_variable_inference[1:0]} ⊑ x@{simple_variable_inference[2:4]}}"];
+    "Constraint(location=3:0)" [label="{(6) and (7) ⊑ z@{simple_variable_inference[3:0]}, #defined(z@{simple_variable_inference[3:0]})}"];
+    "Constraint(location=4:0)" [label="{z@{simple_variable_inference[4:9]} ⊑ a@{simple_variable_inference[4:0]}, #defined(a@{simple_variable_inference[4:0]})}"];
+    "Constraint(location=4:9, id=z)" [label="{z@{simple_variable_inference[3:0]} ⊑ z@{simple_variable_inference[4:9]}}"];
+    "Constraint(location=5:0)" [label="{not (True) ⊑ b@{simple_variable_inference[5:0]}, #defined(b@{simple_variable_inference[5:0]})}"];
+    "Constraint(location=7:0)" [label="{10 ⊑ left_int@{simple_variable_inference[7:0]}, #defined(left_int@{simple_variable_inference[7:0]})}"];
+    "Constraint(location=8:0)" [label="{20 ⊑ right_int@{simple_variable_inference[8:0]}, #defined(right_int@{simple_variable_inference[8:0]})}"];
+    "Constraint(location=9:0)" [label="{(left_int@{simple_variable_inference[9:10]}) + (right_int@{simple_variable_inference[9:21]}) ⊑ sum_int@{simple_variable_inference[9:0]}, #defined(sum_int@{simple_variable_inference[9:0]})}"];
+    "Constraint(location=9:10, id=left_int)" [label="{left_int@{simple_variable_inference[7:0]} ⊑ left_int@{simple_variable_inference[9:10]}}"];
+    "Constraint(location=9:10, id=right_int)" [label="{right_int@{simple_variable_inference[8:0]} ⊑ right_int@{simple_variable_inference[9:21]}}"];
+    "Constraint()" -> "TypeExit" [label=""];
+    "Constraint(location=1:0)" -> "Constraint(location=2:4, id=x)" [label="#succeed(x@{simple_variable_inference[1:0]})"];
+    "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(x@{simple_variable_inference[1:0]})"];
+    "Constraint(location=2:0)" -> "Constraint(location=3:0)" [label="#succeed((6) and (7))"];
+    "Constraint(location=2:0)" -> "ExceptionExit" [label="#raise((6) and (7))"];
+    "Constraint(location=2:4, id=x)" -> "Constraint(location=2:0)" [label="#succeed(x@{simple_variable_inference[2:4]})"];
+    "Constraint(location=2:4, id=x)" -> "ExceptionExit" [label="#raise(x@{simple_variable_inference[2:4]})"];
+    "Constraint(location=3:0)" -> "Constraint(location=4:9, id=z)" [label="#succeed(z@{simple_variable_inference[3:0]})"];
+    "Constraint(location=3:0)" -> "ExceptionExit" [label="#raise(z@{simple_variable_inference[3:0]})"];
+    "Constraint(location=4:0)" -> "Constraint(location=5:0)" [label="#succeed(not (True))"];
+    "Constraint(location=4:0)" -> "ExceptionExit" [label="#raise(not (True))"];
+    "Constraint(location=4:9, id=z)" -> "Constraint(location=4:0)" [label="#succeed(z@{simple_variable_inference[4:9]})"];
+    "Constraint(location=4:9, id=z)" -> "ExceptionExit" [label="#raise(z@{simple_variable_inference[4:9]})"];
+    "Constraint(location=5:0)" -> "Constraint(location=7:0)" [label=""];
+    "Constraint(location=7:0)" -> "Constraint(location=8:0)" [label=""];
+    "Constraint(location=8:0)" -> "Constraint(location=9:10, id=left_int)" [label="#succeed(left_int@{simple_variable_inference[7:0]})"];
+    "Constraint(location=8:0)" -> "Constraint(location=9:10, id=right_int)" [label="#succeed(right_int@{simple_variable_inference[8:0]})"];
+    "Constraint(location=8:0)" -> "ExceptionExit" [label="#raise(right_int@{simple_variable_inference[8:0]})"];
+    "Constraint(location=9:0)" -> "Constraint()" [label=""];
+    "Constraint(location=9:10, id=left_int)" -> "Constraint(location=9:0)" [label="#succeed((left_int@{simple_variable_inference[9:10]}) + (right_int@{simple_variable_inference[9:21]}))"];
+    "Constraint(location=9:10, id=left_int)" -> "ExceptionExit" [label="#raise((left_int@{simple_variable_inference[9:10]}) + (right_int@{simple_variable_inference[9:21]}))"];
+    "Constraint(location=9:10, id=right_int)" -> "Constraint(location=9:0)" [label="#succeed((left_int@{simple_variable_inference[9:10]}) + (right_int@{simple_variable_inference[9:21]}))"];
+    "Constraint(location=9:10, id=right_int)" -> "ExceptionExit" [label="#raise((left_int@{simple_variable_inference[9:10]}) + (right_int@{simple_variable_inference[9:21]}))"];
+    "Entry" -> "Constraint(location=1:0)" [label=""];
+    "ExceptionExit" -> "TypeExit" [label=""];
+    "TypeExit" -> "Exit" [label=""];
+}

@@ -7,21 +7,6 @@ modules:
     partial: false
     visibility: PUBLIC
     attributes:
-      bool_ellipsis:
-        kind: VARIABLE
-        type:
-          reference:
-            id: Any
-            module: typing
-            history_index: 0
-          arguments:
-            []
-        description: ""
-        initialised: true
-        readonly: false
-        final: false
-        deprecated: false
-        visibility: PUBLIC
       ellipsis_value:
         kind: VARIABLE
         type:

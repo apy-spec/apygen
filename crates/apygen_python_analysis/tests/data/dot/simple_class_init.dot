@@ -1,0 +1,73 @@
+digraph "DependentGraph" {
+    "Module(builtins)";
+    "Module(simple_class_init)";
+    "Entry" -> "Module(builtins)";
+    "Module(builtins)" -> "Module(simple_class_init)";
+    "Module(simple_class_init)" -> "Exit";
+}
+digraph "simple_class_init" {
+    "Constraint()" [label="#return(None)"];
+    "Constraint(location=10:0)" [label="{4 ⊑ b@{simple_class_init[10:0]}, #defined(b@{simple_class_init[10:0]})}"];
+    "Constraint(location=12:0)" [label="{(Point@{simple_class_init[12:8]})(a@{simple_class_init[12:14]}, b@{simple_class_init[12:17]}) ⊑ point@{simple_class_init[12:0]}, #defined(point@{simple_class_init[12:0]})}"];
+    "Constraint(location=12:8, id=Point)" [label="{Point@{simple_class_init[1:6]} ⊑ Point@{simple_class_init[12:8]}}"];
+    "Constraint(location=12:8, id=a)" [label="{a@{simple_class_init[9:0]} ⊑ a@{simple_class_init[12:14]}}"];
+    "Constraint(location=12:8, id=b)" [label="{b@{simple_class_init[10:0]} ⊑ b@{simple_class_init[12:17]}}"];
+    "Constraint(location=14:0)" [label="{(point@{simple_class_init[14:10]}).x ⊑ point_x@{simple_class_init[14:0]}, #defined(point_x@{simple_class_init[14:0]})}"];
+    "Constraint(location=14:10, id=point)" [label="{point@{simple_class_init[12:0]} ⊑ point@{simple_class_init[14:10]}}"];
+    "Constraint(location=15:0)" [label="{(point@{simple_class_init[15:10]}).y ⊑ point_y@{simple_class_init[15:0]}, #defined(point_y@{simple_class_init[15:0]})}"];
+    "Constraint(location=15:10, id=point)" [label="{point@{simple_class_init[14:10]} ⊑ point@{simple_class_init[15:10]}}"];
+    "Constraint(location=1:6)" [label="{#class(identifier=Point@simple_class_init[1:6]) ⊑ Point@{simple_class_init[1:6]}, #defined(Point@{simple_class_init[1:6]})}"];
+    "Constraint(location=9:0)" [label="{3 ⊑ a@{simple_class_init[9:0]}, #defined(a@{simple_class_init[9:0]})}"];
+    "Constraint()" -> "TypeExit" [label=""];
+    "Constraint(location=10:0)" -> "Constraint(location=12:8, id=Point)" [label="#succeed(Point@{simple_class_init[1:6]})"];
+    "Constraint(location=10:0)" -> "Constraint(location=12:8, id=a)" [label="#succeed(a@{simple_class_init[9:0]})"];
+    "Constraint(location=10:0)" -> "Constraint(location=12:8, id=b)" [label="#succeed(b@{simple_class_init[10:0]})"];
+    "Constraint(location=10:0)" -> "ExceptionExit" [label="#raise(b@{simple_class_init[10:0]})"];
+    "Constraint(location=12:0)" -> "Constraint(location=14:10, id=point)" [label="#succeed(point@{simple_class_init[12:0]})"];
+    "Constraint(location=12:0)" -> "ExceptionExit" [label="#raise(point@{simple_class_init[12:0]})"];
+    "Constraint(location=12:8, id=Point)" -> "Constraint(location=12:0)" [label="#succeed((Point@{simple_class_init[12:8]})(a@{simple_class_init[12:14]}, b@{simple_class_init[12:17]}))"];
+    "Constraint(location=12:8, id=Point)" -> "ExceptionExit" [label="#raise((Point@{simple_class_init[12:8]})(a@{simple_class_init[12:14]}, b@{simple_class_init[12:17]}))"];
+    "Constraint(location=12:8, id=a)" -> "Constraint(location=12:0)" [label="#succeed((Point@{simple_class_init[12:8]})(a@{simple_class_init[12:14]}, b@{simple_class_init[12:17]}))"];
+    "Constraint(location=12:8, id=a)" -> "ExceptionExit" [label="#raise((Point@{simple_class_init[12:8]})(a@{simple_class_init[12:14]}, b@{simple_class_init[12:17]}))"];
+    "Constraint(location=12:8, id=b)" -> "Constraint(location=12:0)" [label="#succeed((Point@{simple_class_init[12:8]})(a@{simple_class_init[12:14]}, b@{simple_class_init[12:17]}))"];
+    "Constraint(location=12:8, id=b)" -> "ExceptionExit" [label="#raise((Point@{simple_class_init[12:8]})(a@{simple_class_init[12:14]}, b@{simple_class_init[12:17]}))"];
+    "Constraint(location=14:0)" -> "Constraint(location=15:10, id=point)" [label="#succeed(point@{simple_class_init[14:10]})"];
+    "Constraint(location=14:0)" -> "ExceptionExit" [label="#raise(point@{simple_class_init[14:10]})"];
+    "Constraint(location=14:10, id=point)" -> "Constraint(location=14:0)" [label="#succeed((point@{simple_class_init[14:10]}).x)"];
+    "Constraint(location=14:10, id=point)" -> "ExceptionExit" [label="#raise((point@{simple_class_init[14:10]}).x)"];
+    "Constraint(location=15:0)" -> "Constraint()" [label=""];
+    "Constraint(location=15:10, id=point)" -> "Constraint(location=15:0)" [label="#succeed((point@{simple_class_init[15:10]}).y)"];
+    "Constraint(location=15:10, id=point)" -> "ExceptionExit" [label="#raise((point@{simple_class_init[15:10]}).y)"];
+    "Constraint(location=1:6)" -> "Constraint(location=9:0)" [label=""];
+    "Constraint(location=9:0)" -> "Constraint(location=10:0)" [label=""];
+    "Entry" -> "Constraint(location=1:6)" [label="#succeed(#class(identifier=Point@simple_class_init[1:6]))"];
+    "Entry" -> "ExceptionExit" [label="#raise(#class(identifier=Point@simple_class_init[1:6]))"];
+    "ExceptionExit" -> "TypeExit" [label=""];
+    "TypeExit" -> "Exit" [label=""];
+}
+digraph "simple_class_init[1:6]" {
+    "Constraint()" [label="#return(None)"];
+    "Constraint(location=5:16, id=int)" [label="{int@{builtins[2031:11]} ⊑ int@{simple_class_init[1:6][5:26]}, int@{builtins[2031:11]} ⊑ int@{simple_class_init[1:6][5:34]}}"];
+    "Constraint(location=5:8)" [label="{#function(identifier=__init__@simple_class_init[1:6][5:8], async=false) ⊑ __init__@{simple_class_init[1:6][5:8]}, #defined(__init__@{simple_class_init[1:6][5:8]})}"];
+    "Constraint()" -> "TypeExit" [label=""];
+    "Constraint(location=5:16, id=int)" -> "Constraint(location=5:8)" [label="#succeed(#function(identifier=__init__@simple_class_init[1:6][5:8], async=false))"];
+    "Constraint(location=5:16, id=int)" -> "ExceptionExit" [label="#raise(#function(identifier=__init__@simple_class_init[1:6][5:8], async=false))"];
+    "Constraint(location=5:8)" -> "Constraint()" [label=""];
+    "Entry" -> "Constraint(location=5:16, id=int)" [label="#succeed(int@{builtins[2031:11]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(int@{builtins[2031:11]})"];
+    "ExceptionExit" -> "TypeExit" [label=""];
+    "TypeExit" -> "Exit" [label=""];
+}
+digraph "simple_class_init[1:6][5:8]" {
+    "Constraint()" [label="#return(None)"];
+    "Constraint(location=6:17, id=x)" [label="{x@{simple_class_init[1:6][5:23]} ⊑ x@{simple_class_init[1:6][5:8][6:17]}}"];
+    "Constraint(location=7:17, id=y)" [label="{y@{simple_class_init[1:6][5:31]} ⊑ y@{simple_class_init[1:6][5:8][7:17]}}"];
+    "Constraint()" -> "TypeExit" [label=""];
+    "Constraint(location=6:17, id=x)" -> "Constraint(location=7:17, id=y)" [label="#succeed(y@{simple_class_init[1:6][5:31]})"];
+    "Constraint(location=6:17, id=x)" -> "ExceptionExit" [label="#raise(y@{simple_class_init[1:6][5:31]})"];
+    "Constraint(location=7:17, id=y)" -> "Constraint()" [label=""];
+    "Entry" -> "Constraint(location=6:17, id=x)" [label="#succeed(x@{simple_class_init[1:6][5:23]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(x@{simple_class_init[1:6][5:23]})"];
+    "ExceptionExit" -> "TypeExit" [label=""];
+    "TypeExit" -> "Exit" [label=""];
+}

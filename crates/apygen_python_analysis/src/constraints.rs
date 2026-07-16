@@ -2494,12 +2494,19 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                 location: None,
                 id: None,
             };
+            let are_all_exceptions = edge_datas
+                .iter()
+                .all(|edge_data| matches!(edge_data, EdgeData::UnhandledException));
+
+            if are_all_exceptions {
+                target_abstract_environment.variable_locations.clear();
+                target_abstract_environment.nodes.clear();
+                target_abstract_environment.edges.clear();
+                target_abstract_environment.imports.clear();
+                target_abstract_environment.sub_program_entities.clear();
+            }
 
             for (from, guards) in target_abstract_environment.current_nodes.as_ref() {
-                let are_all_exceptions = edge_datas
-                    .iter()
-                    .all(|edge_data| matches!(edge_data, EdgeData::UnhandledException));
-
                 let (can_return, can_raise) = if guards.is_empty() {
                     (!are_all_exceptions, false)
                 } else {
@@ -3814,8 +3821,12 @@ mod tests {
         let mut actual_dot = dependent_graph.dot("DependentGraph");
 
         for program_entities in dependent_graph.nodes.values() {
-            for (node, abstract_environment) in program_entities {
-                actual_dot.push_str(&abstract_environment.constraint_graph.dot(&node.to_string()));
+            for (qualified_location, constraints) in program_entities {
+                actual_dot.push_str(
+                    &constraints
+                        .constraint_graph
+                        .dot(&qualified_location.to_string()),
+                );
             }
         }
 
