@@ -31,7 +31,7 @@ digraph "DependentGraph" {
 }
 digraph "simple_function_call" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=1:11)" [label="{int@{builtins[2031:11]} ⊑ int@{simple_function_call[1:15]}, int@{builtins[2031:11]} ⊑ int@{simple_function_call[1:23]}}"];
+    "Constraint(location=1:11)" [label="{int@{builtins[255:6]} ⊑ int@{simple_function_call[1:15]}, int@{builtins[255:6]} ⊑ int@{simple_function_call[1:23]}}"];
     "Constraint(location=1:4)" [label="{#function(identifier=add_two@simple_function_call[1:4], async=false) ⊑ add_two@{simple_function_call[1:4]}, #defined(add_two@{simple_function_call[1:4]})}"];
     "Constraint(location=4:0)" [label="{3 ⊑ a@{simple_function_call[4:0]}, #defined(a@{simple_function_call[4:0]})}"];
     "Constraint(location=5:0)" [label="{4 ⊑ b@{simple_function_call[5:0]}, #defined(b@{simple_function_call[5:0]})}"];
@@ -47,8 +47,8 @@ digraph "simple_function_call" {
     "Constraint(location=6:0)" -> "Constraint()" [label=""];
     "Constraint(location=6:9)" -> "Constraint(location=6:0)" [label="#succeed((add_two@{simple_function_call[6:9]})(a@{simple_function_call[6:17]}, b@{simple_function_call[6:20]}))"];
     "Constraint(location=6:9)" -> "ExceptionExit" [label="#raise((add_two@{simple_function_call[6:9]})(a@{simple_function_call[6:17]}, b@{simple_function_call[6:20]}))"];
-    "Entry" -> "Constraint(location=1:11)" [label="#succeed(int@{builtins[2031:11]})"];
-    "Entry" -> "ExceptionExit" [label="#raise(int@{builtins[2031:11]})"];
+    "Entry" -> "Constraint(location=1:11)" [label="#succeed(int@{builtins[255:6]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(int@{builtins[255:6]})"];
     "ExceptionExit" -> "TypeExit" [label=""];
     "TypeExit" -> "Exit" [label=""];
 }

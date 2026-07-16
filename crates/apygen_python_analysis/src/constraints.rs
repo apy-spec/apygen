@@ -1310,26 +1310,38 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         abstract_environment: &mut ProgramEntityAbstractEnvironment,
         location: Location,
-        guards: imbl::OrdSet<Guard>,
+        new_guards: imbl::OrdSet<Guard>,
     ) {
-        let node = ConstraintNode::Constraint {
-            location: Some(location.clone()),
-            id: None,
-        };
-
         let current_nodes = drain(&mut abstract_environment.current_nodes, |(_, guards)| {
             guards
                 .iter()
                 .any(|guard| matches!(guard, Guard::Raise { .. }))
         });
 
-        for (from, guards) in &abstract_environment.current_nodes {
+        let node = if let Some((from, _)) =
             abstract_environment
-                .edges
-                .insert((from.clone(), node.clone()), guards.clone());
-        }
+                .current_nodes
+                .get_min()
+                .filter(|(_, guards)| {
+                    abstract_environment.current_nodes.len() == 1 && guards.is_empty()
+                }) {
+            from.clone()
+        } else {
+            let node = ConstraintNode::Constraint {
+                location: Some(location.clone()),
+                id: None,
+            };
 
-        abstract_environment.current_nodes = current_nodes.update(node.clone(), guards);
+            for (from, guards) in &abstract_environment.current_nodes {
+                abstract_environment
+                    .edges
+                    .insert((from.clone(), node.clone()), guards.clone());
+            }
+
+            node
+        };
+
+        abstract_environment.current_nodes = current_nodes.update(node, new_guards);
     }
 
     pub fn gen_module_name(
@@ -3549,10 +3561,9 @@ mod tests {
             "Constraint()" -> "TypeExit" [label=""];
             "Constraint(location=1:0)" -> "Constraint(location=3:3)" [label="#succeed(x@{module[1:0]})"];
             "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(x@{module[1:0]})"];
-            "Constraint(location=3:0)" -> "Constraint(location=4:4)" [label="#is_true(x@{module[3:3]})"];
-            "Constraint(location=3:0)" -> "Constraint(location=6:4)" [label="#is_false(x@{module[3:3]})"];
-            "Constraint(location=3:0)" -> "ExceptionExit" [label="#raise(x@{module[3:3]})"];
-            "Constraint(location=3:3)" -> "Constraint(location=3:0)" [label=""];
+            "Constraint(location=3:3)" -> "Constraint(location=4:4)" [label="#is_true(x@{module[3:3]})"];
+            "Constraint(location=3:3)" -> "Constraint(location=6:4)" [label="#is_false(x@{module[3:3]})"];
+            "Constraint(location=3:3)" -> "ExceptionExit" [label="#raise(x@{module[3:3]})"];
             "Constraint(location=4:4)" -> "Constraint(location=8:4)" [label="#succeed(a@{module[4:4]}) | #succeed(a@{module[6:4]})"];
             "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[4:4]}) | #raise(a@{module[6:4]})"];
             "Constraint(location=6:4)" -> "Constraint(location=8:4)" [label="#succeed(a@{module[4:4]}) | #succeed(a@{module[6:4]})"];
@@ -3588,10 +3599,9 @@ mod tests {
             "Constraint()" -> "TypeExit" [label=""];
             "Constraint(location=1:0)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[1:0]}) | #succeed(a@{module[4:4]})"];
             "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(a@{module[1:0]}) | #raise(a@{module[4:4]})"];
-            "Constraint(location=3:0)" -> "Constraint(location=4:8, id=#empty)" [label="#is_true((a@{module[3:6]}) < (5))"];
-            "Constraint(location=3:0)" -> "Constraint(location=6:4, id=#empty)" [label="#is_false((a@{module[3:6]}) < (5))"];
-            "Constraint(location=3:0)" -> "ExceptionExit" [label="#raise((a@{module[3:6]}) < (5))"];
-            "Constraint(location=3:6)" -> "Constraint(location=3:0)" [label=""];
+            "Constraint(location=3:6)" -> "Constraint(location=4:8, id=#empty)" [label="#is_true((a@{module[3:6]}) < (5))"];
+            "Constraint(location=3:6)" -> "Constraint(location=6:4, id=#empty)" [label="#is_false((a@{module[3:6]}) < (5))"];
+            "Constraint(location=3:6)" -> "ExceptionExit" [label="#raise((a@{module[3:6]}) < (5))"];
             "Constraint(location=4:4)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[1:0]}) | #succeed(a@{module[4:4]})"];
             "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[1:0]}) | #raise(a@{module[4:4]})"];
             "Constraint(location=4:8)" -> "Constraint(location=4:4)" [label="#succeed((a@{module[4:8]}) + (1))"];
