@@ -70,6 +70,22 @@ modules:
         final: false
         deprecated: false
         visibility: PUBLIC
+      sum_int:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "30"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
       x:
         kind: VARIABLE
         type:

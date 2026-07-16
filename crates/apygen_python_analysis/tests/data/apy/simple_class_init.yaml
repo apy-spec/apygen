@@ -20,8 +20,26 @@ modules:
         final: false
         deprecated: false
         visibility: PUBLIC
-        attributes: {}
-        typing_attributes: {}
+        attributes:
+          __init__:
+            kind: FUNCTION
+            signature:
+              return_type: None
+              summary: ""
+              description: ""
+              generics: {}
+              parameters: []
+              raises: []
+              partial: false
+              pure: false
+              deprecated: false
+              visibility: PUBLIC
+            async: false
+            override: false
+            abstract: false
+            final: false
+        typing_attributes:
+          {}
       a:
         kind: VARIABLE
         type:
@@ -48,6 +66,51 @@ modules:
           arguments:
             - value:
                 int: "4"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      point:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      point_x:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      point_y:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
         description: ""
         initialised: true
         readonly: false

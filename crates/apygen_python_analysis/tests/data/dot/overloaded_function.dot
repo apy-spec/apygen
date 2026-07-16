@@ -32,28 +32,24 @@ digraph "DependentGraph" {
 digraph "overloaded_function" {
     "Constraint()" [label="#return(None)"];
     "Constraint(location=12:4)" [label="{#function(identifier=add@overloaded_function[12:4], async=false) ⊑ add@{overloaded_function[12:4]}, #defined(add@{overloaded_function[12:4]})}"];
-    "Constraint(location=12:7, id=float)" [label="{float@{overloaded_function[9:11]} ⊑ float@{overloaded_function[12:17]}, float@{overloaded_function[9:11]} ⊑ float@{overloaded_function[12:33]}, float@{overloaded_function[9:21]} ⊑ float@{overloaded_function[12:17]}, float@{overloaded_function[9:21]} ⊑ float@{overloaded_function[12:33]}}"];
-    "Constraint(location=12:7, id=int)" [label="{int@{overloaded_function[5:11]} ⊑ int@{overloaded_function[12:11]}, int@{overloaded_function[5:11]} ⊑ int@{overloaded_function[12:27]}, int@{overloaded_function[5:19]} ⊑ int@{overloaded_function[12:11]}, int@{overloaded_function[5:19]} ⊑ int@{overloaded_function[12:27]}}"];
+    "Constraint(location=12:7)" [label="{float@{overloaded_function[9:11]} ⊑ float@{overloaded_function[12:17]}, float@{overloaded_function[9:11]} ⊑ float@{overloaded_function[12:33]}, float@{overloaded_function[9:21]} ⊑ float@{overloaded_function[12:17]}, float@{overloaded_function[9:21]} ⊑ float@{overloaded_function[12:33]}, int@{overloaded_function[5:11]} ⊑ int@{overloaded_function[12:11]}, int@{overloaded_function[5:11]} ⊑ int@{overloaded_function[12:27]}, int@{overloaded_function[5:19]} ⊑ int@{overloaded_function[12:11]}, int@{overloaded_function[5:19]} ⊑ int@{overloaded_function[12:27]}}"];
     "Constraint(location=5:4)" [label="{#function(identifier=add@overloaded_function[5:4], async=false) ⊑ add@{overloaded_function[5:4]}, #defined(add@{overloaded_function[5:4]})}"];
-    "Constraint(location=5:7, id=int)" [label="{int@{builtins[2031:11]} ⊑ int@{overloaded_function[5:11]}, int@{builtins[2031:11]} ⊑ int@{overloaded_function[5:19]}}"];
+    "Constraint(location=5:7)" [label="{int@{builtins[2031:11]} ⊑ int@{overloaded_function[5:11]}, int@{builtins[2031:11]} ⊑ int@{overloaded_function[5:19]}}"];
     "Constraint(location=9:4)" [label="{#function(identifier=add@overloaded_function[9:4], async=false) ⊑ add@{overloaded_function[9:4]}, #defined(add@{overloaded_function[9:4]})}"];
-    "Constraint(location=9:7, id=float)" [label="{float@{builtins[1872:43]} ⊑ float@{overloaded_function[9:11]}, float@{builtins[1872:43]} ⊑ float@{overloaded_function[9:21]}}"];
+    "Constraint(location=9:7)" [label="{float@{builtins[1872:43]} ⊑ float@{overloaded_function[9:11]}, float@{builtins[1872:43]} ⊑ float@{overloaded_function[9:21]}}"];
     "Constraint()" -> "TypeExit" [label=""];
     "Constraint(location=12:4)" -> "Constraint()" [label=""];
-    "Constraint(location=12:7, id=float)" -> "Constraint(location=12:4)" [label="#succeed(#function(identifier=add@overloaded_function[12:4], async=false))"];
-    "Constraint(location=12:7, id=float)" -> "ExceptionExit" [label="#raise(#function(identifier=add@overloaded_function[12:4], async=false))"];
-    "Constraint(location=12:7, id=int)" -> "Constraint(location=12:4)" [label="#succeed(#function(identifier=add@overloaded_function[12:4], async=false))"];
-    "Constraint(location=12:7, id=int)" -> "ExceptionExit" [label="#raise(#function(identifier=add@overloaded_function[12:4], async=false))"];
-    "Constraint(location=5:4)" -> "Constraint(location=9:7, id=float)" [label="#succeed(float@{builtins[1872:43]})"];
+    "Constraint(location=12:7)" -> "Constraint(location=12:4)" [label="#succeed(#function(identifier=add@overloaded_function[12:4], async=false))"];
+    "Constraint(location=12:7)" -> "ExceptionExit" [label="#raise(#function(identifier=add@overloaded_function[12:4], async=false))"];
+    "Constraint(location=5:4)" -> "Constraint(location=9:7)" [label="#succeed(float@{builtins[1872:43]})"];
     "Constraint(location=5:4)" -> "ExceptionExit" [label="#raise(float@{builtins[1872:43]})"];
-    "Constraint(location=5:7, id=int)" -> "Constraint(location=5:4)" [label="#succeed(#function(identifier=add@overloaded_function[5:4], async=false))"];
-    "Constraint(location=5:7, id=int)" -> "ExceptionExit" [label="#raise(#function(identifier=add@overloaded_function[5:4], async=false))"];
-    "Constraint(location=9:4)" -> "Constraint(location=12:7, id=float)" [label="#succeed(float@{overloaded_function[9:11]}) | #succeed(float@{overloaded_function[9:21]})"];
-    "Constraint(location=9:4)" -> "Constraint(location=12:7, id=int)" [label="#succeed(int@{overloaded_function[5:11]}) | #succeed(int@{overloaded_function[5:19]})"];
-    "Constraint(location=9:4)" -> "ExceptionExit" [label="#raise(int@{overloaded_function[5:11]}) | #raise(int@{overloaded_function[5:19]})"];
-    "Constraint(location=9:7, id=float)" -> "Constraint(location=9:4)" [label="#succeed(#function(identifier=add@overloaded_function[9:4], async=false))"];
-    "Constraint(location=9:7, id=float)" -> "ExceptionExit" [label="#raise(#function(identifier=add@overloaded_function[9:4], async=false))"];
-    "Entry" -> "Constraint(location=5:7, id=int)" [label="#succeed(int@{builtins[2031:11]})"];
+    "Constraint(location=5:7)" -> "Constraint(location=5:4)" [label="#succeed(#function(identifier=add@overloaded_function[5:4], async=false))"];
+    "Constraint(location=5:7)" -> "ExceptionExit" [label="#raise(#function(identifier=add@overloaded_function[5:4], async=false))"];
+    "Constraint(location=9:4)" -> "Constraint(location=12:7)" [label="#succeed(float@{overloaded_function[9:11]}) | #succeed(float@{overloaded_function[9:21]}) | #succeed(int@{overloaded_function[5:11]}) | #succeed(int@{overloaded_function[5:19]})"];
+    "Constraint(location=9:4)" -> "ExceptionExit" [label="#raise(float@{overloaded_function[9:11]}) | #raise(float@{overloaded_function[9:21]}) | #raise(int@{overloaded_function[5:11]}) | #raise(int@{overloaded_function[5:19]})"];
+    "Constraint(location=9:7)" -> "Constraint(location=9:4)" [label="#succeed(#function(identifier=add@overloaded_function[9:4], async=false))"];
+    "Constraint(location=9:7)" -> "ExceptionExit" [label="#raise(#function(identifier=add@overloaded_function[9:4], async=false))"];
+    "Entry" -> "Constraint(location=5:7)" [label="#succeed(int@{builtins[2031:11]})"];
     "Entry" -> "ExceptionExit" [label="#raise(int@{builtins[2031:11]})"];
     "ExceptionExit" -> "TypeExit" [label=""];
     "TypeExit" -> "Exit" [label=""];
@@ -71,15 +67,12 @@ digraph "overloaded_function[9:4]" {
     "TypeExit" -> "Exit" [label=""];
 }
 digraph "overloaded_function[12:4]" {
-    "Constraint(location=13:11, id=x)" [label="{x@{overloaded_function[12:8]} ⊑ x@{overloaded_function[12:4][13:11]}}"];
-    "Constraint(location=13:11, id=y)" [label="{y@{overloaded_function[12:24]} ⊑ y@{overloaded_function[12:4][13:15]}}"];
+    "Constraint(location=13:11)" [label="{x@{overloaded_function[12:8]} ⊑ x@{overloaded_function[12:4][13:11]}, y@{overloaded_function[12:24]} ⊑ y@{overloaded_function[12:4][13:15]}}"];
     "Constraint(location=13:4)" [label="#return((x@{overloaded_function[12:4][13:11]}) + (y@{overloaded_function[12:4][13:15]}))"];
-    "Constraint(location=13:11, id=x)" -> "Constraint(location=13:4)" [label=""];
-    "Constraint(location=13:11, id=y)" -> "Constraint(location=13:4)" [label=""];
+    "Constraint(location=13:11)" -> "Constraint(location=13:4)" [label=""];
     "Constraint(location=13:4)" -> "TypeExit" [label=""];
-    "Entry" -> "Constraint(location=13:11, id=x)" [label="#succeed(x@{overloaded_function[12:8]})"];
-    "Entry" -> "Constraint(location=13:11, id=y)" [label="#succeed(y@{overloaded_function[12:24]})"];
-    "Entry" -> "ExceptionExit" [label="#raise(y@{overloaded_function[12:24]})"];
+    "Entry" -> "Constraint(location=13:11)" [label="#succeed(x@{overloaded_function[12:8]}) | #succeed(y@{overloaded_function[12:24]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(x@{overloaded_function[12:8]}) | #raise(y@{overloaded_function[12:24]})"];
     "ExceptionExit" -> "TypeExit" [label=""];
     "TypeExit" -> "Exit" [label=""];
 }
