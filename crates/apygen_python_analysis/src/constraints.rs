@@ -815,7 +815,7 @@ pub struct ProgramEntityAbstractEnvironment {
     pub return_status: ReturnStatus,
     pub current_nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>,
     pub variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<QualifiedLocation>>,
-    pub constraint_graph: ConstraintGraph,
+    pub edges: imbl::OrdSet<(ConstraintNode, ConstraintNode, imbl::OrdSet<Guard>)>,
     pub imports: imbl::OrdSet<ModuleName>,
     pub sub_program_entities: imbl::OrdMap<ProgramEntity, SubProgramEntityContext>,
 }
@@ -1130,14 +1130,14 @@ impl<'a> ConstraintsBuilder<'a> {
                     let from = if guards.is_empty() {
                         &from
                     } else {
-                        abstract_environment.constraint_graph.add_edge(
+                        abstract_environment.edges.insert((
                             from.clone(),
                             current_empty_constraint.clone(),
                             guards.clone(),
-                        );
+                        ));
                         &current_empty_constraint
                     };
-                    abstract_environment.constraint_graph.add_edge(
+                    abstract_environment.edges.insert((
                         from.clone(),
                         node.clone(),
                         previous_expression_variables
@@ -1146,7 +1146,7 @@ impl<'a> ConstraintsBuilder<'a> {
                                 Guard::Succeed(previous_expression_variable.clone())
                             })
                             .collect(),
-                    );
+                    ));
                     current_nodes.insert(
                         from.clone(),
                         previous_expression_variables
@@ -1200,11 +1200,9 @@ impl<'a> ConstraintsBuilder<'a> {
 
         if left.is_constant() {
             for (from, guards) in &abstract_environment.current_nodes {
-                abstract_environment.constraint_graph.add_edge(
-                    from.clone(),
-                    node.clone(),
-                    guards.clone(),
-                );
+                abstract_environment
+                    .edges
+                    .insert((from.clone(), node.clone(), guards.clone()));
             }
 
             abstract_environment.current_nodes = current_nodes;
@@ -1217,19 +1215,19 @@ impl<'a> ConstraintsBuilder<'a> {
             let from = if guards.is_empty() {
                 &from
             } else {
-                abstract_environment.constraint_graph.add_edge(
+                abstract_environment.edges.insert((
                     from.clone(),
                     current_empty_constraint.clone(),
                     guards.clone(),
-                );
+                ));
                 &current_empty_constraint
             };
 
-            abstract_environment.constraint_graph.add_edge(
+            abstract_environment.edges.insert((
                 from.clone(),
                 node.clone(),
                 imbl::OrdSet::unit(Guard::Succeed(left.clone())),
-            );
+            ));
             current_nodes.insert(
                 from.clone(),
                 imbl::OrdSet::unit(Guard::Raise {
@@ -1279,11 +1277,9 @@ impl<'a> ConstraintsBuilder<'a> {
         });
 
         for (from, guards) in &abstract_environment.current_nodes {
-            abstract_environment.constraint_graph.add_edge(
-                from.clone(),
-                node.clone(),
-                guards.clone(),
-            );
+            abstract_environment
+                .edges
+                .insert((from.clone(), node.clone(), guards.clone()));
         }
 
         abstract_environment.current_nodes = current_nodes.update(node.clone(), guards);
@@ -1978,12 +1974,10 @@ impl<'a> ConstraintsBuilder<'a> {
             },
         );
 
-        for (from, guard) in target_abstract_environment.current_nodes.as_ref() {
-            target_abstract_environment.constraint_graph.add_edge(
-                from.clone(),
-                node.clone(),
-                guard.clone(),
-            );
+        for (from, guards) in target_abstract_environment.current_nodes.as_ref() {
+            target_abstract_environment
+                .edges
+                .insert((from.clone(), node.clone(), guards.clone()));
         }
 
         target_abstract_environment.current_nodes =
@@ -2470,44 +2464,44 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                         target_abstract_environment.return_status,
                         ReturnStatus::Returning
                     ) {
-                        target_abstract_environment.constraint_graph.add_edge(
+                        target_abstract_environment.edges.insert((
                             from.clone(),
                             ConstraintNode::TypeExit,
                             guards.clone(),
-                        );
+                        ));
                     } else {
                         target_abstract_environment.return_status = ReturnStatus::Returning;
                         let return_node = ConstraintNode::Constraint(Constraint::Return(
                             ReturnConstraint::new(Arc::new(Expression::LiteralNone), None),
                         ));
-                        target_abstract_environment.constraint_graph.add_edge(
+                        target_abstract_environment.edges.insert((
                             from.clone(),
                             return_node.clone(),
                             guards.clone(),
-                        );
-                        target_abstract_environment.constraint_graph.add_edge(
+                        ));
+                        target_abstract_environment.edges.insert((
                             return_node.clone(),
                             ConstraintNode::TypeExit,
                             imbl::OrdSet::default(),
-                        );
+                        ));
                     }
-                    target_abstract_environment.constraint_graph.add_edge(
+                    target_abstract_environment.edges.insert((
                         ConstraintNode::TypeExit,
                         ConstraintNode::Exit,
                         imbl::OrdSet::default(),
-                    );
+                    ));
                 }
                 if can_raise {
-                    target_abstract_environment.constraint_graph.add_edge(
+                    target_abstract_environment.edges.insert((
                         from.clone(),
                         ConstraintNode::ExceptionExit,
                         guards.clone(),
-                    );
-                    target_abstract_environment.constraint_graph.add_edge(
+                    ));
+                    target_abstract_environment.edges.insert((
                         ConstraintNode::ExceptionExit,
                         ConstraintNode::TypeExit,
                         imbl::OrdSet::default(),
-                    );
+                    ));
                 }
             }
         }
@@ -2818,6 +2812,10 @@ pub fn analyse_program<C: CfgImporter + Sync>(
             .collect::<HashMap<_, _>>();
 
         for (module_node, program_entity_constraints) in analysed_modules {
+            if module_node == builtins_module_node {
+                continue;
+            }
+
             dependent_graph.add_dependent(builtins_module_node.clone(), module_node.clone());
             dependent_graph.add_dependent(module_node.clone(), ModuleNode::Exit);
             dependent_graph.remove_dependent(builtins_module_node.clone(), ModuleNode::Exit);
@@ -2844,7 +2842,15 @@ pub fn analyse_program<C: CfgImporter + Sync>(
                             program_entity.location,
                             ProgramEntityConstraints {
                                 specification: cfg_analysis.specification.clone(),
-                                constraint_graph: cfg_analysis.environment.constraint_graph.clone(),
+                                constraint_graph: ConstraintGraph::new(
+                                    cfg_analysis.environment.edges.into_iter().fold(
+                                        imbl::OrdMap::default(),
+                                        |mut acc, ((from, to, guards))| {
+                                            acc.entry(from).or_default().insert(to, guards);
+                                            acc
+                                        },
+                                    ),
+                                ),
                             },
                         )
                     })
@@ -2862,7 +2868,15 @@ pub fn analyse_program<C: CfgImporter + Sync>(
                     program_entity.location,
                     ProgramEntityConstraints {
                         specification: cfg_analysis.specification.clone(),
-                        constraint_graph: cfg_analysis.environment.constraint_graph.clone(),
+                        constraint_graph: ConstraintGraph::new(
+                            cfg_analysis.environment.edges.into_iter().fold(
+                                imbl::OrdMap::default(),
+                                |mut acc, ((from, to, guards))| {
+                                    acc.entry(from).or_default().insert(to, guards);
+                                    acc
+                                },
+                            ),
+                        ),
                     },
                 )
             })
@@ -3724,15 +3738,22 @@ mod tests {
 
         let constraints_builder = ConstraintsBuilder::new(&cfg, &entity, None);
 
-        let analysis_state = analysis(&constraints_builder, &mut DummyAnalysisObserver)
+        let mut analysis_state = analysis(&constraints_builder, &mut DummyAnalysisObserver)
             .expect("constraint builder should work");
 
         let exit_state = analysis_state
             .abstract_states
-            .get(&ProgramPoint::Exit)
+            .remove(&ProgramPoint::Exit)
             .expect("exit should exist");
 
-        let actual_dot = exit_state.constraint_graph.dot("Constraints");
+        let actual_dot = ConstraintGraph::new(exit_state.edges.into_iter().fold(
+            imbl::OrdMap::default(),
+            |mut acc, (from, to, guards)| {
+                acc.entry(from).or_default().insert(to, guards);
+                acc
+            },
+        ))
+        .dot("Constraints");
 
         assert_eq!(expected_dot, actual_dot, "{actual_dot}");
         assert_eq!(
