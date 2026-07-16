@@ -1179,8 +1179,12 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                         evaluation_state.raised_exceptions.join(&raised_exceptions);
                 }
             }
-            ConstraintNode::Constraint(constraint) => {
-                self.evaluate_constraint(&mut program_evaluation, constraint);
+            ConstraintNode::Constraint { .. } => {
+                if let Some(constraint) =
+                    self.constraints().unwrap().constraint_graph.nodes.get(node)
+                {
+                    self.evaluate_constraint(&mut program_evaluation, constraint);
+                }
             }
             _ => {}
         }
