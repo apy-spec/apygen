@@ -18,8 +18,8 @@ use num_complex::Complex64;
 use num_traits::Num;
 use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
-use std::collections::{HashMap, HashSet};
-use std::fmt::{Debug, Display, Formatter, Write};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -812,7 +812,7 @@ impl ProgramEntity {
 }
 
 impl Display for ProgramEntity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}Entity({})", self.kind, self.location)
     }
 }
@@ -881,7 +881,7 @@ impl ProgramEntityAnalysisState {
 }
 
 impl Display for ProgramEntityAnalysisState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.abstract_states.fmt(f)
     }
 }
@@ -957,7 +957,7 @@ pub enum ProgramEntityKind {
 }
 
 impl Display for ProgramEntityKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Module => f.write_str("Module"),
             Self::Class => f.write_str("Class"),
@@ -2605,7 +2605,7 @@ pub enum ProgramEntityNode {
 }
 
 impl Display for ProgramEntityNode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ProgramEntityNode::Entry => write!(f, "Entry"),
             ProgramEntityNode::Entity(entity) => write!(f, "{}", entity),
@@ -2758,40 +2758,43 @@ pub fn analyse_cfg<'a>(
     program_entity: ProgramEntity,
     cfg: &'a Cfg,
     program_entity_analysis_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
-) -> imbl::OrdMap<ProgramEntity, CfgAnalysis> {
+) -> BTreeMap<ProgramEntity, CfgAnalysis> {
     let constraint_builder =
         ConstraintsBuilder::new(cfg, &program_entity, program_entity_analysis_parent_state);
 
-    let program_entity_analysis_state = analysis(&constraint_builder, &mut DummyAnalysisObserver)
-        .expect("constraint builder should work");
+    let mut program_entity_analysis_state =
+        analysis(&constraint_builder, &mut DummyAnalysisObserver)
+            .expect("constraint builder should work");
 
-    let program_entity_exit_abstract_state =
-        &program_entity_analysis_state.abstract_states[&ProgramPoint::Exit];
-
-    let mut program_entities = imbl::OrdMap::default();
+    let program_entity_exit_abstract_state = program_entity_analysis_state
+        .abstract_states
+        .remove(&ProgramPoint::Exit)
+        .expect("ProgramPoint::Exit should exist in analysed cfg");
 
     let sub_program_entity_analysis_parent_state = ProgramEntityAbstractParentState::new(
         &program_entity_exit_abstract_state,
         &program_entity,
         program_entity_analysis_parent_state,
     );
-    for sub_program_entity in program_entity_exit_abstract_state
+    let mut program_entities = program_entity_exit_abstract_state
         .sub_program_entities
         .keys()
-    {
-        program_entities.extend(analyse_cfg(
-            sub_program_entity.clone(),
-            cfg.cfgs().get(&sub_program_entity.program_point).unwrap(),
-            Some(&sub_program_entity_analysis_parent_state),
-        ));
-    }
+        .par_bridge()
+        .flat_map(|sub_program_entity| {
+            analyse_cfg(
+                sub_program_entity.clone(),
+                cfg.cfgs().get(&sub_program_entity.program_point).unwrap(),
+                Some(&sub_program_entity_analysis_parent_state),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
 
     let cfg_analysis = CfgAnalysis {
         specification: program_entity_analysis_parent_state
             .and_then(|parent_state| parent_state.state.sub_program_entities.get(&program_entity))
             .map(|context| context.specification.clone())
             .unwrap_or_default(),
-        environment: program_entity_exit_abstract_state.clone(),
+        environment: program_entity_exit_abstract_state,
     };
 
     program_entities.insert(program_entity, cfg_analysis);
