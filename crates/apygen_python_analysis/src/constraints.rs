@@ -2942,7 +2942,14 @@ pub fn analyse_program<C: CfgImporter + Sync>(
         }
     }
 
-    let (constraints, _) = create_constraints(builtins_cfg_analyses);
+    let (constraints, imports) = create_constraints(builtins_cfg_analyses);
+
+    for import in imports {
+        dependent_graph.add_dependent(
+            ModuleNode::Module(import.clone()),
+            builtins_module_node.clone(),
+        );
+    }
 
     dependent_graph.insert(builtins_module_node, constraints);
 

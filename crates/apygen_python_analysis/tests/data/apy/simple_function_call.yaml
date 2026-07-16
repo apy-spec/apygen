@@ -6,5 +6,38 @@ modules:
     raises: []
     partial: false
     visibility: PUBLIC
-    attributes: {}
-    typing_attributes: {}
+    attributes:
+      a:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "3"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      b:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Literal
+            module: typing
+            history_index: 0
+          arguments:
+            - value:
+                int: "4"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+    typing_attributes:
+      {}
