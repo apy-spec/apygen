@@ -87,14 +87,14 @@ digraph "simple_class_inheritance[1:6]" {
 }
 digraph "simple_class_inheritance[1:6][5:8]" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=6:17)" [label="{x@{simple_class_inheritance[1:6][5:23]} ⊑ x@{simple_class_inheritance[1:6][5:8][6:17]}}"];
-    "Constraint(location=7:17)" [label="{y@{simple_class_inheritance[1:6][5:31]} ⊑ y@{simple_class_inheritance[1:6][5:8][7:17]}}"];
+    "Constraint(location=6:17)" [label="{x@{simple_class_inheritance[1:6][5:8][5:23]} ⊑ x@{simple_class_inheritance[1:6][5:8][6:17]}}"];
+    "Constraint(location=7:17)" [label="{y@{simple_class_inheritance[1:6][5:8][5:31]} ⊑ y@{simple_class_inheritance[1:6][5:8][7:17]}}"];
     "Constraint()" -> "TypeExit" [label=""];
-    "Constraint(location=6:17)" -> "Constraint(location=7:17)" [label="#succeed(y@{simple_class_inheritance[1:6][5:31]})"];
-    "Constraint(location=6:17)" -> "ExceptionExit" [label="#raise(y@{simple_class_inheritance[1:6][5:31]})"];
+    "Constraint(location=6:17)" -> "Constraint(location=7:17)" [label="#succeed(y@{simple_class_inheritance[1:6][5:8][5:31]})"];
+    "Constraint(location=6:17)" -> "ExceptionExit" [label="#raise(y@{simple_class_inheritance[1:6][5:8][5:31]})"];
     "Constraint(location=7:17)" -> "Constraint()" [label=""];
-    "Entry" -> "Constraint(location=6:17)" [label="#succeed(x@{simple_class_inheritance[1:6][5:23]})"];
-    "Entry" -> "ExceptionExit" [label="#raise(x@{simple_class_inheritance[1:6][5:23]})"];
+    "Entry" -> "Constraint(location=6:17)" [label="#succeed(x@{simple_class_inheritance[1:6][5:8][5:23]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(x@{simple_class_inheritance[1:6][5:8][5:23]})"];
     "ExceptionExit" -> "TypeExit" [label=""];
     "TypeExit" -> "Exit" [label=""];
 }
@@ -113,11 +113,11 @@ digraph "simple_class_inheritance[10:6]" {
 }
 digraph "simple_class_inheritance[10:6][13:8]" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=15:17)" [label="{z@{simple_class_inheritance[10:6][13:39]} ⊑ z@{simple_class_inheritance[10:6][13:8][15:17]}}"];
+    "Constraint(location=15:17)" [label="{z@{simple_class_inheritance[10:6][13:8][13:39]} ⊑ z@{simple_class_inheritance[10:6][13:8][15:17]}}"];
     "Constraint()" -> "TypeExit" [label=""];
     "Constraint(location=15:17)" -> "Constraint()" [label=""];
-    "Entry" -> "Constraint(location=15:17)" [label="#succeed(z@{simple_class_inheritance[10:6][13:39]})"];
-    "Entry" -> "ExceptionExit" [label="#raise(z@{simple_class_inheritance[10:6][13:39]})"];
+    "Entry" -> "Constraint(location=15:17)" [label="#succeed(z@{simple_class_inheritance[10:6][13:8][13:39]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(z@{simple_class_inheritance[10:6][13:8][13:39]})"];
     "ExceptionExit" -> "TypeExit" [label=""];
     "TypeExit" -> "Exit" [label=""];
 }

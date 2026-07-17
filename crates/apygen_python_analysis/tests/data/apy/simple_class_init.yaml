@@ -24,7 +24,13 @@ modules:
           __init__:
             kind: FUNCTION
             signature:
-              return_type: None
+              return_type:
+                reference:
+                  id: Never
+                  module: typing
+                  history_index: 0
+                arguments:
+                  []
               summary: ""
               description: ""
               generics: {}

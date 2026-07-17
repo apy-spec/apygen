@@ -67,12 +67,12 @@ digraph "overloaded_function[9:4]" {
     "TypeExit" -> "Exit" [label=""];
 }
 digraph "overloaded_function[12:4]" {
-    "Constraint(location=13:11)" [label="{x@{overloaded_function[12:8]} ⊑ x@{overloaded_function[12:4][13:11]}, y@{overloaded_function[12:24]} ⊑ y@{overloaded_function[12:4][13:15]}}"];
+    "Constraint(location=13:11)" [label="{x@{overloaded_function[12:4][12:8]} ⊑ x@{overloaded_function[12:4][13:11]}, y@{overloaded_function[12:4][12:24]} ⊑ y@{overloaded_function[12:4][13:15]}}"];
     "Constraint(location=13:4)" [label="#return((x@{overloaded_function[12:4][13:11]}) + (y@{overloaded_function[12:4][13:15]}))"];
     "Constraint(location=13:11)" -> "Constraint(location=13:4)" [label=""];
     "Constraint(location=13:4)" -> "TypeExit" [label=""];
-    "Entry" -> "Constraint(location=13:11)" [label="#succeed(x@{overloaded_function[12:8]}) | #succeed(y@{overloaded_function[12:24]})"];
-    "Entry" -> "ExceptionExit" [label="#raise(x@{overloaded_function[12:8]}) | #raise(y@{overloaded_function[12:24]})"];
+    "Entry" -> "Constraint(location=13:11)" [label="#succeed(x@{overloaded_function[12:4][12:8]}) | #succeed(y@{overloaded_function[12:4][12:24]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(x@{overloaded_function[12:4][12:8]}) | #raise(y@{overloaded_function[12:4][12:24]})"];
     "ExceptionExit" -> "TypeExit" [label=""];
     "TypeExit" -> "Exit" [label=""];
 }

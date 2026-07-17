@@ -6,8 +6,8 @@ use crate::abstract_environment::{
 use crate::constraints::{
     BinaryOperator, Constraint, ConstraintNode, DependentGraph, Expression, ExpressionAnnotated,
     ExpressionAttribute, ExpressionBinary, ExpressionCall, ExpressionClass, ExpressionFunction,
-    ExpressionSubscript, ExpressionUnary, ExpressionVariable, Guard, ModuleName, ModuleNode,
-    ProgramEntityConstraints, QualifiedLocation, VariableName,
+    ExpressionSubscript, ExpressionUnary, ExpressionVariable, Guard, Location, ModuleName,
+    ModuleNode, ProgramEntityConstraints, QualifiedLocation, VariableName,
 };
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::literal_class::method_resolution_order;
@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct DefinedVariables {
-    pub names: imbl::OrdMap<VariableName, imbl::OrdSet<QualifiedLocation>>,
+    pub names: imbl::OrdMap<VariableName, imbl::OrdSet<(QualifiedLocation, Location)>>,
 }
 
 impl DefinedVariables {
@@ -38,7 +38,9 @@ impl Display for DefinedVariables {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         fmt_set(f, self.names.iter(), |f, (name, locations)| {
             write!(f, "{}: ", name)?;
-            fmt_display_set(f, locations.iter())
+            fmt_set(f, locations.iter(), |f, (program_entity, location)| {
+                write!(f, "{}[{}]", program_entity, location)
+            })
         })
     }
 }
@@ -121,9 +123,12 @@ impl EvaluationState {
             .names
             .iter()
             .flat_map(|(variable, locations)| {
-                locations.iter().map(|location| {
-                    let expression_variable =
-                        ExpressionVariable::new(variable.clone(), location.clone());
+                locations.iter().map(|(program_entity, location)| {
+                    let expression_variable = ExpressionVariable::new(
+                        variable.clone(),
+                        location.clone(),
+                        program_entity.clone(),
+                    );
 
                     (
                         expression_variable.clone(),
@@ -228,11 +233,14 @@ impl<'a> ExpressionEvaluator<'a> {
 
         let locations = evaluation_state.defined_variables.names.get(name)?;
 
+        let (program_entity, location) = locations.get_min()?;
+
         let ty = evaluation_state
             .types
             .get(&Expression::Variable(ExpressionVariable::new(
                 name.clone(),
-                locations.get_min().unwrap().clone(),
+                location.clone(),
+                program_entity.clone(),
             )))?
             .as_value()?;
 
@@ -404,9 +412,7 @@ impl<'a> ExpressionEvaluator<'a> {
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression_variable: &ExpressionVariable,
     ) -> Option<PyTypeEval> {
-        let parent_location = expression_variable.location.at_parent_location().unwrap();
-
-        let evaluation_state = abstract_state.get(&parent_location)?;
+        let evaluation_state = abstract_state.get(&expression_variable.program_entity)?;
 
         let Some(ty) = evaluation_state
             .types
@@ -480,7 +486,7 @@ impl<'a> ExpressionEvaluator<'a> {
             analyse_program_entity(
                 abstract_state,
                 self.program_entity_constraints,
-                &expression_function.identifier.location,
+                &expression_function.identifier.qualified_location,
             )
             .unwrap();
         }
@@ -507,7 +513,7 @@ impl<'a> ExpressionEvaluator<'a> {
         analyse_program_entity(
             abstract_state,
             self.program_entity_constraints,
-            &expression_class.identifier.location,
+            &expression_class.identifier.qualified_location,
         )
         .unwrap();
         Some(PyTypeEval::with_default_effects(Type::new_literal(
@@ -560,14 +566,14 @@ impl<'a> ExpressionEvaluator<'a> {
                     // TODO: add support for descriptors
                     for class in method_resolution_order(literal_class)? {
                         let evaluation_state = if let Some(evaluation_state) =
-                            abstract_state.get(&class.value.identifier.location)
+                            abstract_state.get(&class.value.identifier.qualified_location)
                         {
                             evaluation_state
                         } else {
                             analyse_program_entity(
                                 abstract_state,
                                 self.program_entity_constraints,
-                                &class.value.identifier.location,
+                                &class.value.identifier.qualified_location,
                             )
                             .unwrap()
                         };
@@ -578,12 +584,13 @@ impl<'a> ExpressionEvaluator<'a> {
                         };
 
                         let mut eval = PyTypeEval::never();
-                        for location in locations {
+                        for (program_entity, location) in locations {
                             let mut ty = evaluation_state
                                 .types
                                 .get(&Expression::Variable(ExpressionVariable::new(
                                     name.clone(),
                                     location.clone(),
+                                    program_entity.clone(),
                                 )))?
                                 .as_value()?
                                 .clone();
@@ -697,14 +704,14 @@ impl<'a> ExpressionEvaluator<'a> {
         match literal.as_ref() {
             TypeLiteral::Function(literal_function) => {
                 let evaluation_state = if let Some(evaluation_state) =
-                    abstract_state.get(&literal_function.value.identifier.location)
+                    abstract_state.get(&literal_function.value.identifier.qualified_location)
                 {
                     evaluation_state
                 } else {
                     analyse_program_entity(
                         abstract_state,
                         self.program_entity_constraints,
-                        &literal_function.value.identifier.location,
+                        &literal_function.value.identifier.qualified_location,
                     )
                     .unwrap()
                 };
@@ -1082,7 +1089,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
 
                 evaluation_state.defined_variables.names.insert(
                     expression.name.clone(),
-                    imbl::OrdSet::unit(expression.location.clone()),
+                    imbl::OrdSet::unit((
+                        expression.program_entity.clone(),
+                        expression.location.clone(),
+                    )),
                 );
             }
             Constraint::Multiple(constraints) => {
@@ -1165,7 +1175,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
 
                     evaluation_state.defined_variables.names.insert(
                         variable.name.clone(),
-                        imbl::OrdSet::unit(variable.location.clone()),
+                        imbl::OrdSet::unit((
+                            variable.program_entity.clone(),
+                            variable.location.clone(),
+                        )),
                     );
 
                     evaluation_state

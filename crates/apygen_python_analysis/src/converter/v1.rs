@@ -103,7 +103,8 @@ pub fn convert_literal_function(
     program_evaluation: &ProgramEvaluation,
     literal_function: &LiteralFunction,
 ) -> Option<apy::v1::Function> {
-    let evaluation_state = program_evaluation.get(&literal_function.value.identifier.location)?;
+    let evaluation_state =
+        program_evaluation.get(&literal_function.value.identifier.qualified_location)?;
 
     let return_type = convert_type(
         program_evaluation,
@@ -144,7 +145,8 @@ pub fn convert_literal_class(
     program_evaluation: &ProgramEvaluation,
     literal_class: &LiteralClass,
 ) -> Option<apy::v1::Class> {
-    let evaluation_state = program_evaluation.get(&literal_class.value.identifier.location)?;
+    let evaluation_state =
+        program_evaluation.get(&literal_class.value.identifier.qualified_location)?;
 
     let return_type = convert_type(
         program_evaluation,
@@ -170,7 +172,12 @@ pub fn convert_literal_class(
                                 base.value.identifier.name.as_ref().clone(),
                             ))
                             .with_module(Some(
-                                base.value.identifier.location.module_name.as_ref().clone(),
+                                base.value
+                                    .identifier
+                                    .qualified_location
+                                    .module_name
+                                    .as_ref()
+                                    .clone(),
                             )),
                         )
                     })
@@ -321,7 +328,7 @@ pub fn convert_type_instance(
     ))
     .with_module(Some(
         program_entity_identifier
-            .location
+            .qualified_location
             .module_name
             .as_ref()
             .clone(),
@@ -503,10 +510,11 @@ pub fn convert_abstract_environment(
 
     for (attribute_name, locations) in &evaluation_state.defined_variables.names {
         let mut ty = Type::Never;
-        for location in locations {
+        for (program_entity, location) in locations {
             let expression = Expression::Variable(ExpressionVariable::new(
                 attribute_name.clone(),
                 location.clone(),
+                program_entity.clone(),
             ));
             ty = ty.join(
                 &evaluation_state
