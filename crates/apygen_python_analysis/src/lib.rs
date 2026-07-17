@@ -13,6 +13,7 @@ use log::debug;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use apygen_analysis::rayon::par_analysis;
 
 pub mod abstract_environment;
 pub mod constraints;
@@ -54,7 +55,7 @@ pub fn analyse_workdir(
 
     let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-    let program_evaluation = analysis(&solver, &mut LogAnalysisObserver::default())
+    let program_evaluation = par_analysis(&solver, &mut LogAnalysisObserver::default())
         .expect("analysis should work")
         .abstract_states[&ModuleNode::Exit]
         .clone();
