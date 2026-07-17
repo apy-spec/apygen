@@ -17,8 +17,7 @@ use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::abstract_state::{AbstractState, AbstractStateProxy};
 use apygen_analysis::fmt::{fmt_display_set, fmt_set};
 use apygen_analysis::lattice::Join;
-use apygen_analysis::log::LogAnalysisObserver;
-use apygen_analysis::{GraphAnalyser, analysis};
+use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use imbl::ordmap::Entry;
 use std::convert::Infallible;
 use std::fmt::{Debug, Display};
@@ -1467,7 +1466,7 @@ pub fn analyse_program_entity<
             program_entity_constraints,
             abstract_state,
         ),
-        &mut LogAnalysisObserver::with_prefix(qualified_location.to_string()),
+        &mut DummyAnalysisObserver::default(),
     )?;
 
     let evaluation_state =
