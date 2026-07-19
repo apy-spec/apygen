@@ -146,6 +146,7 @@ name = "apygen_cfg"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "criterion",
  "indoc",
  "rstest",
  "ruff_python_ast",

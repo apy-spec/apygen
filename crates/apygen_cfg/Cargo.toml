@@ -16,3 +16,8 @@ ruff_text_size = { workspace = true }
 [dev-dependencies]
 rstest = { workspace = true }
 indoc = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "build_builtins_cfg"
+harness = false
