@@ -15,6 +15,7 @@ use std::fs;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
+use apygen_cfg::graph::dot::ToDot;
 
 fn init_logger() {
     let _ = env_logger::builder().is_test(true).try_init();

@@ -1,4 +1,4 @@
-use crate::{Edge, Graph};
+use crate::Graph;
 use std::collections::BTreeMap;
 use std::fmt::{self, Display, Formatter};
 
@@ -31,7 +31,7 @@ impl<T: Dot> ToDot for T {
     }
 }
 
-pub trait DiGraphDot: Graph<Node: Ord, Edge: Ord> {
+pub trait DiGraphDot: Graph<Node: Ord> {
     fn fmt_node(
         &self,
         f: &mut Formatter<'_>,
@@ -41,7 +41,7 @@ pub trait DiGraphDot: Graph<Node: Ord, Edge: Ord> {
     fn fmt_edge(
         &self,
         f: &mut Formatter<'_>,
-        edge: &Self::Edge,
+        edge: (&Self::Node, &Self::Node),
         edge_data: &Self::EdgeData,
     ) -> fmt::Result;
 }
@@ -63,12 +63,7 @@ impl<T: DiGraphDot> Dot for T {
 }
 
 pub trait DisplayDiGraphDot:
-    DiGraphDot<
-        Node: Display,
-        NodeData: Display,
-        Edge: Edge<Node = Self::Node> + Display,
-        EdgeData: Display,
-    >
+    DiGraphDot<Node: Display, NodeData: Display, EdgeData: Display>
 {
     fn fmt_node(
         &self,
@@ -86,14 +81,14 @@ pub trait DisplayDiGraphDot:
     fn fmt_edge(
         &self,
         f: &mut Formatter<'_>,
-        edge: &Self::Edge,
+        (from, to): (&Self::Node, &Self::Node),
         edge_data: &Self::EdgeData,
     ) -> fmt::Result {
         write!(
             f,
             "    \"{}\" -> \"{}\" [label=\"{}\"];\n",
-            escape_dot(&edge.from().to_string()),
-            escape_dot(&edge.to().to_string()),
+            escape_dot(&from.to_string()),
+            escape_dot(&to.to_string()),
             escape_dot(&edge_data.to_string())
         )
     }

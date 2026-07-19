@@ -31,25 +31,25 @@ digraph "DependentGraph" {
 }
 digraph "literal_none" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=14:4)" [label="{-(None) ⊑ neg_none@{literal_none[14:4]}, #defined(neg_none@{literal_none[14:4]})}"];
-    "Constraint(location=1:0)" [label="{None ⊑ none_value@{literal_none[1:0]}, #defined(none_value@{literal_none[1:0]})}"];
-    "Constraint(location=20:4)" [label="{@(None) ⊑ invert_none@{literal_none[20:4]}, #defined(invert_none@{literal_none[20:4]})}"];
-    "Constraint(location=3:0)" [label="{(bool@{literal_none[3:12]})(None) ⊑ bool_none@{literal_none[3:0]}, #defined(bool_none@{literal_none[3:0]})}"];
-    "Constraint(location=3:12)" [label="{bool@{builtins[970:6]} ⊑ bool@{literal_none[3:12]}}"];
-    "Constraint(location=5:0)" [label="{not (None) ⊑ not_none@{literal_none[5:0]}, #defined(not_none@{literal_none[5:0]})}"];
-    "Constraint(location=8:4)" [label="{+(None) ⊑ pos_none@{literal_none[8:4]}, #defined(pos_none@{literal_none[8:4]})}"];
-    "Constraint()" -> "TypeExit" [label=""];
-    "Constraint(location=14:4)" -> "Constraint(location=20:4)" [label="#succeed(@(None))"];
+    "Constraint(location=1:0)" [label="None ⊑ none_value@{literal_none[1:0]} ∧ #defined(none_value@{literal_none[1:0]})"];
+    "Constraint(location=3:0)" [label="(bool@{literal_none[3:12]})(None) ⊑ bool_none@{literal_none[3:0]} ∧ #defined(bool_none@{literal_none[3:0]})"];
+    "Constraint(location=3:12)" [label="bool@{builtins[970:6]} ⊑ bool@{literal_none[3:12]}"];
+    "Constraint(location=5:0)" [label="not (None) ⊑ not_none@{literal_none[5:0]} ∧ #defined(not_none@{literal_none[5:0]})"];
+    "Constraint(location=8:4)" [label="+(None) ⊑ pos_none@{literal_none[8:4]} ∧ #defined(pos_none@{literal_none[8:4]})"];
+    "Constraint(location=14:4)" [label="-(None) ⊑ neg_none@{literal_none[14:4]} ∧ #defined(neg_none@{literal_none[14:4]})"];
+    "Constraint(location=20:4)" [label="@(None) ⊑ invert_none@{literal_none[20:4]} ∧ #defined(invert_none@{literal_none[20:4]})"];
+    "Entry" -> "Constraint(location=1:0)";
+    "Constraint()" -> "TypeExit";
     "Constraint(location=1:0)" -> "Constraint(location=3:12)" [label="#succeed(bool@{builtins[970:6]})"];
     "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(bool@{builtins[970:6]})"];
-    "Constraint(location=20:4)" -> "Constraint()" [label=""];
     "Constraint(location=3:0)" -> "Constraint(location=5:0)" [label="#succeed(not (None))"];
     "Constraint(location=3:0)" -> "ExceptionExit" [label="#raise(not (None))"];
     "Constraint(location=3:12)" -> "Constraint(location=3:0)" [label="#succeed((bool@{literal_none[3:12]})(None))"];
     "Constraint(location=3:12)" -> "ExceptionExit" [label="#raise((bool@{literal_none[3:12]})(None))"];
     "Constraint(location=5:0)" -> "Constraint(location=8:4)" [label="#succeed(+(None))"];
     "Constraint(location=8:4)" -> "Constraint(location=14:4)" [label="#succeed(-(None))"];
-    "Entry" -> "Constraint(location=1:0)" [label=""];
-    "ExceptionExit" -> "TypeExit" [label=""];
-    "TypeExit" -> "Exit" [label=""];
+    "Constraint(location=14:4)" -> "Constraint(location=20:4)" [label="#succeed(@(None))"];
+    "Constraint(location=20:4)" -> "Constraint()";
+    "TypeExit" -> "Exit";
+    "ExceptionExit" -> "TypeExit";
 }

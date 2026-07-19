@@ -8,8 +8,8 @@ use ast::{
     StmtReturn, StmtTry, StmtTypeAlias, StmtWhile, StmtWith,
 };
 pub use builder::{BuildCfgError, build_cfg};
+use graph::Graph;
 use graph::dot::DiGraphDot;
-use graph::{Edge, Graph};
 pub use ruff_python_ast as ast;
 pub use ruff_python_parser as parser;
 pub use ruff_source_file as source_file;
@@ -172,17 +172,6 @@ impl CfgEdge {
     }
 }
 
-impl Edge for CfgEdge {
-    type Node = ProgramPoint;
-
-    fn from(&self) -> &Self::Node {
-        &self.from
-    }
-    fn to(&self) -> &Self::Node {
-        &self.to
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Copy)]
 pub enum CfgEdgeKind {
     Unconditional,
@@ -316,29 +305,34 @@ impl<'s> Cfg<'s> {
 impl<'s> Graph for Cfg<'s> {
     type Node = ProgramPoint;
     type NodeData = Option<CfgNode<'s>>;
-    type Edge = CfgEdge;
     type EdgeData = BTreeSet<CfgEdgeKind>;
 
     fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
         self.entries.iter().map(|(node, entry)| (node, &entry.node))
     }
-    fn edge_data_iter(&self) -> impl Iterator<Item = (&Self::Edge, &Self::EdgeData)> {
-        self.edges.iter()
+    fn edge_data_iter(
+        &self,
+    ) -> impl Iterator<Item = ((&Self::Node, &Self::Node), &Self::EdgeData)> {
+        self.edges
+            .iter()
+            .map(|(edge, kinds)| ((&edge.from, &edge.to), kinds))
     }
     fn node_iter(&self) -> impl Iterator<Item = &Self::Node> {
         self.entries.keys()
     }
 
-    fn edge_iter(&self) -> impl Iterator<Item = &Self::Edge> {
-        self.edges.keys()
+    fn edge_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::Node)> {
+        self.edges.keys().map(|edge| (&edge.from, &edge.to))
     }
 
     fn get_node_data(&self, node: &Self::Node) -> Option<&Self::NodeData> {
         self.entries.get(node).map(|entry| &entry.node)
     }
 
-    fn get_edge_data(&self, edge: &Self::Edge) -> Option<&Self::EdgeData> {
-        self.edges.get(edge).map(|edge_kinds| edge_kinds)
+    fn get_edge_data(&self, (from, to): (&Self::Node, &Self::Node)) -> Option<&Self::EdgeData> {
+        self.edges
+            .get(&CfgEdge::new(*from, *to))
+            .map(|edge_kinds| edge_kinds)
     }
 
     fn successor_iter(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
@@ -403,11 +397,11 @@ impl<'s> DiGraphDot for Cfg<'s> {
     fn fmt_edge(
         &self,
         f: &mut Formatter<'_>,
-        edge: &Self::Edge,
+        (from, to): (&Self::Node, &Self::Node),
         edge_data: &Self::EdgeData,
     ) -> std::fmt::Result {
         for edge_kind in edge_data {
-            write!(f, "    \"{}\" -> \"{}\"", edge.from, edge.to)?;
+            write!(f, "    \"{}\" -> \"{}\"", from, to)?;
 
             match edge_kind {
                 CfgEdgeKind::Unconditional => {}

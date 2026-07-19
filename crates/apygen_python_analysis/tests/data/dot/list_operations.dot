@@ -31,22 +31,22 @@ digraph "DependentGraph" {
 }
 digraph "list_operations" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=1:0)" [label="{None ⊑ ls@{list_operations[1:0]}, #defined(ls@{list_operations[1:0]})}"];
-    "Constraint(location=3:0)" [label="{(ls@{list_operations[3:8]})[0] ⊑ first@{list_operations[3:0]}, #defined(first@{list_operations[3:0]})}"];
-    "Constraint(location=3:8)" [label="{ls@{list_operations[1:0]} ⊑ ls@{list_operations[3:8]}}"];
-    "Constraint(location=4:0)" [label="{(ls@{list_operations[4:9]})[1] ⊑ second@{list_operations[4:0]}, #defined(second@{list_operations[4:0]})}"];
-    "Constraint(location=4:9)" [label="{ls@{list_operations[1:0]} ⊑ ls@{list_operations[4:9]}}"];
-    "Constraint()" -> "TypeExit" [label=""];
+    "Constraint(location=1:0)" [label="None ⊑ ls@{list_operations[1:0]} ∧ #defined(ls@{list_operations[1:0]})"];
+    "Constraint(location=3:0)" [label="(ls@{list_operations[3:8]})[0] ⊑ first@{list_operations[3:0]} ∧ #defined(first@{list_operations[3:0]})"];
+    "Constraint(location=3:8)" [label="ls@{list_operations[1:0]} ⊑ ls@{list_operations[3:8]}"];
+    "Constraint(location=4:0)" [label="(ls@{list_operations[4:9]})[1] ⊑ second@{list_operations[4:0]} ∧ #defined(second@{list_operations[4:0]})"];
+    "Constraint(location=4:9)" [label="ls@{list_operations[1:0]} ⊑ ls@{list_operations[4:9]}"];
+    "Entry" -> "Constraint(location=1:0)";
+    "Constraint()" -> "TypeExit";
     "Constraint(location=1:0)" -> "Constraint(location=3:8)" [label="#succeed(ls@{list_operations[1:0]})"];
     "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(ls@{list_operations[1:0]})"];
     "Constraint(location=3:0)" -> "Constraint(location=4:9)" [label="#succeed(ls@{list_operations[1:0]})"];
     "Constraint(location=3:0)" -> "ExceptionExit" [label="#raise(ls@{list_operations[1:0]})"];
     "Constraint(location=3:8)" -> "Constraint(location=3:0)" [label="#succeed((ls@{list_operations[3:8]})[0])"];
     "Constraint(location=3:8)" -> "ExceptionExit" [label="#raise((ls@{list_operations[3:8]})[0])"];
-    "Constraint(location=4:0)" -> "Constraint()" [label=""];
+    "Constraint(location=4:0)" -> "Constraint()";
     "Constraint(location=4:9)" -> "Constraint(location=4:0)" [label="#succeed((ls@{list_operations[4:9]})[1])"];
     "Constraint(location=4:9)" -> "ExceptionExit" [label="#raise((ls@{list_operations[4:9]})[1])"];
-    "Entry" -> "Constraint(location=1:0)" [label=""];
-    "ExceptionExit" -> "TypeExit" [label=""];
-    "TypeExit" -> "Exit" [label=""];
+    "TypeExit" -> "Exit";
+    "ExceptionExit" -> "TypeExit";
 }

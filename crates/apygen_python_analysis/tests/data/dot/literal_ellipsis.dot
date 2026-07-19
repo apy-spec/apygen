@@ -31,25 +31,25 @@ digraph "DependentGraph" {
 }
 digraph "literal_ellipsis" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=14:4)" [label="{-(...) ⊑ neg_ellipsis@{literal_ellipsis[14:4]}, #defined(neg_ellipsis@{literal_ellipsis[14:4]})}"];
-    "Constraint(location=1:0)" [label="{... ⊑ ellipsis_value@{literal_ellipsis[1:0]}, #defined(ellipsis_value@{literal_ellipsis[1:0]})}"];
-    "Constraint(location=20:4)" [label="{@(...) ⊑ invert_ellipsis@{literal_ellipsis[20:4]}, #defined(invert_ellipsis@{literal_ellipsis[20:4]})}"];
-    "Constraint(location=3:0)" [label="{(bool@{literal_ellipsis[3:16]})(...) ⊑ bool_ellipsis@{literal_ellipsis[3:0]}, #defined(bool_ellipsis@{literal_ellipsis[3:0]})}"];
-    "Constraint(location=3:16)" [label="{bool@{builtins[970:6]} ⊑ bool@{literal_ellipsis[3:16]}}"];
-    "Constraint(location=5:0)" [label="{not (...) ⊑ not_ellipsis@{literal_ellipsis[5:0]}, #defined(not_ellipsis@{literal_ellipsis[5:0]})}"];
-    "Constraint(location=8:4)" [label="{+(...) ⊑ pos_ellipsis@{literal_ellipsis[8:4]}, #defined(pos_ellipsis@{literal_ellipsis[8:4]})}"];
-    "Constraint()" -> "TypeExit" [label=""];
-    "Constraint(location=14:4)" -> "Constraint(location=20:4)" [label="#succeed(@(...))"];
+    "Constraint(location=1:0)" [label="... ⊑ ellipsis_value@{literal_ellipsis[1:0]} ∧ #defined(ellipsis_value@{literal_ellipsis[1:0]})"];
+    "Constraint(location=3:0)" [label="(bool@{literal_ellipsis[3:16]})(...) ⊑ bool_ellipsis@{literal_ellipsis[3:0]} ∧ #defined(bool_ellipsis@{literal_ellipsis[3:0]})"];
+    "Constraint(location=3:16)" [label="bool@{builtins[970:6]} ⊑ bool@{literal_ellipsis[3:16]}"];
+    "Constraint(location=5:0)" [label="not (...) ⊑ not_ellipsis@{literal_ellipsis[5:0]} ∧ #defined(not_ellipsis@{literal_ellipsis[5:0]})"];
+    "Constraint(location=8:4)" [label="+(...) ⊑ pos_ellipsis@{literal_ellipsis[8:4]} ∧ #defined(pos_ellipsis@{literal_ellipsis[8:4]})"];
+    "Constraint(location=14:4)" [label="-(...) ⊑ neg_ellipsis@{literal_ellipsis[14:4]} ∧ #defined(neg_ellipsis@{literal_ellipsis[14:4]})"];
+    "Constraint(location=20:4)" [label="@(...) ⊑ invert_ellipsis@{literal_ellipsis[20:4]} ∧ #defined(invert_ellipsis@{literal_ellipsis[20:4]})"];
+    "Entry" -> "Constraint(location=1:0)";
+    "Constraint()" -> "TypeExit";
     "Constraint(location=1:0)" -> "Constraint(location=3:16)" [label="#succeed(bool@{builtins[970:6]})"];
     "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(bool@{builtins[970:6]})"];
-    "Constraint(location=20:4)" -> "Constraint()" [label=""];
     "Constraint(location=3:0)" -> "Constraint(location=5:0)" [label="#succeed(not (...))"];
     "Constraint(location=3:0)" -> "ExceptionExit" [label="#raise(not (...))"];
     "Constraint(location=3:16)" -> "Constraint(location=3:0)" [label="#succeed((bool@{literal_ellipsis[3:16]})(...))"];
     "Constraint(location=3:16)" -> "ExceptionExit" [label="#raise((bool@{literal_ellipsis[3:16]})(...))"];
     "Constraint(location=5:0)" -> "Constraint(location=8:4)" [label="#succeed(+(...))"];
     "Constraint(location=8:4)" -> "Constraint(location=14:4)" [label="#succeed(-(...))"];
-    "Entry" -> "Constraint(location=1:0)" [label=""];
-    "ExceptionExit" -> "TypeExit" [label=""];
-    "TypeExit" -> "Exit" [label=""];
+    "Constraint(location=14:4)" -> "Constraint(location=20:4)" [label="#succeed(@(...))"];
+    "Constraint(location=20:4)" -> "Constraint()";
+    "TypeExit" -> "Exit";
+    "ExceptionExit" -> "TypeExit";
 }

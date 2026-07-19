@@ -31,34 +31,40 @@ digraph "DependentGraph" {
 }
 digraph "simple_function_call" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=1:11)" [label="{int@{builtins[255:6]} ⊑ int@{simple_function_call[1:15]}, int@{builtins[255:6]} ⊑ int@{simple_function_call[1:23]}}"];
-    "Constraint(location=1:4)" [label="{#function(identifier=add_two@simple_function_call[1:0], async=false) ⊑ add_two@{simple_function_call[1:4]}, #defined(add_two@{simple_function_call[1:4]})}"];
-    "Constraint(location=4:0)" [label="{3 ⊑ a@{simple_function_call[4:0]}, #defined(a@{simple_function_call[4:0]})}"];
-    "Constraint(location=5:0)" [label="{4 ⊑ b@{simple_function_call[5:0]}, #defined(b@{simple_function_call[5:0]})}"];
-    "Constraint(location=6:0)" [label="{(add_two@{simple_function_call[6:9]})(a@{simple_function_call[6:17]}, b@{simple_function_call[6:20]}) ⊑ result@{simple_function_call[6:0]}, #defined(result@{simple_function_call[6:0]})}"];
-    "Constraint(location=6:9)" [label="{a@{simple_function_call[4:0]} ⊑ a@{simple_function_call[6:17]}, add_two@{simple_function_call[1:4]} ⊑ add_two@{simple_function_call[6:9]}, b@{simple_function_call[5:0]} ⊑ b@{simple_function_call[6:20]}}"];
-    "Constraint()" -> "TypeExit" [label=""];
-    "Constraint(location=1:11)" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=add_two@simple_function_call[1:0], async=false))"];
-    "Constraint(location=1:11)" -> "ExceptionExit" [label="#raise(#function(identifier=add_two@simple_function_call[1:0], async=false))"];
-    "Constraint(location=1:4)" -> "Constraint(location=4:0)" [label=""];
-    "Constraint(location=4:0)" -> "Constraint(location=5:0)" [label=""];
-    "Constraint(location=5:0)" -> "Constraint(location=6:9)" [label="#succeed(a@{simple_function_call[4:0]}) | #succeed(add_two@{simple_function_call[1:4]}) | #succeed(b@{simple_function_call[5:0]})"];
-    "Constraint(location=5:0)" -> "ExceptionExit" [label="#raise(a@{simple_function_call[4:0]}) | #raise(add_two@{simple_function_call[1:4]}) | #raise(b@{simple_function_call[5:0]})"];
-    "Constraint(location=6:0)" -> "Constraint()" [label=""];
-    "Constraint(location=6:9)" -> "Constraint(location=6:0)" [label="#succeed((add_two@{simple_function_call[6:9]})(a@{simple_function_call[6:17]}, b@{simple_function_call[6:20]}))"];
-    "Constraint(location=6:9)" -> "ExceptionExit" [label="#raise((add_two@{simple_function_call[6:9]})(a@{simple_function_call[6:17]}, b@{simple_function_call[6:20]}))"];
+    "Constraint(location=1:4)" [label="#function(identifier=add_two@simple_function_call[1:0], async=false) ⊑ add_two@{simple_function_call[1:4]} ∧ #defined(add_two@{simple_function_call[1:4]})"];
+    "Constraint(location=1:11)" [label="int@{builtins[255:6]} ⊑ int@{simple_function_call[1:15]} ∧ int@{builtins[255:6]} ⊑ int@{simple_function_call[1:23]}"];
+    "Constraint(location=4:0)" [label="3 ⊑ a@{simple_function_call[4:0]} ∧ #defined(a@{simple_function_call[4:0]})"];
+    "Constraint(location=5:0)" [label="4 ⊑ b@{simple_function_call[5:0]} ∧ #defined(b@{simple_function_call[5:0]})"];
+    "Constraint(location=6:0)" [label="(add_two@{simple_function_call[6:9]})(a@{simple_function_call[6:17]}, b@{simple_function_call[6:20]}) ⊑ result@{simple_function_call[6:0]} ∧ #defined(result@{simple_function_call[6:0]})"];
+    "Constraint(location=6:9)" [label="a@{simple_function_call[4:0]} ⊑ a@{simple_function_call[6:17]} ∧ add_two@{simple_function_call[1:4]} ⊑ add_two@{simple_function_call[6:9]} ∧ b@{simple_function_call[5:0]} ⊑ b@{simple_function_call[6:20]}"];
     "Entry" -> "Constraint(location=1:11)" [label="#succeed(int@{builtins[255:6]})"];
     "Entry" -> "ExceptionExit" [label="#raise(int@{builtins[255:6]})"];
-    "ExceptionExit" -> "TypeExit" [label=""];
-    "TypeExit" -> "Exit" [label=""];
+    "Constraint()" -> "TypeExit";
+    "Constraint(location=1:4)" -> "Constraint(location=4:0)";
+    "Constraint(location=1:11)" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=add_two@simple_function_call[1:0], async=false))"];
+    "Constraint(location=1:11)" -> "ExceptionExit" [label="#raise(#function(identifier=add_two@simple_function_call[1:0], async=false))"];
+    "Constraint(location=4:0)" -> "Constraint(location=5:0)";
+    "Constraint(location=5:0)" -> "Constraint(location=6:9)" [label="#succeed(a@{simple_function_call[4:0]})"];
+    "Constraint(location=5:0)" -> "Constraint(location=6:9)" [label="#succeed(add_two@{simple_function_call[1:4]})"];
+    "Constraint(location=5:0)" -> "Constraint(location=6:9)" [label="#succeed(b@{simple_function_call[5:0]})"];
+    "Constraint(location=5:0)" -> "ExceptionExit" [label="#raise(a@{simple_function_call[4:0]})"];
+    "Constraint(location=5:0)" -> "ExceptionExit" [label="#raise(add_two@{simple_function_call[1:4]})"];
+    "Constraint(location=5:0)" -> "ExceptionExit" [label="#raise(b@{simple_function_call[5:0]})"];
+    "Constraint(location=6:0)" -> "Constraint()";
+    "Constraint(location=6:9)" -> "Constraint(location=6:0)" [label="#succeed((add_two@{simple_function_call[6:9]})(a@{simple_function_call[6:17]}, b@{simple_function_call[6:20]}))"];
+    "Constraint(location=6:9)" -> "ExceptionExit" [label="#raise((add_two@{simple_function_call[6:9]})(a@{simple_function_call[6:17]}, b@{simple_function_call[6:20]}))"];
+    "TypeExit" -> "Exit";
+    "ExceptionExit" -> "TypeExit";
 }
 digraph "simple_function_call[1:0]" {
-    "Constraint(location=2:11)" [label="{x@{simple_function_call[1:0][1:12]} ⊑ x@{simple_function_call[1:0][2:11]}, y@{simple_function_call[1:0][1:20]} ⊑ y@{simple_function_call[1:0][2:15]}}"];
     "Constraint(location=2:4)" [label="#return((x@{simple_function_call[1:0][2:11]}) + (y@{simple_function_call[1:0][2:15]}))"];
-    "Constraint(location=2:11)" -> "Constraint(location=2:4)" [label=""];
-    "Constraint(location=2:4)" -> "TypeExit" [label=""];
-    "Entry" -> "Constraint(location=2:11)" [label="#succeed(x@{simple_function_call[1:0][1:12]}) | #succeed(y@{simple_function_call[1:0][1:20]})"];
-    "Entry" -> "ExceptionExit" [label="#raise(x@{simple_function_call[1:0][1:12]}) | #raise(y@{simple_function_call[1:0][1:20]})"];
-    "ExceptionExit" -> "TypeExit" [label=""];
-    "TypeExit" -> "Exit" [label=""];
+    "Constraint(location=2:11)" [label="x@{simple_function_call[1:0][1:12]} ⊑ x@{simple_function_call[1:0][2:11]} ∧ y@{simple_function_call[1:0][1:20]} ⊑ y@{simple_function_call[1:0][2:15]}"];
+    "Entry" -> "Constraint(location=2:11)" [label="#succeed(x@{simple_function_call[1:0][1:12]})"];
+    "Entry" -> "Constraint(location=2:11)" [label="#succeed(y@{simple_function_call[1:0][1:20]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(x@{simple_function_call[1:0][1:12]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(y@{simple_function_call[1:0][1:20]})"];
+    "Constraint(location=2:4)" -> "TypeExit";
+    "Constraint(location=2:11)" -> "Constraint(location=2:4)";
+    "TypeExit" -> "Exit";
+    "ExceptionExit" -> "TypeExit";
 }

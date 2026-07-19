@@ -1028,76 +1028,77 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
         ExpressionEvaluator::new(self.qualified_location, self.program_entity_constraints)
     }
 
-    pub fn evaluate_constraint(
+    pub fn evaluate_constraints(
         &self,
         program_evaluation: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
-        constraint: &Constraint,
+        constraints: &imbl::OrdSet<Constraint>,
     ) where
         S: Eq,
     {
-        match constraint {
-            Constraint::Type(type_constraint) => {
-                let (ty, raised_exceptions) = match self
-                    .evaluator()
-                    .evaluate_expression(program_evaluation, &type_constraint.left)
-                {
-                    Some(type_eval) => (
-                        Deferred::known(type_eval.value),
-                        Deferred::known(type_eval.effects.exceptions),
-                    ),
-                    None => (
-                        Deferred::unknown(imbl::OrdSet::unit(type_constraint.left.clone())),
-                        Deferred::unknown(imbl::OrdSet::unit(type_constraint.left.clone())),
-                    ),
-                };
+        for constraint in constraints {
+            match constraint {
+                Constraint::Type(type_constraint) => {
+                    let (ty, raised_exceptions) = match self
+                        .evaluator()
+                        .evaluate_expression(program_evaluation, &type_constraint.left)
+                    {
+                        Some(type_eval) => (
+                            Deferred::known(type_eval.value),
+                            Deferred::known(type_eval.effects.exceptions),
+                        ),
+                        None => (
+                            Deferred::unknown(imbl::OrdSet::unit(type_constraint.left.clone())),
+                            Deferred::unknown(imbl::OrdSet::unit(type_constraint.left.clone())),
+                        ),
+                    };
 
-                let evaluation_state =
-                    program_evaluation.get_or_insert_default(self.qualified_location.clone());
+                    let evaluation_state =
+                        program_evaluation.get_or_insert_default(self.qualified_location.clone());
 
-                evaluation_state
-                    .types
-                    .entry(type_constraint.right.clone())
-                    .and_modify(|previous_eval| *previous_eval = previous_eval.join(&ty))
-                    .or_insert(ty);
-                evaluation_state.raised_exceptions =
-                    evaluation_state.raised_exceptions.join(&raised_exceptions);
-            }
-            Constraint::Return(return_constraint) => {
-                let (ty, raised_exceptions) = match self
-                    .evaluator()
-                    .evaluate_expression(program_evaluation, &return_constraint.expression)
-                {
-                    Some(type_eval) => (
-                        Deferred::known(type_eval.value),
-                        Deferred::known(type_eval.effects.exceptions),
-                    ),
-                    None => (
-                        Deferred::unknown(imbl::OrdSet::unit(return_constraint.expression.clone())),
-                        Deferred::unknown(imbl::OrdSet::unit(return_constraint.expression.clone())),
-                    ),
-                };
+                    evaluation_state
+                        .types
+                        .entry(type_constraint.right.clone())
+                        .and_modify(|previous_eval| *previous_eval = previous_eval.join(&ty))
+                        .or_insert(ty);
+                    evaluation_state.raised_exceptions =
+                        evaluation_state.raised_exceptions.join(&raised_exceptions);
+                }
+                Constraint::Return(return_constraint) => {
+                    let (ty, raised_exceptions) = match self
+                        .evaluator()
+                        .evaluate_expression(program_evaluation, &return_constraint.expression)
+                    {
+                        Some(type_eval) => (
+                            Deferred::known(type_eval.value),
+                            Deferred::known(type_eval.effects.exceptions),
+                        ),
+                        None => (
+                            Deferred::unknown(imbl::OrdSet::unit(
+                                return_constraint.expression.clone(),
+                            )),
+                            Deferred::unknown(imbl::OrdSet::unit(
+                                return_constraint.expression.clone(),
+                            )),
+                        ),
+                    };
 
-                let evaluation_state =
-                    program_evaluation.get_or_insert_default(self.qualified_location.clone());
+                    let evaluation_state =
+                        program_evaluation.get_or_insert_default(self.qualified_location.clone());
 
-                evaluation_state.return_value = ty;
-                evaluation_state.raised_exceptions = raised_exceptions.join(&raised_exceptions);
-            }
-            Constraint::DefinedVariable(expression) => {
-                let evaluation_state =
-                    program_evaluation.get_or_insert_default(self.qualified_location.clone());
+                    evaluation_state.return_value = ty;
+                    evaluation_state.raised_exceptions = raised_exceptions.join(&raised_exceptions);
+                }
+                Constraint::DefinedVariable(expression) => {
+                    let evaluation_state =
+                        program_evaluation.get_or_insert_default(self.qualified_location.clone());
 
-                evaluation_state.defined_variables.names.insert(
-                    expression.name.clone(),
-                    imbl::OrdSet::unit((
-                        expression.program_entity.clone(),
-                        expression.location.clone(),
-                    )),
-                );
-            }
-            Constraint::Multiple(constraints) => {
-                for constraint in constraints {
-                    self.evaluate_constraint(program_evaluation, constraint);
+                    evaluation_state.defined_variables.names.insert(
+                        expression.name.clone(),
+                        imbl::OrdSet::unit((
+                            expression.program_entity.clone(),
+                            expression.location.clone(),
+                        )),
+                    );
                 }
             }
         }
@@ -1189,10 +1190,10 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                 }
             }
             ConstraintNode::Constraint { .. } => {
-                if let Some(constraint) =
+                if let Some(constraints) =
                     self.constraints().unwrap().constraint_graph.nodes.get(node)
                 {
-                    self.evaluate_constraint(&mut program_evaluation, constraint);
+                    self.evaluate_constraints(&mut program_evaluation, constraints);
                 }
             }
             _ => {}

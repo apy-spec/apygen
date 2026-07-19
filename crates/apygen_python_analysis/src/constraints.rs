@@ -11,10 +11,12 @@ use crate::cfg::{
 use crate::genkill::assignment::AssignmentTarget;
 use apy::OneOrMany;
 use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
-use apygen_analysis::fmt::{fmt_display_sequence, fmt_display_set};
+use apygen_analysis::fmt::{fmt_display_sequence, fmt_iterator};
 use apygen_analysis::lattice::{Join, OrdJoin};
 use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use apygen_cfg::build_cfg;
+use apygen_cfg::graph::Graph;
+use apygen_cfg::graph::dot::{DiGraphDot, escape_dot};
 use apygen_cfg::parser::{Mode, parse};
 use apygen_finder::filesystem::{Error as FilesystemError, Filesystem};
 use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
@@ -25,7 +27,7 @@ use num_traits::Num;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use thiserror::Error;
@@ -620,7 +622,6 @@ pub enum Constraint {
     Type(IncludeConstraint<Arc<Expression>>),
     Return(ReturnConstraint),
     DefinedVariable(ExpressionVariable),
-    Multiple(imbl::OrdSet<Constraint>),
 }
 
 impl Display for Constraint {
@@ -631,24 +632,6 @@ impl Display for Constraint {
             Constraint::DefinedVariable(defined_variable) => {
                 write!(f, "#defined({})", defined_variable)
             }
-            Constraint::Multiple(constraints) => fmt_display_set(f, constraints.iter()),
-        }
-    }
-}
-
-impl Join for Constraint {
-    fn join(&self, other: &Self) -> Self {
-        match (self, other) {
-            (Constraint::Multiple(self_constraints), Constraint::Multiple(other_constraints)) => {
-                Constraint::Multiple(self_constraints.join(other_constraints))
-            }
-            (Constraint::Multiple(self_constraints), _) => {
-                Constraint::Multiple(self_constraints.update(other.clone()))
-            }
-            (_, Constraint::Multiple(other_constraints)) => {
-                Constraint::Multiple(other_constraints.update(other.clone()))
-            }
-            _ => Constraint::Multiple(imbl::OrdSet::unit(self.clone()).update(other.clone())),
         }
     }
 }
@@ -688,13 +671,13 @@ impl Display for ConstraintNode {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ConstraintGraph {
-    pub nodes: imbl::OrdMap<ConstraintNode, Constraint>,
+    pub nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
     pub edges: imbl::OrdMap<ConstraintNode, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>>,
 }
 
 impl ConstraintGraph {
     pub fn new(
-        nodes: imbl::OrdMap<ConstraintNode, Constraint>,
+        nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
         edges: imbl::OrdMap<ConstraintNode, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>>,
     ) -> Self {
         Self { nodes, edges }
@@ -719,56 +702,87 @@ impl ConstraintGraph {
     pub fn exists(&self, from: &ConstraintNode, to: &ConstraintNode) -> bool {
         self.edges.get(from).and_then(|tos| tos.get(to)).is_some()
     }
+}
 
-    pub fn dot(&self, graph_name: &str) -> String {
-        let mut nodes: imbl::OrdSet<String> = imbl::OrdSet::new();
-        let mut edges: imbl::OrdMap<(String, String), Vec<String>> = imbl::OrdMap::new();
-        for (node, constraint) in &self.nodes {
-            nodes.insert(format!(
-                "\"{}\" [label=\"{}\"]",
-                node.to_string().replace('"', r#"\""#),
-                constraint.to_string().replace('"', r#"\""#)
-            ));
-        }
-        for (from, tos) in &self.edges {
-            let from_string = from.to_string().replace('"', r#"\""#);
-            for (to, guards) in tos {
-                let to_string = to.to_string().replace('"', r#"\""#);
-                edges.insert(
-                    (from_string.clone(), to_string),
-                    guards
-                        .iter()
-                        .map(|guard| guard.to_string().replace('"', r#"\""#))
-                        .collect(),
-                );
+impl Graph for ConstraintGraph {
+    type Node = ConstraintNode;
+    type NodeData = imbl::OrdSet<Constraint>;
+    type EdgeData = imbl::OrdSet<Guard>;
+
+    fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
+        self.nodes.iter()
+    }
+
+    fn edge_data_iter(
+        &self,
+    ) -> impl Iterator<Item = ((&Self::Node, &Self::Node), &Self::EdgeData)> {
+        self.edges
+            .iter()
+            .flat_map(|(from, tos)| tos.iter().map(move |(to, guards)| ((from, to), guards)))
+    }
+
+    fn node_iter(&self) -> impl Iterator<Item = &Self::Node> {
+        self.nodes.keys()
+    }
+
+    fn edge_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::Node)> {
+        self.edges
+            .iter()
+            .flat_map(|(from, tos)| tos.keys().map(move |to| (from, to)))
+    }
+
+    fn get_node_data(&self, node: &Self::Node) -> Option<&Self::NodeData> {
+        self.nodes.get(node)
+    }
+
+    fn get_edge_data(&self, (from, to): (&Self::Node, &Self::Node)) -> Option<&Self::EdgeData> {
+        self.edges.get(from).and_then(|tos| tos.get(to))
+    }
+
+    fn successor_iter(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
+        self.edges.get(node).into_iter().flat_map(|tos| tos.keys())
+    }
+}
+
+impl DiGraphDot for ConstraintGraph {
+    fn fmt_node(
+        &self,
+        f: &mut Formatter<'_>,
+        node: &Self::Node,
+        node_data: &Self::NodeData,
+    ) -> std::fmt::Result {
+        write!(f, "    \"{}\" [label=\"", escape_dot(&node.to_string()))?;
+        fmt_iterator(f, node_data.iter(), " ∧ ", |f, constraint| {
+            write!(f, "{}", escape_dot(&constraint.to_string()))
+        })?;
+        f.write_str("\"];\n")
+    }
+
+    fn fmt_edge(
+        &self,
+        f: &mut Formatter<'_>,
+        (from, to): (&Self::Node, &Self::Node),
+        edge_data: &Self::EdgeData,
+    ) -> std::fmt::Result {
+        if edge_data.is_empty() {
+            write!(
+                f,
+                "    \"{}\" -> \"{}\";\n",
+                escape_dot(&from.to_string()),
+                escape_dot(&to.to_string()),
+            )?;
+        } else {
+            for guard in edge_data {
+                write!(
+                    f,
+                    "    \"{}\" -> \"{}\" [label=\"{}\"];\n",
+                    escape_dot(&from.to_string()),
+                    escape_dot(&to.to_string()),
+                    escape_dot(&guard.to_string())
+                )?;
             }
         }
-
-        let mut dot_representation = String::from("digraph \"");
-        dot_representation.push_str(graph_name);
-        dot_representation.push_str("\" {\n");
-        for node in &nodes {
-            dot_representation.push_str("    ");
-            dot_representation.push_str(node);
-            dot_representation.push_str(";\n");
-        }
-        for ((from, to), guard) in &edges {
-            dot_representation.push_str("    \"");
-            dot_representation.push_str(from);
-            dot_representation.push_str("\" -> \"");
-            dot_representation.push_str(to);
-            dot_representation.push_str("\" [label=\"");
-            for (i, guard) in guard.iter().enumerate() {
-                if i > 0 {
-                    dot_representation.push_str(" | ");
-                }
-                dot_representation.push_str(guard);
-            }
-            dot_representation.push_str("\"];\n");
-        }
-        dot_representation.push_str("}\n");
-
-        dot_representation
+        Ok(())
     }
 }
 
@@ -832,7 +846,7 @@ pub struct ProgramEntityAbstractEnvironment {
     pub return_status: ReturnStatus,
     pub current_nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>,
     pub variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
-    pub nodes: imbl::OrdMap<ConstraintNode, Constraint>,
+    pub nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
     pub edges: imbl::OrdMap<(ConstraintNode, ConstraintNode), imbl::OrdSet<Guard>>,
     pub imports: imbl::OrdSet<ModuleName>,
     pub sub_program_entities: imbl::OrdMap<ProgramEntity, SubProgramEntityContext>,
@@ -1158,9 +1172,7 @@ impl<'a> ConstraintsBuilder<'a> {
             location: Some(location.clone()),
             id: None,
         };
-        abstract_environment
-            .nodes
-            .insert(node.clone(), Constraint::Multiple(constraints));
+        abstract_environment.nodes.insert(node.clone(), constraints);
 
         let empty_constraint_node = ConstraintNode::Constraint {
             location: Some(location.clone()),
@@ -1206,7 +1218,7 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         abstract_environment: &mut ProgramEntityAbstractEnvironment,
         location: Location,
-        additional_constraint: Constraint,
+        additional_constraints: imbl::OrdSet<Constraint>,
         left: Arc<Expression>,
         right: Arc<Expression>,
     ) {
@@ -1215,12 +1227,12 @@ impl<'a> ConstraintsBuilder<'a> {
             id: None,
         };
 
-        let constraint = additional_constraint.join(&Constraint::Type(IncludeConstraint::new(
+        let constraints = additional_constraints.update(Constraint::Type(IncludeConstraint::new(
             left.clone(),
             right.clone(),
         )));
 
-        abstract_environment.nodes.insert(node.clone(), constraint);
+        abstract_environment.nodes.insert(node.clone(), constraints);
 
         let mut current_nodes = drain(&mut abstract_environment.current_nodes, |(_, guards)| {
             guards
@@ -1288,7 +1300,7 @@ impl<'a> ConstraintsBuilder<'a> {
         self.create_include_constraint(
             abstract_environment,
             location.clone(),
-            Constraint::DefinedVariable(expression_variable.clone()),
+            imbl::OrdSet::unit(Constraint::DefinedVariable(expression_variable.clone())),
             type_expression,
             Arc::new(Expression::Variable(expression_variable)),
         );
@@ -2025,7 +2037,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         target_abstract_environment
             .nodes
-            .insert(node.clone(), constraint);
+            .insert(node.clone(), imbl::OrdSet::unit(constraint));
 
         let current_nodes = drain(
             &mut target_abstract_environment.current_nodes,
@@ -2096,11 +2108,11 @@ impl<'a> ConstraintsBuilder<'a> {
                     self.create_include_constraint(
                         &mut target_abstract_environment,
                         location.clone(),
-                        Constraint::DefinedVariable(ExpressionVariable::new(
+                        imbl::OrdSet::unit(Constraint::DefinedVariable(ExpressionVariable::new(
                             identifier.clone(),
                             location.clone(),
                             self.program_entity.qualified_location.clone(),
-                        )),
+                        ))),
                         Arc::new(Expression::Import(ExpressionImport::new(Arc::new(
                             QualifiedName::new(OneOrMany::many(Vec::from(module_identifiers))),
                         )))),
@@ -2590,10 +2602,10 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                         target_abstract_environment.return_status = ReturnStatus::Returning;
                         target_abstract_environment.nodes.insert(
                             return_node.clone(),
-                            Constraint::Return(ReturnConstraint::new(
+                            imbl::OrdSet::unit(Constraint::Return(ReturnConstraint::new(
                                 Arc::new(Expression::LiteralNone),
                                 None,
-                            )),
+                            ))),
                         );
 
                         target_abstract_environment
@@ -2758,6 +2770,68 @@ impl<N: Debug + Ord, S: Debug> Display for DependentGraph<N, S> {
             f,
             "ApyAnalysisState {{ nodes: {:?}, dependents: {:?} }}",
             self.nodes, self.dependents
+        )
+    }
+}
+
+impl<N: Clone + Ord, S: Clone> Graph for DependentGraph<N, S> {
+    type Node = N;
+    type NodeData = S;
+    type EdgeData = ();
+
+    fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
+        self.nodes.iter()
+    }
+
+    fn edge_data_iter(
+        &self,
+    ) -> impl Iterator<Item = ((&Self::Node, &Self::Node), &Self::EdgeData)> {
+        self.dependents
+            .iter()
+            .flat_map(|(from, tos)| tos.iter().map(move |to| ((from, to), &())))
+    }
+
+    fn node_iter(&self) -> impl Iterator<Item = &Self::Node> {
+        self.nodes.keys()
+    }
+
+    fn edge_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::Node)> {
+        self.dependents
+            .iter()
+            .flat_map(|(from, tos)| tos.iter().map(move |to| (from, to)))
+    }
+
+    fn get_node_data(&self, node: &Self::Node) -> Option<&Self::NodeData> {
+        self.nodes.get(node)
+    }
+}
+
+impl<N: Clone + Ord + Display, S: Clone + Display> DiGraphDot for DependentGraph<N, S> {
+    fn fmt_node(
+        &self,
+        f: &mut Formatter<'_>,
+        node: &Self::Node,
+        node_data: &Self::NodeData,
+    ) -> std::fmt::Result {
+        write!(
+            f,
+            "    \"{}\" [label=\"{}\"];\n",
+            escape_dot(&node.to_string()),
+            escape_dot(&node_data.to_string())
+        )
+    }
+
+    fn fmt_edge(
+        &self,
+        f: &mut Formatter<'_>,
+        (from, to): (&Self::Node, &Self::Node),
+        _edge_data: &Self::EdgeData,
+    ) -> std::fmt::Result {
+        write!(
+            f,
+            "    \"{}\" -> \"{}\";\n",
+            escape_dot(&from.to_string()),
+            escape_dot(&to.to_string())
         )
     }
 }
@@ -3068,6 +3142,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apygen_cfg::graph::dot::ToDot;
     use indoc::indoc;
     use rstest::rstest;
     use std::convert::Infallible;
@@ -3099,13 +3174,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:7)" [label="{#import(some_module) ⊑ some_module@{module[1:7]}, #defined(some_module@{module[1:7]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:7)" -> "Constraint()" [label=""];
+            "Constraint(location=1:7)" [label="#import(some_module) ⊑ some_module@{module[1:7]} ∧ #defined(some_module@{module[1:7]})"];
             "Entry" -> "Constraint(location=1:7)" [label="#succeed(#import(some_module))"];
             "Entry" -> "ExceptionExit" [label="#raise(#import(some_module))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:7)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3124,13 +3199,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:22)" [label="{#import(some_module) ⊑ mod@{module[1:22]}, #defined(mod@{module[1:22]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:22)" -> "Constraint()" [label=""];
+            "Constraint(location=1:22)" [label="#import(some_module) ⊑ mod@{module[1:22]} ∧ #defined(mod@{module[1:22]})"];
             "Entry" -> "Constraint(location=1:22)" [label="#succeed(#import(some_module))"];
             "Entry" -> "ExceptionExit" [label="#raise(#import(some_module))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:22)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3149,16 +3224,16 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:19)" [label="{#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule, #defined(some_module@{module[1:19]})}"];
-            "Constraint(location=1:7)" [label="{#import(some_module) ⊑ some_module@{module[1:7]}, #defined(some_module@{module[1:7]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:19)" -> "Constraint()" [label=""];
-            "Constraint(location=1:7)" -> "Constraint(location=1:19)" [label="#succeed(#import(some_module.submodule))"];
-            "Constraint(location=1:7)" -> "ExceptionExit" [label="#raise(#import(some_module.submodule))"];
+            "Constraint(location=1:7)" [label="#import(some_module) ⊑ some_module@{module[1:7]} ∧ #defined(some_module@{module[1:7]})"];
+            "Constraint(location=1:19)" [label="#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule ∧ #defined(some_module@{module[1:19]})"];
             "Entry" -> "Constraint(location=1:7)" [label="#succeed(#import(some_module))"];
             "Entry" -> "ExceptionExit" [label="#raise(#import(some_module))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:7)" -> "Constraint(location=1:19)" [label="#succeed(#import(some_module.submodule))"];
+            "Constraint(location=1:7)" -> "ExceptionExit" [label="#raise(#import(some_module.submodule))"];
+            "Constraint(location=1:19)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3180,19 +3255,19 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:20)" [label="{#import(some_module) ⊑ some_module@{module[1:20]}, #defined(some_module@{module[1:20]})}"];
-            "Constraint(location=1:32)" [label="{#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule, #defined(some_module@{module[1:32]})}"];
-            "Constraint(location=1:7)" [label="{#import(some_module) ⊑ some_module@{module[1:7]}, #defined(some_module@{module[1:7]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:20)" -> "Constraint(location=1:32)" [label="#succeed(#import(some_module.submodule))"];
-            "Constraint(location=1:20)" -> "ExceptionExit" [label="#raise(#import(some_module.submodule))"];
-            "Constraint(location=1:32)" -> "Constraint()" [label=""];
-            "Constraint(location=1:7)" -> "Constraint(location=1:20)" [label="#succeed(#import(some_module))"];
-            "Constraint(location=1:7)" -> "ExceptionExit" [label="#raise(#import(some_module))"];
+            "Constraint(location=1:7)" [label="#import(some_module) ⊑ some_module@{module[1:7]} ∧ #defined(some_module@{module[1:7]})"];
+            "Constraint(location=1:20)" [label="#import(some_module) ⊑ some_module@{module[1:20]} ∧ #defined(some_module@{module[1:20]})"];
+            "Constraint(location=1:32)" [label="#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule ∧ #defined(some_module@{module[1:32]})"];
             "Entry" -> "Constraint(location=1:7)" [label="#succeed(#import(some_module))"];
             "Entry" -> "ExceptionExit" [label="#raise(#import(some_module))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:7)" -> "Constraint(location=1:20)" [label="#succeed(#import(some_module))"];
+            "Constraint(location=1:7)" -> "ExceptionExit" [label="#raise(#import(some_module))"];
+            "Constraint(location=1:20)" -> "Constraint(location=1:32)" [label="#succeed(#import(some_module.submodule))"];
+            "Constraint(location=1:20)" -> "ExceptionExit" [label="#raise(#import(some_module.submodule))"];
+            "Constraint(location=1:32)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3214,16 +3289,16 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:20)" [label="{#import(another_module) ⊑ another_module@{module[1:20]}, #defined(another_module@{module[1:20]})}"];
-            "Constraint(location=1:7)" [label="{#import(some_module) ⊑ some_module@{module[1:7]}, #defined(some_module@{module[1:7]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:20)" -> "Constraint()" [label=""];
-            "Constraint(location=1:7)" -> "Constraint(location=1:20)" [label="#succeed(#import(another_module))"];
-            "Constraint(location=1:7)" -> "ExceptionExit" [label="#raise(#import(another_module))"];
+            "Constraint(location=1:7)" [label="#import(some_module) ⊑ some_module@{module[1:7]} ∧ #defined(some_module@{module[1:7]})"];
+            "Constraint(location=1:20)" [label="#import(another_module) ⊑ another_module@{module[1:20]} ∧ #defined(another_module@{module[1:20]})"];
             "Entry" -> "Constraint(location=1:7)" [label="#succeed(#import(some_module))"];
             "Entry" -> "ExceptionExit" [label="#raise(#import(some_module))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:7)" -> "Constraint(location=1:20)" [label="#succeed(#import(another_module))"];
+            "Constraint(location=1:7)" -> "ExceptionExit" [label="#raise(#import(another_module))"];
+            "Constraint(location=1:20)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3245,16 +3320,16 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:22)" [label="{#import(some_module) ⊑ mod@{module[1:22]}, #defined(mod@{module[1:22]})}"];
-            "Constraint(location=1:45)" [label="{#import(another_module) ⊑ mod@{module[1:45]}, #defined(mod@{module[1:45]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:22)" -> "Constraint(location=1:45)" [label="#succeed(#import(another_module))"];
-            "Constraint(location=1:22)" -> "ExceptionExit" [label="#raise(#import(another_module))"];
-            "Constraint(location=1:45)" -> "Constraint()" [label=""];
+            "Constraint(location=1:22)" [label="#import(some_module) ⊑ mod@{module[1:22]} ∧ #defined(mod@{module[1:22]})"];
+            "Constraint(location=1:45)" [label="#import(another_module) ⊑ mod@{module[1:45]} ∧ #defined(mod@{module[1:45]})"];
             "Entry" -> "Constraint(location=1:22)" [label="#succeed(#import(some_module))"];
             "Entry" -> "ExceptionExit" [label="#raise(#import(some_module))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:22)" -> "Constraint(location=1:45)" [label="#succeed(#import(another_module))"];
+            "Constraint(location=1:22)" -> "ExceptionExit" [label="#raise(#import(another_module))"];
+            "Constraint(location=1:45)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3270,11 +3345,11 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{42 ⊑ a@{module[1:0]}, #defined(a@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
-            "Entry" -> "Constraint(location=1:0)" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint(location=1:0)" [label="42 ⊑ a@{module[1:0]} ∧ #defined(a@{module[1:0]})"];
+            "Entry" -> "Constraint(location=1:0)";
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
         }
         "##},
     )]
@@ -3290,11 +3365,11 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{4200000000000000000000000000 ⊑ a@{module[1:0]}, #defined(a@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
-            "Entry" -> "Constraint(location=1:0)" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint(location=1:0)" [label="4200000000000000000000000000 ⊑ a@{module[1:0]} ∧ #defined(a@{module[1:0]})"];
+            "Entry" -> "Constraint(location=1:0)";
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
         }
         "##},
     )]
@@ -3310,13 +3385,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) + (67) ⊑ add@{module[1:0]}, #defined(add@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) + (67) ⊑ add@{module[1:0]} ∧ #defined(add@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) + (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) + (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3332,13 +3407,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) - (67) ⊑ sub@{module[1:0]}, #defined(sub@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) - (67) ⊑ sub@{module[1:0]} ∧ #defined(sub@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) - (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) - (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3354,13 +3429,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) * (67) ⊑ mult@{module[1:0]}, #defined(mult@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) * (67) ⊑ mult@{module[1:0]} ∧ #defined(mult@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) * (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) * (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3376,13 +3451,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) @ (67) ⊑ mat_mult@{module[1:0]}, #defined(mat_mult@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) @ (67) ⊑ mat_mult@{module[1:0]} ∧ #defined(mat_mult@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) @ (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) @ (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3398,13 +3473,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) / (67) ⊑ div@{module[1:0]}, #defined(div@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) / (67) ⊑ div@{module[1:0]} ∧ #defined(div@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) / (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) / (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3420,13 +3495,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) // (67) ⊑ floor_div@{module[1:0]}, #defined(floor_div@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) // (67) ⊑ floor_div@{module[1:0]} ∧ #defined(floor_div@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) // (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) // (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3442,13 +3517,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) % (67) ⊑ mod@{module[1:0]}, #defined(mod@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) % (67) ⊑ mod@{module[1:0]} ∧ #defined(mod@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) % (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) % (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3464,13 +3539,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) ** (67) ⊑ pow@{module[1:0]}, #defined(pow@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) ** (67) ⊑ pow@{module[1:0]} ∧ #defined(pow@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) ** (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) ** (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3486,13 +3561,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) << (67) ⊑ shl@{module[1:0]}, #defined(shl@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) << (67) ⊑ shl@{module[1:0]} ∧ #defined(shl@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) << (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) << (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3508,13 +3583,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) >> (67) ⊑ shr@{module[1:0]}, #defined(shr@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) >> (67) ⊑ shr@{module[1:0]} ∧ #defined(shr@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) >> (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) >> (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3530,13 +3605,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) | (67) ⊑ bit_or@{module[1:0]}, #defined(bit_or@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) | (67) ⊑ bit_or@{module[1:0]} ∧ #defined(bit_or@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) | (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) | (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3552,13 +3627,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) ^ (67) ⊑ bit_xor@{module[1:0]}, #defined(bit_xor@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) ^ (67) ⊑ bit_xor@{module[1:0]} ∧ #defined(bit_xor@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) ^ (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) ^ (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3574,13 +3649,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) & (67) ⊑ bit_and@{module[1:0]}, #defined(bit_and@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) & (67) ⊑ bit_and@{module[1:0]} ∧ #defined(bit_and@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) & (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) & (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3596,13 +3671,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) and (67) ⊑ and_@{module[1:0]}, #defined(and_@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) and (67) ⊑ and_@{module[1:0]} ∧ #defined(and_@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) and (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) and (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3618,13 +3693,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) or (67) ⊑ or_@{module[1:0]}, #defined(or_@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) or (67) ⊑ or_@{module[1:0]} ∧ #defined(or_@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) or (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) or (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3640,13 +3715,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) == (67) ⊑ eq@{module[1:0]}, #defined(eq@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) == (67) ⊑ eq@{module[1:0]} ∧ #defined(eq@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) == (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) == (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3662,13 +3737,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) != (67) ⊑ not_eq@{module[1:0]}, #defined(not_eq@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) != (67) ⊑ not_eq@{module[1:0]} ∧ #defined(not_eq@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) != (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) != (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3684,13 +3759,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) < (67) ⊑ lt@{module[1:0]}, #defined(lt@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) < (67) ⊑ lt@{module[1:0]} ∧ #defined(lt@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) < (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) < (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3706,13 +3781,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) > (67) ⊑ gt@{module[1:0]}, #defined(gt@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) > (67) ⊑ gt@{module[1:0]} ∧ #defined(gt@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) > (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) > (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3728,13 +3803,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) <= (67) ⊑ lte@{module[1:0]}, #defined(lte@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) <= (67) ⊑ lte@{module[1:0]} ∧ #defined(lte@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) <= (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) <= (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3750,13 +3825,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) >= (67) ⊑ gte@{module[1:0]}, #defined(gte@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) >= (67) ⊑ gte@{module[1:0]} ∧ #defined(gte@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) >= (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) >= (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3772,13 +3847,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) is (67) ⊑ is_@{module[1:0]}, #defined(is_@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) is (67) ⊑ is_@{module[1:0]} ∧ #defined(is_@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) is (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) is (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3794,13 +3869,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) is not (67) ⊑ is_not@{module[1:0]}, #defined(is_not@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) is not (67) ⊑ is_not@{module[1:0]} ∧ #defined(is_not@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) is not (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) is not (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3816,13 +3891,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) in (67) ⊑ in_@{module[1:0]}, #defined(in_@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) in (67) ⊑ in_@{module[1:0]} ∧ #defined(in_@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) in (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) in (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3838,13 +3913,13 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{(42) not in (67) ⊑ not_in@{module[1:0]}, #defined(not_in@{module[1:0]})}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint()" [label=""];
+            "Constraint(location=1:0)" [label="(42) not in (67) ⊑ not_in@{module[1:0]} ∧ #defined(not_in@{module[1:0]})"];
             "Entry" -> "Constraint(location=1:0)" [label="#succeed((42) not in (67))"];
             "Entry" -> "ExceptionExit" [label="#raise((42) not in (67))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3864,18 +3939,18 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{4 ⊑ a@{module[1:0]}, #defined(a@{module[1:0]})}"];
-            "Constraint(location=3:0)" [label="{(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]}, #defined(b@{module[3:0]})}"];
-            "Constraint(location=3:4)" [label="{a@{module[1:0]} ⊑ a@{module[3:4]}, a@{module[1:0]} ⊑ a@{module[3:8]}}"];
-            "Constraint()" -> "TypeExit" [label=""];
+            "Constraint(location=1:0)" [label="4 ⊑ a@{module[1:0]} ∧ #defined(a@{module[1:0]})"];
+            "Constraint(location=3:0)" [label="(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]} ∧ #defined(b@{module[3:0]})"];
+            "Constraint(location=3:4)" [label="a@{module[1:0]} ⊑ a@{module[3:4]} ∧ a@{module[1:0]} ⊑ a@{module[3:8]}"];
+            "Entry" -> "Constraint(location=1:0)";
+            "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint(location=3:4)" [label="#succeed(a@{module[1:0]})"];
             "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(a@{module[1:0]})"];
-            "Constraint(location=3:0)" -> "Constraint()" [label=""];
+            "Constraint(location=3:0)" -> "Constraint()";
             "Constraint(location=3:4)" -> "Constraint(location=3:0)" [label="#succeed((a@{module[3:4]}) + (a@{module[3:8]}))"];
             "Constraint(location=3:4)" -> "ExceptionExit" [label="#raise((a@{module[3:4]}) + (a@{module[3:8]}))"];
-            "Entry" -> "Constraint(location=1:0)" [label=""];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3900,28 +3975,32 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{True ⊑ x@{module[1:0]}, #defined(x@{module[1:0]})}"];
-            "Constraint(location=3:3)" [label="{x@{module[1:0]} ⊑ x@{module[3:3]}}"];
-            "Constraint(location=4:4)" [label="{42 ⊑ a@{module[4:4]}, #defined(a@{module[4:4]})}"];
-            "Constraint(location=6:4)" [label="{67 ⊑ a@{module[6:4]}, #defined(a@{module[6:4]})}"];
-            "Constraint(location=8:0)" [label="{a@{module[8:4]} ⊑ b@{module[8:0]}, #defined(b@{module[8:0]})}"];
-            "Constraint(location=8:4)" [label="{a@{module[4:4]} ⊑ a@{module[8:4]}, a@{module[6:4]} ⊑ a@{module[8:4]}}"];
-            "Constraint()" -> "TypeExit" [label=""];
+            "Constraint(location=1:0)" [label="True ⊑ x@{module[1:0]} ∧ #defined(x@{module[1:0]})"];
+            "Constraint(location=3:3)" [label="x@{module[1:0]} ⊑ x@{module[3:3]}"];
+            "Constraint(location=4:4)" [label="42 ⊑ a@{module[4:4]} ∧ #defined(a@{module[4:4]})"];
+            "Constraint(location=6:4)" [label="67 ⊑ a@{module[6:4]} ∧ #defined(a@{module[6:4]})"];
+            "Constraint(location=8:0)" [label="a@{module[8:4]} ⊑ b@{module[8:0]} ∧ #defined(b@{module[8:0]})"];
+            "Constraint(location=8:4)" [label="a@{module[4:4]} ⊑ a@{module[8:4]} ∧ a@{module[6:4]} ⊑ a@{module[8:4]}"];
+            "Entry" -> "Constraint(location=1:0)";
+            "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint(location=3:3)" [label="#succeed(x@{module[1:0]})"];
             "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(x@{module[1:0]})"];
             "Constraint(location=3:3)" -> "Constraint(location=4:4)" [label="#is_true(x@{module[3:3]})"];
             "Constraint(location=3:3)" -> "Constraint(location=6:4)" [label="#is_false(x@{module[3:3]})"];
             "Constraint(location=3:3)" -> "ExceptionExit" [label="#raise(x@{module[3:3]})"];
-            "Constraint(location=4:4)" -> "Constraint(location=8:4)" [label="#succeed(a@{module[4:4]}) | #succeed(a@{module[6:4]})"];
-            "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[4:4]}) | #raise(a@{module[6:4]})"];
-            "Constraint(location=6:4)" -> "Constraint(location=8:4)" [label="#succeed(a@{module[4:4]}) | #succeed(a@{module[6:4]})"];
-            "Constraint(location=6:4)" -> "ExceptionExit" [label="#raise(a@{module[4:4]}) | #raise(a@{module[6:4]})"];
-            "Constraint(location=8:0)" -> "Constraint()" [label=""];
+            "Constraint(location=4:4)" -> "Constraint(location=8:4)" [label="#succeed(a@{module[4:4]})"];
+            "Constraint(location=4:4)" -> "Constraint(location=8:4)" [label="#succeed(a@{module[6:4]})"];
+            "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
+            "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[6:4]})"];
+            "Constraint(location=6:4)" -> "Constraint(location=8:4)" [label="#succeed(a@{module[4:4]})"];
+            "Constraint(location=6:4)" -> "Constraint(location=8:4)" [label="#succeed(a@{module[6:4]})"];
+            "Constraint(location=6:4)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
+            "Constraint(location=6:4)" -> "ExceptionExit" [label="#raise(a@{module[6:4]})"];
+            "Constraint(location=8:0)" -> "Constraint()";
             "Constraint(location=8:4)" -> "Constraint(location=8:0)" [label="#succeed(a@{module[8:4]})"];
             "Constraint(location=8:4)" -> "ExceptionExit" [label="#raise(a@{module[8:4]})"];
-            "Entry" -> "Constraint(location=1:0)" [label=""];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3944,32 +4023,40 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:0)" [label="{0 ⊑ a@{module[1:0]}, #defined(a@{module[1:0]})}"];
-            "Constraint(location=3:6)" [label="{a@{module[1:0]} ⊑ a@{module[3:6]}, a@{module[4:4]} ⊑ a@{module[3:6]}}"];
-            "Constraint(location=4:4)" [label="{(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]}, #defined(a@{module[4:4]})}"];
-            "Constraint(location=4:8)" [label="{a@{module[1:0]} ⊑ a@{module[4:8]}, a@{module[4:4]} ⊑ a@{module[4:8]}}"];
-            "Constraint(location=6:0)" [label="{a@{module[6:4]} ⊑ b@{module[6:0]}, #defined(b@{module[6:0]})}"];
-            "Constraint(location=6:4)" [label="{a@{module[1:0]} ⊑ a@{module[6:4]}, a@{module[4:4]} ⊑ a@{module[6:4]}}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:0)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[1:0]}) | #succeed(a@{module[4:4]})"];
-            "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(a@{module[1:0]}) | #raise(a@{module[4:4]})"];
+            "Constraint(location=1:0)" [label="0 ⊑ a@{module[1:0]} ∧ #defined(a@{module[1:0]})"];
+            "Constraint(location=3:6)" [label="a@{module[1:0]} ⊑ a@{module[3:6]} ∧ a@{module[4:4]} ⊑ a@{module[3:6]}"];
+            "Constraint(location=4:4)" [label="(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]} ∧ #defined(a@{module[4:4]})"];
+            "Constraint(location=4:8)" [label="a@{module[1:0]} ⊑ a@{module[4:8]} ∧ a@{module[4:4]} ⊑ a@{module[4:8]}"];
+            "Constraint(location=6:0)" [label="a@{module[6:4]} ⊑ b@{module[6:0]} ∧ #defined(b@{module[6:0]})"];
+            "Constraint(location=6:4)" [label="a@{module[1:0]} ⊑ a@{module[6:4]} ∧ a@{module[4:4]} ⊑ a@{module[6:4]}"];
+            "Entry" -> "Constraint(location=1:0)";
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:0)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[1:0]})"];
+            "Constraint(location=1:0)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[4:4]})"];
+            "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(a@{module[1:0]})"];
+            "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
             "Constraint(location=3:6)" -> "Constraint(location=4:8, id=#empty)" [label="#is_true((a@{module[3:6]}) < (5))"];
             "Constraint(location=3:6)" -> "Constraint(location=6:4, id=#empty)" [label="#is_false((a@{module[3:6]}) < (5))"];
             "Constraint(location=3:6)" -> "ExceptionExit" [label="#raise((a@{module[3:6]}) < (5))"];
-            "Constraint(location=4:4)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[1:0]}) | #succeed(a@{module[4:4]})"];
-            "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[1:0]}) | #raise(a@{module[4:4]})"];
+            "Constraint(location=4:4)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[1:0]})"];
+            "Constraint(location=4:4)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[4:4]})"];
+            "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[1:0]})"];
+            "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
             "Constraint(location=4:8)" -> "Constraint(location=4:4)" [label="#succeed((a@{module[4:8]}) + (1))"];
             "Constraint(location=4:8)" -> "ExceptionExit" [label="#raise((a@{module[4:8]}) + (1))"];
-            "Constraint(location=4:8, id=#empty)" -> "Constraint(location=4:8)" [label="#succeed(a@{module[1:0]}) | #succeed(a@{module[4:4]})"];
-            "Constraint(location=4:8, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[1:0]}) | #raise(a@{module[4:4]})"];
-            "Constraint(location=6:0)" -> "Constraint()" [label=""];
+            "Constraint(location=4:8, id=#empty)" -> "Constraint(location=4:8)" [label="#succeed(a@{module[1:0]})"];
+            "Constraint(location=4:8, id=#empty)" -> "Constraint(location=4:8)" [label="#succeed(a@{module[4:4]})"];
+            "Constraint(location=4:8, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[1:0]})"];
+            "Constraint(location=4:8, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
+            "Constraint(location=6:0)" -> "Constraint()";
             "Constraint(location=6:4)" -> "Constraint(location=6:0)" [label="#succeed(a@{module[6:4]})"];
             "Constraint(location=6:4)" -> "ExceptionExit" [label="#raise(a@{module[6:4]})"];
-            "Constraint(location=6:4, id=#empty)" -> "Constraint(location=6:4)" [label="#succeed(a@{module[1:0]}) | #succeed(a@{module[4:4]})"];
-            "Constraint(location=6:4, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[1:0]}) | #raise(a@{module[4:4]})"];
-            "Entry" -> "Constraint(location=1:0)" [label=""];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint(location=6:4, id=#empty)" -> "Constraint(location=6:4)" [label="#succeed(a@{module[1:0]})"];
+            "Constraint(location=6:4, id=#empty)" -> "Constraint(location=6:4)" [label="#succeed(a@{module[4:4]})"];
+            "Constraint(location=6:4, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[1:0]})"];
+            "Constraint(location=6:4, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -3990,29 +4077,31 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:4)" [label="{#function(identifier=add_two@module[1:0], async=false) ⊑ add_two@{module[1:4]}, #defined(add_two@{module[1:4]})}"];
-            "Constraint(location=4:0)" [label="{(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}, #defined(result@{module[4:0]})}"];
-            "Constraint(location=4:9)" [label="{add_two@{module[1:4]} ⊑ add_two@{module[4:9]}}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:4)" -> "Constraint(location=4:9)" [label="#succeed(add_two@{module[1:4]})"];
-            "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise(add_two@{module[1:4]})"];
-            "Constraint(location=4:0)" -> "Constraint()" [label=""];
-            "Constraint(location=4:9)" -> "Constraint(location=4:0)" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
-            "Constraint(location=4:9)" -> "ExceptionExit" [label="#raise((add_two@{module[4:9]})(42, 67))"];
+            "Constraint(location=1:4)" [label="#function(identifier=add_two@module[1:0], async=false) ⊑ add_two@{module[1:4]} ∧ #defined(add_two@{module[1:4]})"];
+            "Constraint(location=4:0)" [label="(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]} ∧ #defined(result@{module[4:0]})"];
+            "Constraint(location=4:9)" [label="add_two@{module[1:4]} ⊑ add_two@{module[4:9]}"];
             "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=add_two@module[1:0], async=false))"];
             "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=add_two@module[1:0], async=false))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:4)" -> "Constraint(location=4:9)" [label="#succeed(add_two@{module[1:4]})"];
+            "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise(add_two@{module[1:4]})"];
+            "Constraint(location=4:0)" -> "Constraint()";
+            "Constraint(location=4:9)" -> "Constraint(location=4:0)" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
+            "Constraint(location=4:9)" -> "ExceptionExit" [label="#raise((add_two@{module[4:9]})(42, 67))"];
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         digraph "module[1:0]" {
-            "Constraint(location=2:11)" [label="{a@{module[1:0][1:12]} ⊑ a@{module[1:0][2:11]}, b@{module[1:0][1:15]} ⊑ b@{module[1:0][2:15]}}"];
             "Constraint(location=2:4)" [label="#return((a@{module[1:0][2:11]}) + (b@{module[1:0][2:15]}))"];
-            "Constraint(location=2:11)" -> "Constraint(location=2:4)" [label=""];
-            "Constraint(location=2:4)" -> "TypeExit" [label=""];
-            "Entry" -> "Constraint(location=2:11)" [label="#succeed(a@{module[1:0][1:12]}) | #succeed(b@{module[1:0][1:15]})"];
-            "Entry" -> "ExceptionExit" [label="#raise(a@{module[1:0][1:12]}) | #raise(b@{module[1:0][1:15]})"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint(location=2:11)" [label="a@{module[1:0][1:12]} ⊑ a@{module[1:0][2:11]} ∧ b@{module[1:0][1:15]} ⊑ b@{module[1:0][2:15]}"];
+            "Entry" -> "Constraint(location=2:11)" [label="#succeed(a@{module[1:0][1:12]})"];
+            "Entry" -> "Constraint(location=2:11)" [label="#succeed(b@{module[1:0][1:15]})"];
+            "Entry" -> "ExceptionExit" [label="#raise(a@{module[1:0][1:12]})"];
+            "Entry" -> "ExceptionExit" [label="#raise(b@{module[1:0][1:15]})"];
+            "Constraint(location=2:4)" -> "TypeExit";
+            "Constraint(location=2:11)" -> "Constraint(location=2:4)";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
@@ -4036,31 +4125,31 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:4)" [label="{#function(identifier=foo@module[1:0], async=false) ⊑ foo@{module[1:4]}, #defined(foo@{module[1:4]})}"];
-            "Constraint(location=4:0)" [label="{5 ⊑ CONST@{module[4:0]}, #defined(CONST@{module[4:0]})}"];
-            "Constraint(location=6:0)" [label="{(foo@{module[6:9]})() ⊑ result@{module[6:0]}, #defined(result@{module[6:0]})}"];
-            "Constraint(location=6:9)" [label="{foo@{module[1:4]} ⊑ foo@{module[6:9]}}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:4)" -> "Constraint(location=4:0)" [label=""];
-            "Constraint(location=4:0)" -> "Constraint(location=6:9)" [label="#succeed(foo@{module[1:4]})"];
-            "Constraint(location=4:0)" -> "ExceptionExit" [label="#raise(foo@{module[1:4]})"];
-            "Constraint(location=6:0)" -> "Constraint()" [label=""];
-            "Constraint(location=6:9)" -> "Constraint(location=6:0)" [label="#succeed((foo@{module[6:9]})())"];
-            "Constraint(location=6:9)" -> "ExceptionExit" [label="#raise((foo@{module[6:9]})())"];
+            "Constraint(location=1:4)" [label="#function(identifier=foo@module[1:0], async=false) ⊑ foo@{module[1:4]} ∧ #defined(foo@{module[1:4]})"];
+            "Constraint(location=4:0)" [label="5 ⊑ CONST@{module[4:0]} ∧ #defined(CONST@{module[4:0]})"];
+            "Constraint(location=6:0)" [label="(foo@{module[6:9]})() ⊑ result@{module[6:0]} ∧ #defined(result@{module[6:0]})"];
+            "Constraint(location=6:9)" [label="foo@{module[1:4]} ⊑ foo@{module[6:9]}"];
             "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=foo@module[1:0], async=false))"];
             "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=foo@module[1:0], async=false))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:4)" -> "Constraint(location=4:0)";
+            "Constraint(location=4:0)" -> "Constraint(location=6:9)" [label="#succeed(foo@{module[1:4]})"];
+            "Constraint(location=4:0)" -> "ExceptionExit" [label="#raise(foo@{module[1:4]})"];
+            "Constraint(location=6:0)" -> "Constraint()";
+            "Constraint(location=6:9)" -> "Constraint(location=6:0)" [label="#succeed((foo@{module[6:9]})())"];
+            "Constraint(location=6:9)" -> "ExceptionExit" [label="#raise((foo@{module[6:9]})())"];
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         digraph "module[1:0]" {
-            "Constraint(location=2:11)" [label="{CONST@{module[4:0]} ⊑ CONST@{module[1:0][2:11]}}"];
             "Constraint(location=2:4)" [label="#return(CONST@{module[1:0][2:11]})"];
-            "Constraint(location=2:11)" -> "Constraint(location=2:4)" [label=""];
-            "Constraint(location=2:4)" -> "TypeExit" [label=""];
+            "Constraint(location=2:11)" [label="CONST@{module[4:0]} ⊑ CONST@{module[1:0][2:11]}"];
             "Entry" -> "Constraint(location=2:11)" [label="#succeed(CONST@{module[4:0]})"];
             "Entry" -> "ExceptionExit" [label="#raise(CONST@{module[4:0]})"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
+            "Constraint(location=2:4)" -> "TypeExit";
+            "Constraint(location=2:11)" -> "Constraint(location=2:4)";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "TypeExit";
         }
         "##},
     )]
