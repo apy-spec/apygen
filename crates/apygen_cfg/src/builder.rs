@@ -675,6 +675,7 @@ pub fn build_cfg<'s>(
 mod tests {
     use super::*;
     use crate::ast::ModModule;
+    use crate::graph::dot::ToDot;
     use crate::parser::{Mode, parse};
     use indoc::{formatdoc, indoc};
     use rstest::{fixture, rstest};

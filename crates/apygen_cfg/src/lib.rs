@@ -1,5 +1,6 @@
 pub mod builder;
 
+pub use apygen_graph as graph;
 use ast::{
     ElifElseClause, Stmt, StmtAnnAssign, StmtAssert, StmtAssign, StmtAugAssign, StmtBreak,
     StmtClassDef, StmtContinue, StmtDelete, StmtExpr, StmtFor, StmtFunctionDef, StmtGlobal, StmtIf,
@@ -7,6 +8,7 @@ use ast::{
     StmtReturn, StmtTry, StmtTypeAlias, StmtWhile, StmtWith,
 };
 pub use builder::{BuildCfgError, build_cfg};
+use graph::dot::Dot;
 pub use ruff_python_ast as ast;
 pub use ruff_python_parser as parser;
 pub use ruff_source_file as source_file;
@@ -307,15 +309,18 @@ impl<'s> Cfg<'s> {
     pub fn remove_cfg(&mut self, location: Location) {
         self.cfgs.remove(&location);
     }
+}
 
-    pub fn dot(&self, graph_name: &str) -> String {
-        let mut dot_representation = format!("digraph \"{}\" {{\n", graph_name);
-
+impl<'s> Dot for Cfg<'s> {
+    fn fmt(&self, f: &mut Formatter<'_>, name: &str) -> std::fmt::Result {
         let entries = self.entries.iter().collect::<BTreeMap<_, _>>();
         let edges = self.edges.iter().collect::<BTreeMap<_, _>>();
 
+        write!(f, "digraph \"{}\" {{\n", name)?;
         for (program_point, entry) in entries {
-            let line = if let Some(node) = &entry.node {
+            write!(f, "    \"{}\"", program_point)?;
+
+            if let Some(node) = &entry.node {
                 let label = match node {
                     Node::FunctionDef(_) => "function_def",
                     Node::ClassDef(_) => "class_def",
@@ -344,66 +349,44 @@ impl<'s> Cfg<'s> {
                     Node::Continue(_) => "continue",
                     Node::IpyEscapeCommand(_) => "ipy_escape_command",
                 };
-                format!("    \"{}\" [label=\"{}\"];\n", program_point, label)
-            } else {
-                format!("    \"{}\";\n", program_point)
-            };
-            dot_representation.push_str(&line);
+                write!(f, " [label=\"{}\"]", label)?;
+            }
+
+            f.write_str(";\n")?;
         }
 
         for (edge, edge_kinds) in edges {
             for edge_kind in edge_kinds {
-                let line = match edge_kind {
-                    EdgeKind::Unconditional => {
-                        format!("    \"{}\" -> \"{}\";\n", edge.from, edge.to)
-                    }
+                write!(f, "    \"{}\" -> \"{}\"", edge.from, edge.to)?;
+
+                match edge_kind {
+                    EdgeKind::Unconditional => {}
                     EdgeKind::Conditional(cond) => {
-                        format!(
-                            "    \"{}\" -> \"{}\" [label=\"{}\"];\n",
-                            edge.from, edge.to, cond
-                        )
+                        write!(f, " [label=\"{}\"]", cond)?;
                     }
                     EdgeKind::Match(index) => {
-                        format!(
-                            "    \"{}\" -> \"{}\" [label=\"match({})\"];\n",
-                            edge.from, edge.to, index
-                        )
+                        write!(f, " [label=\"match({})\"]", index)?;
                     }
-                    EdgeKind::Exception(point, index) => format!(
-                        "    \"{}\" -> \"{}\" [label=\"except({}, {})\"];\n",
-                        edge.from, edge.to, point, index
-                    ),
+                    EdgeKind::Exception(point, index) => {
+                        write!(f, " [label=\"except({}, {})\"]", point, index)?
+                    }
                     EdgeKind::UnhandledException => {
-                        format!(
-                            "    \"{}\" -> \"{}\" [label=\"except\"];\n",
-                            edge.from, edge.to
-                        )
+                        write!(f, " [label=\"except\"]")?;
                     }
                     EdgeKind::Break => {
-                        format!(
-                            "    \"{}\" -> \"{}\" [label=\"break\"];\n",
-                            edge.from, edge.to
-                        )
+                        write!(f, " [label=\"break\"]")?;
                     }
                     EdgeKind::Continue => {
-                        format!(
-                            "    \"{}\" -> \"{}\" [label=\"continue\"];\n",
-                            edge.from, edge.to
-                        )
+                        write!(f, " [label=\"continue\"]")?;
                     }
                     EdgeKind::Return => {
-                        format!(
-                            "    \"{}\" -> \"{}\" [label=\"return\"];\n",
-                            edge.from, edge.to
-                        )
+                        write!(f, " [label=\"return\"]")?;
                     }
                 };
-                dot_representation.push_str(&line);
+                f.write_str(";\n")?;
             }
         }
 
-        dot_representation.push_str("}\n");
-
-        dot_representation
+        f.write_str("}\n")
     }
 }

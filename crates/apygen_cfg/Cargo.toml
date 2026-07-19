@@ -8,6 +8,9 @@ license.workspace = true
 [dependencies]
 bitflags = { workspace = true }
 thiserror = { workspace = true }
+
+apygen_graph = { workspace = true }
+
 ruff_python_parser = { workspace = true }
 ruff_source_file = { workspace = true }
 ruff_python_ast = { workspace = true }

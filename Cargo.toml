@@ -14,6 +14,7 @@ apygen_cfg = { path = "crates/apygen_cfg" }
 apygen_analysis = { path = "crates/apygen_analysis" }
 apygen_analysis_derive = { path = "crates/apygen_analysis_derive" }
 apygen_finder = { path = "crates/apygen_finder" }
+apygen_graph = { path = "crates/apygen_graph" }
 
 apy = { git = "https://github.com/apy-spec/apy-rs.git" }
 

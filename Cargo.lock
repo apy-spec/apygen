@@ -145,6 +145,7 @@ dependencies = [
 name = "apygen_cfg"
 version = "0.1.0"
 dependencies = [
+ "apygen_graph",
  "bitflags",
  "criterion",
  "indoc",
@@ -164,6 +165,10 @@ dependencies = [
  "rayon",
  "thiserror",
 ]
+
+[[package]]
+name = "apygen_graph"
+version = "0.1.0"
 
 [[package]]
 name = "apygen_python_analysis"
