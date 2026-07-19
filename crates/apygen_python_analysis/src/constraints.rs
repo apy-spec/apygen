@@ -6,7 +6,8 @@ use crate::cfg::ast::{self, Number};
 use crate::cfg::source_file::LineIndex;
 use crate::cfg::text_size::Ranged;
 use crate::cfg::{
-    Cfg, Edge, EdgeKind, Location as ProgramPointLocation, Node as StmtNode, ProgramPoint,
+    Cfg, CfgEdgeKind, Location as ProgramPointLocation, CfgNode as StmtNode, ProgramPoint,
+    CfgEdge,
 };
 use crate::genkill::assignment::AssignmentTarget;
 use apy::OneOrMany;
@@ -1059,7 +1060,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn filter_guard(
         &self,
-        edge_kinds: &BTreeSet<EdgeKind>,
+        edge_kinds: &BTreeSet<CfgEdgeKind>,
         guards: &imbl::OrdSet<Guard>,
     ) -> Option<imbl::OrdSet<Guard>> {
         if guards.is_empty() {
@@ -1069,8 +1070,8 @@ impl<'a> ConstraintsBuilder<'a> {
         let filtered_guards: imbl::OrdSet<_> = guards
             .iter()
             .filter(|guard| match guard {
-                Guard::IsTrue(_) => edge_kinds.contains(&EdgeKind::Conditional(true)),
-                Guard::IsFalse(_) => edge_kinds.contains(&EdgeKind::Conditional(false)),
+                Guard::IsTrue(_) => edge_kinds.contains(&CfgEdgeKind::Conditional(true)),
+                Guard::IsFalse(_) => edge_kinds.contains(&CfgEdgeKind::Conditional(false)),
                 Guard::Succeed(_) => edge_kinds
                     .iter()
                     .any(|edge_kind| edge_kind.is_normal_flow()),
@@ -2458,7 +2459,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         &'a self,
         node: &'a Self::Node,
     ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
-        match self.cfg.successors(node) {
+        match self.cfg.entries().get(node).map(|entry| &entry.successors) {
             Some(successors) => Ok(successors.iter()),
             None => Err(ConstraintsBuilderError::InvalidProgramPoint {
                 program_point: *node,
@@ -2521,7 +2522,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         to: &Self::Node,
         abstract_state: &Self::AbstractState,
     ) -> Result<Option<Self::AbstractState>, Self::Error> {
-        let Some(edge_kinds) = self.cfg.edges().get(&Edge::new(*from, *to)) else {
+        let Some(edge_kinds) = self.cfg.edges().get(&CfgEdge::new(*from, *to)) else {
             return Ok(None);
         };
 
@@ -2546,7 +2547,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
             };
             let are_all_exceptions = edge_kinds
                 .iter()
-                .all(|edge_kind| matches!(edge_kind, EdgeKind::UnhandledException));
+                .all(|edge_kind| matches!(edge_kind, CfgEdgeKind::UnhandledException));
 
             if are_all_exceptions {
                 target_abstract_environment.variable_locations.clear();
@@ -2564,7 +2565,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                         .iter()
                         .map(|guard| match guard {
                             Guard::Raise { .. }
-                                if edge_kinds.contains(&EdgeKind::UnhandledException) =>
+                                if edge_kinds.contains(&CfgEdgeKind::UnhandledException) =>
                             {
                                 (false, true)
                             }

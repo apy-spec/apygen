@@ -4,7 +4,7 @@ use crate::ast::{
 };
 use crate::source_file::LineIndex;
 use crate::text_size::Ranged;
-use crate::{Cfg, Edge, EdgeKind, Location, Node, ProgramPoint, TryFromTextSizeError};
+use crate::{Cfg, CfgEdge, CfgEdgeKind, CfgNode, Location, ProgramPoint, TryFromTextSizeError};
 use bitflags::bitflags;
 use ruff_python_ast::ModModule;
 use std::collections::HashSet;
@@ -31,7 +31,7 @@ pub fn map_with<T, V: Clone>(
 
 #[derive(Debug, Clone, Default)]
 pub struct ResultPoints {
-    pub previous_points: HashSet<(ProgramPoint, EdgeKind)>,
+    pub previous_points: HashSet<(ProgramPoint, CfgEdgeKind)>,
     pub return_points: HashSet<ProgramPoint>,
     pub exception_points: HashSet<ProgramPoint>,
     pub continue_points: HashSet<ProgramPoint>,
@@ -47,7 +47,7 @@ impl ResultPoints {
         self.break_points.extend(other.break_points);
     }
 
-    pub fn with_previous_point(mut self, point: ProgramPoint, edge_data: EdgeKind) -> Self {
+    pub fn with_previous_point(mut self, point: ProgramPoint, edge_data: CfgEdgeKind) -> Self {
         self.previous_points.insert((point, edge_data));
         self
     }
@@ -95,7 +95,7 @@ impl ResultPoints {
     pub fn insert_as(&mut self, point_type: PointType, program_point: ProgramPoint) {
         if point_type.contains(PointType::PREVIOUS) {
             self.previous_points
-                .insert((program_point, EdgeKind::Unconditional));
+                .insert((program_point, CfgEdgeKind::Unconditional));
         }
         if point_type.contains(PointType::RETURN) {
             self.return_points.insert(program_point);
@@ -111,22 +111,25 @@ impl ResultPoints {
         }
     }
 
-    pub fn drain(&mut self) -> impl Iterator<Item = (ProgramPoint, EdgeKind)> {
+    pub fn drain(&mut self) -> impl Iterator<Item = (ProgramPoint, CfgEdgeKind)> {
         self.previous_points
             .drain()
             .chain(map_with(
                 self.return_points.drain(),
-                EdgeKind::Unconditional,
+                CfgEdgeKind::Unconditional,
             ))
             .chain(map_with(
                 self.exception_points.drain(),
-                EdgeKind::Unconditional,
+                CfgEdgeKind::Unconditional,
             ))
             .chain(map_with(
                 self.continue_points.drain(),
-                EdgeKind::Unconditional,
+                CfgEdgeKind::Unconditional,
             ))
-            .chain(map_with(self.break_points.drain(), EdgeKind::Unconditional))
+            .chain(map_with(
+                self.break_points.drain(),
+                CfgEdgeKind::Unconditional,
+            ))
     }
 }
 
@@ -176,14 +179,14 @@ impl<'i> CfgBuilder<'i> {
     pub fn insert_current_node<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         current_point: ProgramPoint,
-        node: Option<Node<'s>>,
+        node: Option<CfgNode<'s>>,
     ) {
         cfg.insert_node(current_point, node);
 
         for (previous_point, edge_kind) in previous_points {
-            cfg.insert_edge_kind(Edge::new(previous_point, current_point), edge_kind);
+            cfg.insert_edge_kind(CfgEdge::new(previous_point, current_point), edge_kind);
         }
     }
 
@@ -192,7 +195,7 @@ impl<'i> CfgBuilder<'i> {
 
         let result_points = self.process_suite(
             &mut cfg,
-            HashSet::from_iter([(ProgramPoint::Entry, EdgeKind::Unconditional)]),
+            HashSet::from_iter([(ProgramPoint::Entry, CfgEdgeKind::Unconditional)]),
             suite,
         )?;
 
@@ -206,10 +209,10 @@ impl<'i> CfgBuilder<'i> {
         let previous_points = result_points
             .previous_points
             .into_iter()
-            .chain(map_with(result_points.return_points, EdgeKind::Return))
+            .chain(map_with(result_points.return_points, CfgEdgeKind::Return))
             .chain(map_with(
                 result_points.exception_points,
-                EdgeKind::UnhandledException,
+                CfgEdgeKind::UnhandledException,
             ));
 
         self.insert_current_node(&mut cfg, previous_points, ProgramPoint::Exit, None);
@@ -220,18 +223,18 @@ impl<'i> CfgBuilder<'i> {
     pub fn process_def_stmt<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         stmt_def: StmtDef<'s>,
     ) -> Result<ResultPoints, BuildCfgError> {
         let (location, node, body_suite) = match stmt_def {
             StmtDef::FunctionDef(stmt_function_def) => (
                 self.create_location(stmt_function_def)?,
-                Node::FunctionDef(stmt_function_def),
+                CfgNode::FunctionDef(stmt_function_def),
                 &stmt_function_def.body,
             ),
             StmtDef::ClassDef(stmt_class_def) => (
                 self.create_location(stmt_class_def)?,
-                Node::ClassDef(stmt_class_def),
+                CfgNode::ClassDef(stmt_class_def),
                 &stmt_class_def.body,
             ),
         };
@@ -242,14 +245,14 @@ impl<'i> CfgBuilder<'i> {
         self.insert_current_node(cfg, previous_points, current_point, Some(node));
 
         Ok(ResultPoints::default()
-            .with_previous_point(current_point, EdgeKind::Unconditional)
+            .with_previous_point(current_point, CfgEdgeKind::Unconditional)
             .with_exception_point(current_point))
     }
 
     pub fn process_return_stmt<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         stmt_return: &'s StmtReturn,
     ) -> Result<ResultPoints, BuildCfgError> {
         let current_point = self.create_program_point(stmt_return)?;
@@ -258,7 +261,7 @@ impl<'i> CfgBuilder<'i> {
             cfg,
             previous_points,
             current_point,
-            Some(Node::Return(stmt_return)),
+            Some(CfgNode::Return(stmt_return)),
         );
 
         Ok(ResultPoints::default()
@@ -269,17 +272,22 @@ impl<'i> CfgBuilder<'i> {
     pub fn process_if_stmt<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         stmt_if: &'s StmtIf,
     ) -> Result<ResultPoints, BuildCfgError> {
         let mut current_point = self.create_program_point(stmt_if)?;
 
-        self.insert_current_node(cfg, previous_points, current_point, Some(Node::If(stmt_if)));
+        self.insert_current_node(
+            cfg,
+            previous_points,
+            current_point,
+            Some(CfgNode::If(stmt_if)),
+        );
 
         let mut result_points = self
             .process_suite(
                 cfg,
-                HashSet::from_iter([(current_point, EdgeKind::Conditional(true))]),
+                HashSet::from_iter([(current_point, CfgEdgeKind::Conditional(true))]),
                 &stmt_if.body,
             )?
             .with_exception_point(current_point);
@@ -299,13 +307,13 @@ impl<'i> CfgBuilder<'i> {
             result_points.merge_into(if elif_else_clause.test.is_some() {
                 self.insert_current_node(
                     cfg,
-                    [(current_point, EdgeKind::Conditional(false))],
+                    [(current_point, CfgEdgeKind::Conditional(false))],
                     elif_else_clause_point,
-                    Some(Node::Elif(elif_else_clause)),
+                    Some(CfgNode::Elif(elif_else_clause)),
                 );
                 self.process_suite(
                     cfg,
-                    HashSet::from_iter([(elif_else_clause_point, EdgeKind::Conditional(true))]),
+                    HashSet::from_iter([(elif_else_clause_point, CfgEdgeKind::Conditional(true))]),
                     &elif_else_clause.body,
                 )?
                 .with_exception_point(elif_else_clause_point)
@@ -313,7 +321,7 @@ impl<'i> CfgBuilder<'i> {
                 else_reached = true;
                 self.process_suite(
                     cfg,
-                    HashSet::from_iter([(current_point, EdgeKind::Conditional(false))]),
+                    HashSet::from_iter([(current_point, CfgEdgeKind::Conditional(false))]),
                     &elif_else_clause.body,
                 )?
             });
@@ -324,7 +332,7 @@ impl<'i> CfgBuilder<'i> {
         if !else_reached {
             result_points
                 .previous_points
-                .insert((current_point, EdgeKind::Conditional(false)));
+                .insert((current_point, CfgEdgeKind::Conditional(false)));
         }
 
         Ok(result_points)
@@ -333,19 +341,19 @@ impl<'i> CfgBuilder<'i> {
     pub fn process_loop_stmt<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         stmt_loop: StmtLoop<'s>,
     ) -> Result<ResultPoints, BuildCfgError> {
         let (current_point, node, body_suite, else_suite) = match stmt_loop {
             StmtLoop::For(stmt_for) => (
                 self.create_program_point(stmt_for)?,
-                Node::For(stmt_for),
+                CfgNode::For(stmt_for),
                 &stmt_for.body,
                 &stmt_for.orelse,
             ),
             StmtLoop::While(stmt_while) => (
                 self.create_program_point(stmt_while)?,
-                Node::While(stmt_while),
+                CfgNode::While(stmt_while),
                 &stmt_while.body,
                 &stmt_while.orelse,
             ),
@@ -355,25 +363,28 @@ impl<'i> CfgBuilder<'i> {
 
         let mut result_points = self.process_suite(
             cfg,
-            HashSet::from_iter([(current_point, EdgeKind::Conditional(true))]),
+            HashSet::from_iter([(current_point, CfgEdgeKind::Conditional(true))]),
             body_suite,
         )?;
 
         for continue_point in result_points.continue_points.drain() {
-            cfg.insert_edge_kind(Edge::new(continue_point, current_point), EdgeKind::Continue);
+            cfg.insert_edge_kind(
+                CfgEdge::new(continue_point, current_point),
+                CfgEdgeKind::Continue,
+            );
         }
         for (previous_point, edge_kind) in result_points.previous_points.drain() {
-            cfg.insert_edge_kind(Edge::new(previous_point, current_point), edge_kind);
+            cfg.insert_edge_kind(CfgEdge::new(previous_point, current_point), edge_kind);
         }
 
         result_points.previous_points.extend(map_with(
             result_points.break_points.drain(),
-            EdgeKind::Break,
+            CfgEdgeKind::Break,
         ));
 
         result_points.merge_into(self.process_suite(
             cfg,
-            HashSet::from_iter([(current_point, EdgeKind::Conditional(false))]),
+            HashSet::from_iter([(current_point, CfgEdgeKind::Conditional(false))]),
             else_suite,
         )?);
 
@@ -383,7 +394,7 @@ impl<'i> CfgBuilder<'i> {
     pub fn process_with_stmt<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         stmt_with: &'s StmtWith,
     ) -> Result<ResultPoints, BuildCfgError> {
         let location = self.create_location(stmt_with)?;
@@ -394,12 +405,12 @@ impl<'i> CfgBuilder<'i> {
             cfg,
             previous_points,
             current_point,
-            Some(Node::With(stmt_with)),
+            Some(CfgNode::With(stmt_with)),
         );
 
         let mut result_points = self.process_suite(
             cfg,
-            HashSet::from_iter([(current_point, EdgeKind::Unconditional)]),
+            HashSet::from_iter([(current_point, CfgEdgeKind::Unconditional)]),
             &stmt_with.body,
         )?;
 
@@ -422,7 +433,7 @@ impl<'i> CfgBuilder<'i> {
     pub fn process_match_stmt<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         stmt_match: &'s StmtMatch,
     ) -> Result<ResultPoints, BuildCfgError> {
         let current_point = self.create_program_point(stmt_match)?;
@@ -431,7 +442,7 @@ impl<'i> CfgBuilder<'i> {
             cfg,
             previous_points,
             current_point,
-            Some(Node::Match(stmt_match)),
+            Some(CfgNode::Match(stmt_match)),
         );
 
         let mut result_points = ResultPoints::default();
@@ -439,7 +450,7 @@ impl<'i> CfgBuilder<'i> {
         for (index, match_case) in stmt_match.cases.iter().enumerate() {
             result_points.merge_into(self.process_suite(
                 cfg,
-                HashSet::from_iter([(current_point, EdgeKind::Match(index))]),
+                HashSet::from_iter([(current_point, CfgEdgeKind::Match(index))]),
                 &match_case.body,
             )?);
         }
@@ -450,7 +461,7 @@ impl<'i> CfgBuilder<'i> {
     pub fn process_raise_stmt<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         stmt_raise: &'s StmtRaise,
     ) -> Result<ResultPoints, BuildCfgError> {
         let current_point = self.create_program_point(stmt_raise)?;
@@ -459,7 +470,7 @@ impl<'i> CfgBuilder<'i> {
             cfg,
             previous_points,
             current_point,
-            Some(Node::Raise(stmt_raise)),
+            Some(CfgNode::Raise(stmt_raise)),
         );
 
         Ok(ResultPoints::default().with_exception_point(current_point))
@@ -468,7 +479,7 @@ impl<'i> CfgBuilder<'i> {
     pub fn process_try_stmt<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         stmt_try: &'s StmtTry,
     ) -> Result<ResultPoints, BuildCfgError> {
         let location = self.create_location(stmt_try)?;
@@ -479,12 +490,12 @@ impl<'i> CfgBuilder<'i> {
             cfg,
             previous_points,
             current_point,
-            Some(Node::Try(stmt_try)),
+            Some(CfgNode::Try(stmt_try)),
         );
 
         let mut result_points = self.process_suite(
             cfg,
-            HashSet::from_iter([(current_point, EdgeKind::Unconditional)]),
+            HashSet::from_iter([(current_point, CfgEdgeKind::Unconditional)]),
             &stmt_try.body,
         )?;
 
@@ -504,7 +515,10 @@ impl<'i> CfgBuilder<'i> {
             let handler_previous_points = body_exception_points
                 .iter()
                 .map(|exception_point| {
-                    (*exception_point, EdgeKind::Exception(current_point, index))
+                    (
+                        *exception_point,
+                        CfgEdgeKind::Exception(current_point, index),
+                    )
                 })
                 .collect();
             result_points.merge_into(self.process_suite(
@@ -540,7 +554,7 @@ impl<'i> CfgBuilder<'i> {
     pub fn process_pass_stmt<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         stmt_pass: &'s StmtPass,
     ) -> Result<ResultPoints, BuildCfgError> {
         let current_point = self.create_program_point(stmt_pass)?;
@@ -549,16 +563,16 @@ impl<'i> CfgBuilder<'i> {
             cfg,
             previous_points,
             current_point,
-            Some(Node::Pass(stmt_pass)),
+            Some(CfgNode::Pass(stmt_pass)),
         );
 
-        Ok(ResultPoints::default().with_previous_point(current_point, EdgeKind::Unconditional))
+        Ok(ResultPoints::default().with_previous_point(current_point, CfgEdgeKind::Unconditional))
     }
 
     pub fn process_break_stmt<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         stmt_break: &'s StmtBreak,
     ) -> Result<ResultPoints, BuildCfgError> {
         let current_point = self.create_program_point(stmt_break)?;
@@ -567,7 +581,7 @@ impl<'i> CfgBuilder<'i> {
             cfg,
             previous_points,
             current_point,
-            Some(Node::Break(stmt_break)),
+            Some(CfgNode::Break(stmt_break)),
         );
 
         Ok(ResultPoints::default().with_break_point(current_point))
@@ -576,7 +590,7 @@ impl<'i> CfgBuilder<'i> {
     pub fn process_continue_stmt<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         stmt_continue: &'s StmtContinue,
     ) -> Result<ResultPoints, BuildCfgError> {
         let current_point = self.create_program_point(stmt_continue)?;
@@ -585,7 +599,7 @@ impl<'i> CfgBuilder<'i> {
             cfg,
             previous_points,
             current_point,
-            Some(Node::Continue(stmt_continue)),
+            Some(CfgNode::Continue(stmt_continue)),
         );
 
         Ok(ResultPoints::default().with_continue_point(current_point))
@@ -594,22 +608,27 @@ impl<'i> CfgBuilder<'i> {
     pub fn process_stmt<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, CfgEdgeKind)>,
         stmt: &'s Stmt,
     ) -> Result<ResultPoints, BuildCfgError> {
         let current_point = self.create_program_point(stmt)?;
 
-        self.insert_current_node(cfg, previous_points, current_point, Some(Node::from(stmt)));
+        self.insert_current_node(
+            cfg,
+            previous_points,
+            current_point,
+            Some(CfgNode::from(stmt)),
+        );
 
         Ok(ResultPoints::default()
-            .with_previous_point(current_point, EdgeKind::Unconditional)
+            .with_previous_point(current_point, CfgEdgeKind::Unconditional)
             .with_exception_point(current_point))
     }
 
     pub fn process_suite<'s>(
         &self,
         cfg: &mut Cfg<'s>,
-        mut previous_points: HashSet<(ProgramPoint, EdgeKind)>,
+        mut previous_points: HashSet<(ProgramPoint, CfgEdgeKind)>,
         suite: &'s Suite,
     ) -> Result<ResultPoints, BuildCfgError> {
         let mut result_points = ResultPoints::default();

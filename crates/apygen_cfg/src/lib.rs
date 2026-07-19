@@ -8,13 +8,14 @@ use ast::{
     StmtReturn, StmtTry, StmtTypeAlias, StmtWhile, StmtWith,
 };
 pub use builder::{BuildCfgError, build_cfg};
-use graph::dot::Dot;
+use graph::dot::DiGraphDot;
+use graph::{Edge, Graph};
 pub use ruff_python_ast as ast;
 pub use ruff_python_parser as parser;
 pub use ruff_source_file as source_file;
 pub use ruff_text_size as text_size;
 use source_file::LineIndex;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use text_size::TextSize;
@@ -74,7 +75,7 @@ impl Display for ProgramPoint {
 }
 
 #[derive(Debug, Clone)]
-pub enum Node<'s> {
+pub enum CfgNode<'s> {
     FunctionDef(&'s StmtFunctionDef),
     ClassDef(&'s StmtClassDef),
     Return(&'s StmtReturn),
@@ -104,50 +105,50 @@ pub enum Node<'s> {
     IpyEscapeCommand(&'s StmtIpyEscapeCommand),
 }
 
-impl<'s> From<&'s Stmt> for Node<'s> {
+impl<'s> From<&'s Stmt> for CfgNode<'s> {
     fn from(value: &'s Stmt) -> Self {
         match value {
-            Stmt::FunctionDef(stmt_function_def) => Node::FunctionDef(stmt_function_def),
-            Stmt::ClassDef(stmt_class_def) => Node::ClassDef(stmt_class_def),
-            Stmt::Return(stmt_return) => Node::Return(stmt_return),
-            Stmt::Delete(stmt_delete) => Node::Delete(stmt_delete),
-            Stmt::Assign(stmt_assign) => Node::Assign(stmt_assign),
-            Stmt::AugAssign(stmt_aug_assign) => Node::AugAssign(stmt_aug_assign),
-            Stmt::AnnAssign(stmt_ann_assign) => Node::AnnAssign(stmt_ann_assign),
-            Stmt::TypeAlias(stmt_type_alias) => Node::TypeAlias(stmt_type_alias),
-            Stmt::For(stmt_for) => Node::For(stmt_for),
-            Stmt::While(stmt_while) => Node::While(stmt_while),
-            Stmt::If(stmt_if) => Node::If(stmt_if),
-            Stmt::With(stmt_with) => Node::With(stmt_with),
-            Stmt::Match(stmt_match) => Node::Match(stmt_match),
-            Stmt::Raise(stmt_raise) => Node::Raise(stmt_raise),
-            Stmt::Try(stmt_try) => Node::Try(stmt_try),
-            Stmt::Assert(stmt_assert) => Node::Assert(stmt_assert),
-            Stmt::Import(stmt_import) => Node::Import(stmt_import),
-            Stmt::ImportFrom(stmt_import_from) => Node::ImportFrom(stmt_import_from),
-            Stmt::Global(stmt_global) => Node::Global(stmt_global),
-            Stmt::Nonlocal(stmt_non_local) => Node::Nonlocal(stmt_non_local),
-            Stmt::Expr(stmt_expr) => Node::Expr(stmt_expr),
-            Stmt::Pass(stmt_pass) => Node::Pass(stmt_pass),
-            Stmt::Break(stmt_break) => Node::Break(stmt_break),
-            Stmt::Continue(stmt_continue) => Node::Continue(stmt_continue),
+            Stmt::FunctionDef(stmt_function_def) => CfgNode::FunctionDef(stmt_function_def),
+            Stmt::ClassDef(stmt_class_def) => CfgNode::ClassDef(stmt_class_def),
+            Stmt::Return(stmt_return) => CfgNode::Return(stmt_return),
+            Stmt::Delete(stmt_delete) => CfgNode::Delete(stmt_delete),
+            Stmt::Assign(stmt_assign) => CfgNode::Assign(stmt_assign),
+            Stmt::AugAssign(stmt_aug_assign) => CfgNode::AugAssign(stmt_aug_assign),
+            Stmt::AnnAssign(stmt_ann_assign) => CfgNode::AnnAssign(stmt_ann_assign),
+            Stmt::TypeAlias(stmt_type_alias) => CfgNode::TypeAlias(stmt_type_alias),
+            Stmt::For(stmt_for) => CfgNode::For(stmt_for),
+            Stmt::While(stmt_while) => CfgNode::While(stmt_while),
+            Stmt::If(stmt_if) => CfgNode::If(stmt_if),
+            Stmt::With(stmt_with) => CfgNode::With(stmt_with),
+            Stmt::Match(stmt_match) => CfgNode::Match(stmt_match),
+            Stmt::Raise(stmt_raise) => CfgNode::Raise(stmt_raise),
+            Stmt::Try(stmt_try) => CfgNode::Try(stmt_try),
+            Stmt::Assert(stmt_assert) => CfgNode::Assert(stmt_assert),
+            Stmt::Import(stmt_import) => CfgNode::Import(stmt_import),
+            Stmt::ImportFrom(stmt_import_from) => CfgNode::ImportFrom(stmt_import_from),
+            Stmt::Global(stmt_global) => CfgNode::Global(stmt_global),
+            Stmt::Nonlocal(stmt_non_local) => CfgNode::Nonlocal(stmt_non_local),
+            Stmt::Expr(stmt_expr) => CfgNode::Expr(stmt_expr),
+            Stmt::Pass(stmt_pass) => CfgNode::Pass(stmt_pass),
+            Stmt::Break(stmt_break) => CfgNode::Break(stmt_break),
+            Stmt::Continue(stmt_continue) => CfgNode::Continue(stmt_continue),
             Stmt::IpyEscapeCommand(stmt_ipy_escape_command) => {
-                Node::IpyEscapeCommand(stmt_ipy_escape_command)
+                CfgNode::IpyEscapeCommand(stmt_ipy_escape_command)
             }
         }
     }
 }
 
 #[derive(Default, Debug, Clone)]
-pub struct NodeEntry<'s> {
-    pub node: Option<Node<'s>>,
+pub struct CfgNodeEntry<'s> {
+    pub node: Option<CfgNode<'s>>,
     pub successors: BTreeSet<ProgramPoint>,
     pub predecessors: BTreeSet<ProgramPoint>,
 }
 
-impl<'s> NodeEntry<'s> {
+impl<'s> CfgNodeEntry<'s> {
     pub fn new(
-        node: Option<Node<'s>>,
+        node: Option<CfgNode<'s>>,
         successors: BTreeSet<ProgramPoint>,
         predecessors: BTreeSet<ProgramPoint>,
     ) -> Self {
@@ -160,19 +161,30 @@ impl<'s> NodeEntry<'s> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Copy)]
-pub struct Edge {
+pub struct CfgEdge {
     pub from: ProgramPoint,
     pub to: ProgramPoint,
 }
 
-impl Edge {
+impl CfgEdge {
     pub fn new(from: ProgramPoint, to: ProgramPoint) -> Self {
         Self { from, to }
     }
 }
 
+impl Edge for CfgEdge {
+    type Node = ProgramPoint;
+
+    fn from(&self) -> &Self::Node {
+        &self.from
+    }
+    fn to(&self) -> &Self::Node {
+        &self.to
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Copy)]
-pub enum EdgeKind {
+pub enum CfgEdgeKind {
     Unconditional,
     Conditional(bool),
     Match(usize),
@@ -183,7 +195,7 @@ pub enum EdgeKind {
     Return,
 }
 
-impl EdgeKind {
+impl CfgEdgeKind {
     pub fn is_normal_flow(&self) -> bool {
         !self.is_exception_flow()
     }
@@ -195,8 +207,8 @@ impl EdgeKind {
 
 #[derive(Default, Debug, Clone)]
 pub struct Cfg<'s> {
-    entries: HashMap<ProgramPoint, NodeEntry<'s>>,
-    edges: HashMap<Edge, BTreeSet<EdgeKind>>,
+    entries: HashMap<ProgramPoint, CfgNodeEntry<'s>>,
+    edges: HashMap<CfgEdge, BTreeSet<CfgEdgeKind>>,
     cfgs: HashMap<Location, Cfg<'s>>,
 }
 
@@ -208,17 +220,17 @@ impl<'s> Cfg<'s> {
     pub fn empty() -> Self {
         let mut cfg = Cfg::default();
         cfg.insert_edge(
-            Edge::new(ProgramPoint::Entry, ProgramPoint::Exit),
+            CfgEdge::new(ProgramPoint::Entry, ProgramPoint::Exit),
             BTreeSet::default(),
         );
         cfg
     }
 
-    pub fn entries(&self) -> &HashMap<ProgramPoint, NodeEntry<'s>> {
+    pub fn entries(&self) -> &HashMap<ProgramPoint, CfgNodeEntry<'s>> {
         &self.entries
     }
 
-    pub fn edges(&self) -> &HashMap<Edge, BTreeSet<EdgeKind>> {
+    pub fn edges(&self) -> &HashMap<CfgEdge, BTreeSet<CfgEdgeKind>> {
         &self.edges
     }
 
@@ -226,17 +238,7 @@ impl<'s> Cfg<'s> {
         &self.cfgs
     }
 
-    pub fn successors(&self, program_point: &ProgramPoint) -> Option<&BTreeSet<ProgramPoint>> {
-        self.entries.get(program_point).map(|node| &node.successors)
-    }
-
-    pub fn predecessors(&self, program_point: &ProgramPoint) -> Option<&BTreeSet<ProgramPoint>> {
-        self.entries
-            .get(program_point)
-            .map(|node| &node.predecessors)
-    }
-
-    fn insert_edge_in_entries(&mut self, edge: Edge) {
+    fn insert_edge_in_entries(&mut self, edge: CfgEdge) {
         self.entries
             .entry(edge.from)
             .or_default()
@@ -249,19 +251,19 @@ impl<'s> Cfg<'s> {
             .insert(edge.from);
     }
 
-    fn remove_edges_from_entry(&mut self, program_point: ProgramPoint, entry: NodeEntry<'_>) {
+    fn remove_edges_from_entry(&mut self, program_point: ProgramPoint, entry: CfgNodeEntry<'_>) {
         for successor in entry.successors {
-            self.edges.remove(&Edge::new(program_point, successor));
+            self.edges.remove(&CfgEdge::new(program_point, successor));
         }
         for predecessor in entry.predecessors {
-            self.edges.remove(&Edge::new(predecessor, program_point));
+            self.edges.remove(&CfgEdge::new(predecessor, program_point));
         }
     }
 
-    pub fn insert_node(&mut self, program_point: ProgramPoint, node: Option<Node<'s>>) {
+    pub fn insert_node(&mut self, program_point: ProgramPoint, node: Option<CfgNode<'s>>) {
         if let Some(previous_entry) = self.entries.insert(
             program_point,
-            NodeEntry {
+            CfgNodeEntry {
                 node,
                 ..Default::default()
             },
@@ -276,17 +278,17 @@ impl<'s> Cfg<'s> {
         }
     }
 
-    pub fn insert_edge(&mut self, edge: Edge, kinds: BTreeSet<EdgeKind>) {
+    pub fn insert_edge(&mut self, edge: CfgEdge, kinds: BTreeSet<CfgEdgeKind>) {
         self.insert_edge_in_entries(edge);
         self.edges.insert(edge, kinds);
     }
 
-    pub fn insert_edge_kind(&mut self, edge: Edge, kind: EdgeKind) {
+    pub fn insert_edge_kind(&mut self, edge: CfgEdge, kind: CfgEdgeKind) {
         self.insert_edge_in_entries(edge);
         self.edges.entry(edge).or_default().insert(kind);
     }
 
-    pub fn remove_edge(&mut self, edge: &Edge) {
+    pub fn remove_edge(&mut self, edge: &CfgEdge) {
         self.edges.remove(edge);
         if let Some(entry) = self.entries.get_mut(&edge.from) {
             entry.successors.remove(&edge.to);
@@ -296,7 +298,7 @@ impl<'s> Cfg<'s> {
         }
     }
 
-    pub fn remove_edge_kind(&mut self, edge: &Edge, kind: &EdgeKind) {
+    pub fn remove_edge_kind(&mut self, edge: &CfgEdge, kind: &CfgEdgeKind) {
         if let Some(kinds) = self.edges.get_mut(edge) {
             kinds.remove(kind);
         }
@@ -311,82 +313,129 @@ impl<'s> Cfg<'s> {
     }
 }
 
-impl<'s> Dot for Cfg<'s> {
-    fn fmt(&self, f: &mut Formatter<'_>, name: &str) -> std::fmt::Result {
-        let entries = self.entries.iter().collect::<BTreeMap<_, _>>();
-        let edges = self.edges.iter().collect::<BTreeMap<_, _>>();
+impl<'s> Graph for Cfg<'s> {
+    type Node = ProgramPoint;
+    type NodeData = Option<CfgNode<'s>>;
+    type Edge = CfgEdge;
+    type EdgeData = BTreeSet<CfgEdgeKind>;
 
-        write!(f, "digraph \"{}\" {{\n", name)?;
-        for (program_point, entry) in entries {
-            write!(f, "    \"{}\"", program_point)?;
+    fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
+        self.entries.iter().map(|(node, entry)| (node, &entry.node))
+    }
+    fn edge_data_iter(&self) -> impl Iterator<Item = (&Self::Edge, &Self::EdgeData)> {
+        self.edges.iter()
+    }
+    fn node_iter(&self) -> impl Iterator<Item = &Self::Node> {
+        self.entries.keys()
+    }
 
-            if let Some(node) = &entry.node {
-                let label = match node {
-                    Node::FunctionDef(_) => "function_def",
-                    Node::ClassDef(_) => "class_def",
-                    Node::Return(_) => "return",
-                    Node::Delete(_) => "delete",
-                    Node::Assign(_) => "assign",
-                    Node::AugAssign(_) => "aug_assign",
-                    Node::AnnAssign(_) => "ann_assign",
-                    Node::TypeAlias(_) => "type_alias",
-                    Node::For(_) => "for",
-                    Node::While(_) => "while",
-                    Node::If(_) => "if",
-                    Node::Elif(_) => "elif",
-                    Node::With(_) => "with",
-                    Node::Match(_) => "match",
-                    Node::Raise(_) => "raise",
-                    Node::Try(_) => "try",
-                    Node::Assert(_) => "assert",
-                    Node::Import(_) => "import",
-                    Node::ImportFrom(_) => "import_from",
-                    Node::Global(_) => "global",
-                    Node::Nonlocal(_) => "nonlocal",
-                    Node::Expr(_) => "expr",
-                    Node::Pass(_) => "pass",
-                    Node::Break(_) => "break",
-                    Node::Continue(_) => "continue",
-                    Node::IpyEscapeCommand(_) => "ipy_escape_command",
-                };
-                write!(f, " [label=\"{}\"]", label)?;
-            }
+    fn edge_iter(&self) -> impl Iterator<Item = &Self::Edge> {
+        self.edges.keys()
+    }
 
+    fn get_node_data(&self, node: &Self::Node) -> Option<&Self::NodeData> {
+        self.entries.get(node).map(|entry| &entry.node)
+    }
+
+    fn get_edge_data(&self, edge: &Self::Edge) -> Option<&Self::EdgeData> {
+        self.edges.get(edge).map(|edge_kinds| edge_kinds)
+    }
+
+    fn successor_iter(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
+        self.entries
+            .get(node)
+            .into_iter()
+            .flat_map(|node| &node.successors)
+    }
+
+    fn predecessor_iter(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
+        self.entries
+            .get(node)
+            .into_iter()
+            .flat_map(|node| &node.predecessors)
+    }
+}
+
+impl<'s> DiGraphDot for Cfg<'s> {
+    fn fmt_node(
+        &self,
+        f: &mut Formatter<'_>,
+        node: &Self::Node,
+        node_data: &Self::NodeData,
+    ) -> std::fmt::Result {
+        write!(f, "    \"{}\"", node)?;
+
+        if let Some(cfg_node) = &node_data {
+            let label = match cfg_node {
+                CfgNode::FunctionDef(_) => "function_def",
+                CfgNode::ClassDef(_) => "class_def",
+                CfgNode::Return(_) => "return",
+                CfgNode::Delete(_) => "delete",
+                CfgNode::Assign(_) => "assign",
+                CfgNode::AugAssign(_) => "aug_assign",
+                CfgNode::AnnAssign(_) => "ann_assign",
+                CfgNode::TypeAlias(_) => "type_alias",
+                CfgNode::For(_) => "for",
+                CfgNode::While(_) => "while",
+                CfgNode::If(_) => "if",
+                CfgNode::Elif(_) => "elif",
+                CfgNode::With(_) => "with",
+                CfgNode::Match(_) => "match",
+                CfgNode::Raise(_) => "raise",
+                CfgNode::Try(_) => "try",
+                CfgNode::Assert(_) => "assert",
+                CfgNode::Import(_) => "import",
+                CfgNode::ImportFrom(_) => "import_from",
+                CfgNode::Global(_) => "global",
+                CfgNode::Nonlocal(_) => "nonlocal",
+                CfgNode::Expr(_) => "expr",
+                CfgNode::Pass(_) => "pass",
+                CfgNode::Break(_) => "break",
+                CfgNode::Continue(_) => "continue",
+                CfgNode::IpyEscapeCommand(_) => "ipy_escape_command",
+            };
+            write!(f, " [label=\"{}\"]", label)?;
+        }
+
+        f.write_str(";\n")
+    }
+
+    fn fmt_edge(
+        &self,
+        f: &mut Formatter<'_>,
+        edge: &Self::Edge,
+        edge_data: &Self::EdgeData,
+    ) -> std::fmt::Result {
+        for edge_kind in edge_data {
+            write!(f, "    \"{}\" -> \"{}\"", edge.from, edge.to)?;
+
+            match edge_kind {
+                CfgEdgeKind::Unconditional => {}
+                CfgEdgeKind::Conditional(cond) => {
+                    write!(f, " [label=\"{}\"]", cond)?;
+                }
+                CfgEdgeKind::Match(index) => {
+                    write!(f, " [label=\"match({})\"]", index)?;
+                }
+                CfgEdgeKind::Exception(point, index) => {
+                    write!(f, " [label=\"except({}, {})\"]", point, index)?
+                }
+                CfgEdgeKind::UnhandledException => {
+                    write!(f, " [label=\"except\"]")?;
+                }
+                CfgEdgeKind::Break => {
+                    write!(f, " [label=\"break\"]")?;
+                }
+                CfgEdgeKind::Continue => {
+                    write!(f, " [label=\"continue\"]")?;
+                }
+                CfgEdgeKind::Return => {
+                    write!(f, " [label=\"return\"]")?;
+                }
+            };
             f.write_str(";\n")?;
         }
 
-        for (edge, edge_kinds) in edges {
-            for edge_kind in edge_kinds {
-                write!(f, "    \"{}\" -> \"{}\"", edge.from, edge.to)?;
-
-                match edge_kind {
-                    EdgeKind::Unconditional => {}
-                    EdgeKind::Conditional(cond) => {
-                        write!(f, " [label=\"{}\"]", cond)?;
-                    }
-                    EdgeKind::Match(index) => {
-                        write!(f, " [label=\"match({})\"]", index)?;
-                    }
-                    EdgeKind::Exception(point, index) => {
-                        write!(f, " [label=\"except({}, {})\"]", point, index)?
-                    }
-                    EdgeKind::UnhandledException => {
-                        write!(f, " [label=\"except\"]")?;
-                    }
-                    EdgeKind::Break => {
-                        write!(f, " [label=\"break\"]")?;
-                    }
-                    EdgeKind::Continue => {
-                        write!(f, " [label=\"continue\"]")?;
-                    }
-                    EdgeKind::Return => {
-                        write!(f, " [label=\"return\"]")?;
-                    }
-                };
-                f.write_str(";\n")?;
-            }
-        }
-
-        f.write_str("}\n")
+        Ok(())
     }
 }
