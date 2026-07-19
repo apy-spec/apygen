@@ -1693,9 +1693,9 @@ mod tests {
         indoc! {r##"
         module:
             a@{module[1:0]} = 0
-            a@{module[4:4]} = Union[Any, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
-            b@{module[6:0]} = Any
-            #raise = {Exception(type=Any, origin=Unknown)}
+            a@{module[4:4]} = Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] ⊔ #deferred{(a@{module[4:8]}) + (1)}
+            b@{module[6:0]} = Never ⊔ #deferred{a@{module[6:4]}}
+            #raise = {Exception(type=Any, origin=Unknown)} ⊔ #deferred{a@{module[4:4]}, (a@{module[4:8]}) + (1)}
             #return = None
         "##},  // TODO: fix this when operations are implemented
     )]
@@ -1709,13 +1709,12 @@ mod tests {
         indoc! {r##"
         module:
             add_two@{module[1:4]} = function(add_two@module[1:0])
-            result@{module[4:0]} = Never ⊔ #deferred{(add_two@{module[4:9]})(42, 67)}
             #raise = {}
-            #return = None
+            #return = Never
         module[1:0]:
-            a@{module[1:12]} = Never ⊔ #deferred{#annotated(int@{module[1:15]})}
+            a@{module[1:12]} = @class(int@builtins[1:0])
             b@{module[1:20]} = Never
-            #raise = {} ⊔ #deferred{#annotated(int@{module[1:15]})}
+            #raise = {}
             #return = Never
         "##},
     )]
@@ -1818,14 +1817,12 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            CONST@{module[6:0]} = 5
             foo@{module[1:4]} = function(foo@module[1:0])
-            result@{module[4:0]} = Never ⊔ #deferred{(foo@{module[4:9]})()}
-            #raise = {}
-            #return = None
+            #raise = {Exception(type=@class(NameError@builtins[4:0]), origin=Specified)}
+            #return = Never
         module[1:0]:
-            #raise = {} ⊔ #deferred{CONST@{module[1:0][2:11]}}
-            #return = Never ⊔ #deferred{CONST@{module[1:0][2:11]}}
+            #raise = {Exception(type=@class(NameError@builtins[4:0]), origin=Specified)}
+            #return = Never
         "##},
     )]
     #[case::forward_reference_function_call(
@@ -1858,7 +1855,7 @@ mod tests {
                 (module_name.clone(), source.to_string()),
                 (
                     Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                    String::new(),
+                    TEST_BUILTINS.to_owned(),
                 ),
             ]),
         };
