@@ -2,7 +2,6 @@ use crate::abstract_environment::{
     BUILTINS_MODULE, LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger,
     LiteralString,
 };
-use crate::cfg;
 use crate::cfg::ast::{self, Number};
 use crate::cfg::source_file::LineIndex;
 use crate::cfg::text_size::Ranged;
@@ -15,7 +14,7 @@ use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
 use apygen_analysis::fmt::{fmt_display_sequence, fmt_display_set};
 use apygen_analysis::lattice::{Join, OrdJoin};
 use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
-use apygen_cfg::CfgBuilder;
+use apygen_cfg::build_cfg;
 use apygen_cfg::parser::{Mode, parse};
 use apygen_finder::filesystem::{Error as FilesystemError, Filesystem};
 use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
@@ -2958,9 +2957,8 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         .expect("Should parse builtins module")
         .try_into_module()
         .expect("Should parse module");
-    let builtins_cfg = CfgBuilder::new(&builtins_line_index)
-        .build_cfg(builtins_module.suite())
-        .expect("Should build CFG");
+    let builtins_cfg =
+        build_cfg(&builtins_line_index, builtins_module.syntax()).expect("Should build CFG");
 
     let builtins_entity = ProgramEntity::new(
         QualifiedLocation::from(builtins_module_name.clone()),
@@ -3004,9 +3002,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
                 let source = module_loader.load(&module_name).ok()?;
                 let line_index = LineIndex::from_source_text(&source);
                 let module = parse(&source, Mode::Module).ok()?.try_into_module()?;
-                let cfg = CfgBuilder::new(&line_index)
-                    .build_cfg(module.suite())
-                    .ok()?;
+                let cfg = build_cfg(&line_index, module.syntax()).ok()?;
 
                 let parent_state = if module_name != builtins_module_name {
                     Some(builtin_parent_state)
@@ -3071,6 +3067,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
 mod tests {
     use super::*;
     use apygen_analysis::analysis;
+    use apygen_cfg::build_cfg;
     use imbl::ordset;
     use indoc::indoc;
     use rstest::rstest;
@@ -3760,9 +3757,7 @@ mod tests {
             .unwrap()
             .try_into_module()
             .unwrap();
-        let cfg = CfgBuilder::new(&line_index)
-            .build_cfg(module.suite())
-            .unwrap();
+        let cfg = build_cfg(&line_index, module.syntax()).unwrap();
 
         let program_entity = ProgramEntity::new(
             QualifiedLocation::from(Arc::new(QualifiedName::parse("module"))),
