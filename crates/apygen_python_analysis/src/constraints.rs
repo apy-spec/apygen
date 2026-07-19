@@ -6,8 +6,7 @@ use crate::cfg::ast::{self, Number};
 use crate::cfg::source_file::LineIndex;
 use crate::cfg::text_size::Ranged;
 use crate::cfg::{
-    Cfg, CfgEdgeKind, Location as ProgramPointLocation, CfgNode as StmtNode, ProgramPoint,
-    CfgEdge,
+    Cfg, CfgEdge, CfgEdgeKind, CfgNode as StmtNode, Location as ProgramPointLocation, ProgramPoint,
 };
 use crate::genkill::assignment::AssignmentTarget;
 use apy::OneOrMany;
@@ -3032,8 +3031,10 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
             }
 
             dependent_graph.add_dependent(builtins_module_node.clone(), module_node.clone());
-            dependent_graph.add_dependent(module_node.clone(), ModuleNode::Exit);
-            dependent_graph.remove_dependent(builtins_module_node.clone(), ModuleNode::Exit);
+            if !dependent_graph.dependents.contains_key(&module_node) {
+                dependent_graph.add_dependent(module_node.clone(), ModuleNode::Exit);
+                dependent_graph.remove_dependent(builtins_module_node.clone(), ModuleNode::Exit);
+            }
 
             for import in imports {
                 let import_module_node = ModuleNode::Module(import.clone());
@@ -3067,18 +3068,36 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use apygen_analysis::analysis;
-    use apygen_cfg::build_cfg;
-    use imbl::ordset;
     use indoc::indoc;
     use rstest::rstest;
     use std::convert::Infallible;
+
+    pub struct TestModuleLoader {
+        pub modules: HashMap<ModuleName, String>,
+    }
+
+    impl ModuleLoader for TestModuleLoader {
+        type Error = Infallible;
+        fn load(&self, module_name: &ModuleName) -> Result<String, Self::Error> {
+            Ok(self.modules.get(module_name).cloned().unwrap())
+        }
+    }
 
     #[rstest]
     #[case::import(
         "import some_module",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Module(some_module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(builtins)" -> "Module(some_module)";
+            "Module(module)" -> "Exit";
+            "Module(some_module)" -> "Module(module)";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:7)" [label="{#import(some_module) ⊑ some_module@{module[1:7]}, #defined(some_module@{module[1:7]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3089,12 +3108,21 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset!["some_module"],
     )]
     #[case::import_as(
         "import some_module as mod",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Module(some_module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(builtins)" -> "Module(some_module)";
+            "Module(module)" -> "Exit";
+            "Module(some_module)" -> "Module(module)";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:22)" [label="{#import(some_module) ⊑ mod@{module[1:22]}, #defined(mod@{module[1:22]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3105,12 +3133,21 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset!["some_module"],
     )]
     #[case::import_submodule(
         "import some_module.submodule",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Module(some_module.submodule)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(builtins)" -> "Module(some_module.submodule)";
+            "Module(module)" -> "Exit";
+            "Module(some_module.submodule)" -> "Module(module)";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:19)" [label="{#import(some_module.submodule) ⊑ (some_module@{module[1:7]}).submodule, #defined(some_module@{module[1:19]})}"];
             "Constraint(location=1:7)" [label="{#import(some_module) ⊑ some_module@{module[1:7]}, #defined(some_module@{module[1:7]})}"];
@@ -3124,12 +3161,24 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset!["some_module.submodule"],
     )]
     #[case::import_module_and_submodule(
         "import some_module, some_module.submodule",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Module(some_module)";
+            "Module(some_module.submodule)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(builtins)" -> "Module(some_module)";
+            "Module(builtins)" -> "Module(some_module.submodule)";
+            "Module(module)" -> "Exit";
+            "Module(some_module)" -> "Module(module)";
+            "Module(some_module.submodule)" -> "Module(module)";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:20)" [label="{#import(some_module) ⊑ some_module@{module[1:20]}, #defined(some_module@{module[1:20]})}"];
             "Constraint(location=1:32)" [label="{#import(some_module.submodule) ⊑ (some_module@{module[1:20]}).submodule, #defined(some_module@{module[1:32]})}"];
@@ -3146,12 +3195,24 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset!["some_module", "some_module.submodule"],
     )]
     #[case::multiple_import(
         "import some_module, another_module",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(another_module)";
+            "Module(builtins)";
+            "Module(module)";
+            "Module(some_module)";
+            "Entry" -> "Module(builtins)";
+            "Module(another_module)" -> "Module(module)";
+            "Module(builtins)" -> "Module(another_module)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(builtins)" -> "Module(some_module)";
+            "Module(module)" -> "Exit";
+            "Module(some_module)" -> "Module(module)";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:20)" [label="{#import(another_module) ⊑ another_module@{module[1:20]}, #defined(another_module@{module[1:20]})}"];
             "Constraint(location=1:7)" [label="{#import(some_module) ⊑ some_module@{module[1:7]}, #defined(some_module@{module[1:7]})}"];
@@ -3165,12 +3226,24 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset!["some_module", "another_module"],
     )]
     #[case::multiple_import_override(
         "import some_module as mod, another_module as mod",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(another_module)";
+            "Module(builtins)";
+            "Module(module)";
+            "Module(some_module)";
+            "Entry" -> "Module(builtins)";
+            "Module(another_module)" -> "Module(module)";
+            "Module(builtins)" -> "Module(another_module)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(builtins)" -> "Module(some_module)";
+            "Module(module)" -> "Exit";
+            "Module(some_module)" -> "Module(module)";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:22)" [label="{#import(some_module) ⊑ mod@{module[1:22]}, #defined(mod@{module[1:22]})}"];
             "Constraint(location=1:45)" [label="{#import(another_module) ⊑ mod@{module[1:45]}, #defined(mod@{module[1:45]})}"];
@@ -3184,12 +3257,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset!["some_module", "another_module"],
     )]
     #[case::int_constant_assignment(
         "a = 42",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{42 ⊑ a@{module[1:0]}, #defined(a@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3198,12 +3277,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::bigint_constant_assignment(
         "a = 4200000000000000000000000000",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{4200000000000000000000000000 ⊑ a@{module[1:0]}, #defined(a@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3212,12 +3297,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::add_operation(
         "add = 42 + 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) + (67) ⊑ add@{module[1:0]}, #defined(add@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3228,12 +3319,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::sub_operation(
         "sub = 42 - 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) - (67) ⊑ sub@{module[1:0]}, #defined(sub@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3244,12 +3341,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::mult_operation(
         "mult = 42 * 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) * (67) ⊑ mult@{module[1:0]}, #defined(mult@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3260,12 +3363,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::mat_mult_operation(
         "mat_mult = 42 @ 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) @ (67) ⊑ mat_mult@{module[1:0]}, #defined(mat_mult@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3276,12 +3385,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::div_operation(
         "div = 42 / 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) / (67) ⊑ div@{module[1:0]}, #defined(div@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3292,12 +3407,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::floor_div_operation(
         "floor_div = 42 // 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) // (67) ⊑ floor_div@{module[1:0]}, #defined(floor_div@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3308,12 +3429,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::mod_operation(
         "mod = 42 % 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) % (67) ⊑ mod@{module[1:0]}, #defined(mod@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3324,12 +3451,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::pow_operation(
         "pow = 42 ** 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) ** (67) ⊑ pow@{module[1:0]}, #defined(pow@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3340,12 +3473,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::shl_operation(
         "shl = 42 << 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) << (67) ⊑ shl@{module[1:0]}, #defined(shl@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3356,12 +3495,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::shr_operation(
         "shr = 42 >> 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) >> (67) ⊑ shr@{module[1:0]}, #defined(shr@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3372,12 +3517,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::bit_or_operation(
         "bit_or = 42 | 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) | (67) ⊑ bit_or@{module[1:0]}, #defined(bit_or@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3388,12 +3539,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::bit_xor_operation(
         "bit_xor = 42 ^ 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) ^ (67) ⊑ bit_xor@{module[1:0]}, #defined(bit_xor@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3404,12 +3561,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::bit_and_operation(
         "bit_and = 42 & 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) & (67) ⊑ bit_and@{module[1:0]}, #defined(bit_and@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3420,12 +3583,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::and_operation(
         "and_ = 42 and 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) and (67) ⊑ and_@{module[1:0]}, #defined(and_@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3436,12 +3605,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::or_operation(
         "or_ = 42 or 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) or (67) ⊑ or_@{module[1:0]}, #defined(or_@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3452,12 +3627,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::eq_operation(
         "eq = 42 == 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) == (67) ⊑ eq@{module[1:0]}, #defined(eq@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3468,12 +3649,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::not_eq_operation(
         "not_eq = 42 != 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) != (67) ⊑ not_eq@{module[1:0]}, #defined(not_eq@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3484,12 +3671,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::lt_operation(
         "lt = 42 < 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) < (67) ⊑ lt@{module[1:0]}, #defined(lt@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3500,12 +3693,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::gt_operation(
         "gt = 42 > 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) > (67) ⊑ gt@{module[1:0]}, #defined(gt@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3516,12 +3715,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::lte_operation(
         "lte = 42 <= 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) <= (67) ⊑ lte@{module[1:0]}, #defined(lte@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3532,12 +3737,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::gte_operation(
         "gte = 42 >= 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) >= (67) ⊑ gte@{module[1:0]}, #defined(gte@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3548,12 +3759,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::is_operation(
         "is_ = 42 is 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) is (67) ⊑ is_@{module[1:0]}, #defined(is_@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3564,12 +3781,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::is_not_operation(
         "is_not = 42 is not 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) is not (67) ⊑ is_not@{module[1:0]}, #defined(is_not@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3580,12 +3803,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::in_operation(
         "in_ = 42 in 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) in (67) ⊑ in_@{module[1:0]}, #defined(in_@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3596,12 +3825,18 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::not_in_operation(
         "not_in = 42 not in 67",
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{(42) not in (67) ⊑ not_in@{module[1:0]}, #defined(not_in@{module[1:0]})}"];
             "Constraint()" -> "TypeExit" [label=""];
@@ -3612,7 +3847,6 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::add_same_variable(
         indoc! {r##"
@@ -3621,7 +3855,14 @@ mod tests {
         b = a + a
         "##},
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{4 ⊑ a@{module[1:0]}, #defined(a@{module[1:0]})}"];
             "Constraint(location=3:0)" [label="{(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]}, #defined(b@{module[3:0]})}"];
@@ -3637,7 +3878,6 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::simple_if_statement(
         indoc! {r##"
@@ -3651,7 +3891,14 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{True ⊑ x@{module[1:0]}, #defined(x@{module[1:0]})}"];
             "Constraint(location=3:3)" [label="{x@{module[1:0]} ⊑ x@{module[3:3]}}"];
@@ -3677,7 +3924,6 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
     #[case::simple_while_statement(
         indoc! {r##"
@@ -3689,7 +3935,14 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        digraph "Constraints" {
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="{0 ⊑ a@{module[1:0]}, #defined(a@{module[1:0]})}"];
             "Constraint(location=3:6)" [label="{a@{module[1:0]} ⊑ a@{module[3:6]}, a@{module[4:4]} ⊑ a@{module[3:6]}}"];
@@ -3719,96 +3972,7 @@ mod tests {
             "TypeExit" -> "Exit" [label=""];
         }
         "##},
-        ordset![],
     )]
-    #[case::simple_function_definition(
-        indoc! {r##"
-        def add_two(a, b):
-            return a + b
-
-        result = add_two(42, 67)
-        "##},
-        indoc! {r##"
-        digraph "Constraints" {
-            "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:4)" [label="{#function(identifier=add_two@module[1:0], async=false) ⊑ add_two@{module[1:4]}, #defined(add_two@{module[1:4]})}"];
-            "Constraint(location=4:0)" [label="{(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]}, #defined(result@{module[4:0]})}"];
-            "Constraint(location=4:9)" [label="{add_two@{module[1:4]} ⊑ add_two@{module[4:9]}}"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Constraint(location=1:4)" -> "Constraint(location=4:9)" [label="#succeed(add_two@{module[1:4]})"];
-            "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise(add_two@{module[1:4]})"];
-            "Constraint(location=4:0)" -> "Constraint()" [label=""];
-            "Constraint(location=4:9)" -> "Constraint(location=4:0)" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
-            "Constraint(location=4:9)" -> "ExceptionExit" [label="#raise((add_two@{module[4:9]})(42, 67))"];
-            "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=add_two@module[1:0], async=false))"];
-            "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=add_two@module[1:0], async=false))"];
-            "ExceptionExit" -> "TypeExit" [label=""];
-            "TypeExit" -> "Exit" [label=""];
-        }
-        "##},
-        ordset![],
-    )]
-    fn test_constraints_generation(
-        #[case] source: &str,
-        #[case] expected_dot: &str,
-        #[case] expected_imports: imbl::OrdSet<&str>,
-    ) {
-        let line_index = LineIndex::from_source_text(&source);
-        let module = parse(&source, Mode::Module)
-            .unwrap()
-            .try_into_module()
-            .unwrap();
-        let cfg = build_cfg(&line_index, module.syntax()).unwrap();
-
-        let program_entity = ProgramEntity::new(
-            QualifiedLocation::from(Arc::new(QualifiedName::parse("module"))),
-            ProgramEntityKind::Module,
-        );
-
-        let constraints_builder = ConstraintsBuilder::new(&cfg, &line_index, &program_entity, None);
-
-        let mut analysis_state = analysis(&constraints_builder, &mut DummyAnalysisObserver)
-            .expect("constraint builder should work");
-
-        let exit_state = analysis_state
-            .abstract_states
-            .remove(&ProgramPoint::Exit)
-            .expect("exit should exist");
-
-        let actual_dot = ConstraintGraph::new(
-            exit_state.nodes.clone(),
-            exit_state.edges.into_iter().fold(
-                imbl::OrdMap::default(),
-                |mut acc, ((from, to), guards)| {
-                    acc.entry(from).or_default().insert(to, guards);
-                    acc
-                },
-            ),
-        )
-        .dot("Constraints");
-
-        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
-        assert_eq!(
-            expected_imports
-                .into_iter()
-                .map(|expected_import| Arc::new(QualifiedName::parse(expected_import)))
-                .collect::<imbl::OrdSet<ModuleName>>(),
-            exit_state.imports
-        );
-    }
-
-    pub struct TestModuleLoader {
-        pub modules: HashMap<ModuleName, String>,
-    }
-
-    impl ModuleLoader for TestModuleLoader {
-        type Error = Infallible;
-        fn load(&self, module_name: &ModuleName) -> Result<String, Self::Error> {
-            Ok(self.modules.get(module_name).cloned().unwrap())
-        }
-    }
-
-    #[rstest]
     #[case::simple_function_definition(
         indoc! {r##"
         def add_two(a, b):
@@ -3823,12 +3987,6 @@ mod tests {
             "Entry" -> "Module(builtins)";
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
-        }
-        digraph "builtins" {
-            "Constraint()" [label="#return(None)"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Entry" -> "Constraint()" [label=""];
-            "TypeExit" -> "Exit" [label=""];
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
@@ -3876,12 +4034,6 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
-        digraph "builtins" {
-            "Constraint()" [label="#return(None)"];
-            "Constraint()" -> "TypeExit" [label=""];
-            "Entry" -> "Constraint()" [label=""];
-            "TypeExit" -> "Exit" [label=""];
-        }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:4)" [label="{#function(identifier=foo@module[1:0], async=false) ⊑ foo@{module[1:4]}, #defined(foo@{module[1:4]})}"];
@@ -3918,18 +4070,30 @@ mod tests {
         let module_loader = TestModuleLoader {
             modules: HashMap::from_iter([
                 (module_name.clone(), source.to_string()),
+                (Arc::new(QualifiedName::parse("some_module")), String::new()),
+                (
+                    Arc::new(QualifiedName::parse("some_module.submodule")),
+                    String::new(),
+                ),
+                (
+                    Arc::new(QualifiedName::parse("another_module")),
+                    String::new(),
+                ),
                 (
                     Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
                     String::new(),
                 ),
             ]),
         };
-        let dependent_graph = analyse_program(&module_loader, std::iter::once(module_name));
+        let dependent_graph = analyse_program(&module_loader, std::iter::once(module_name.clone()));
 
         let mut actual_dot = dependent_graph.dot("DependentGraph");
 
         for program_entities in dependent_graph.nodes.values() {
             for (qualified_location, constraints) in program_entities {
+                if qualified_location.module_name != module_name {
+                    continue;
+                }
                 actual_dot.push_str(
                     &constraints
                         .constraint_graph
