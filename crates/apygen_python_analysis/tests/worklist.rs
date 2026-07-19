@@ -4,7 +4,7 @@ use apygen_analysis::rayon::par_analysis;
 use apygen_finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
 use apygen_finder::pathfinder::PathFinder;
 use apygen_python_analysis::constraints::{
-    DependentGraph, ModuleNode, ProgramEntityConstraints, QualifiedLocation, SpecCfgImporter,
+    DependentGraph, ModuleNode, ProgramEntityConstraints, QualifiedLocation, SpecModuleLoader,
     analyse_program,
 };
 use apygen_python_analysis::converter::v1::convert_apy_v1;
@@ -52,9 +52,9 @@ pub fn analyse_directory(
 
     let specs: HashMap<Identifier, _> = finder.get_specs();
 
-    let cfg_importer = SpecCfgImporter { specs };
+    let module_loader = SpecModuleLoader { specs };
 
-    let dependent_graph = analyse_program(&cfg_importer, std::iter::once(target_module.clone()));
+    let dependent_graph = analyse_program(&module_loader, std::iter::once(target_module.clone()));
 
     let solver = ModuleConstraintSolver::new(&dependent_graph);
 

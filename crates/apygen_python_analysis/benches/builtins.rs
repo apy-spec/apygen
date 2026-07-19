@@ -1,7 +1,7 @@
 use apy::v1::Identifier;
 use apygen_finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
 use apygen_finder::pathfinder::PathFinder;
-use apygen_python_analysis::constraints::{SpecCfgImporter, analyse_program};
+use apygen_python_analysis::constraints::{SpecModuleLoader, analyse_program};
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::collections::HashMap;
 use std::fs;
@@ -37,9 +37,9 @@ fn build_constraints() {
 
     let specs: HashMap<Identifier, _> = finder.get_specs();
 
-    let cfg_importer = SpecCfgImporter { specs };
+    let module_loader = SpecModuleLoader { specs };
 
-    analyse_program(&cfg_importer, std::iter::empty());
+    analyse_program(&module_loader, std::iter::empty());
 }
 
 fn bench_constraint_builder(criterion: &mut Criterion) {

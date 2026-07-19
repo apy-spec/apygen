@@ -1,9 +1,4 @@
 use crate::abstract_environment::{QualifiedName, Visibility};
-use crate::constraints::QualifiedLocation;
-use apygen_analysis::cfg::nodes::Stmt;
-use apygen_analysis::cfg::{Cfg, NodeData, ProgramPoint, StatementData};
-use std::collections::HashMap;
-use std::sync::Arc;
 
 pub fn is_dunder_name(name: &str) -> bool {
     name.starts_with("__") && name.ends_with("__")

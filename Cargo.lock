@@ -127,7 +127,6 @@ name = "apygen_analysis"
 version = "0.1.0"
 dependencies = [
  "apygen_analysis_derive",
- "apygen_cfg",
  "imbl",
  "log",
  "rayon",
@@ -147,11 +146,13 @@ name = "apygen_cfg"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "indoc",
  "rstest",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_source_file",
  "ruff_text_size",
+ "thiserror",
 ]
 
 [[package]]
@@ -169,6 +170,7 @@ version = "0.1.0"
 dependencies = [
  "apy",
  "apygen_analysis",
+ "apygen_cfg",
  "apygen_finder",
  "criterion",
  "env_logger",

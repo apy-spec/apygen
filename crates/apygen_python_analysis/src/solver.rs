@@ -1629,10 +1629,9 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 mod tests {
     use super::*;
     use crate::abstract_environment::BUILTINS_MODULE;
-    use crate::constraints::{CfgImporter, ModuleName, analyse_program};
+    use crate::constraints::{ModuleLoader, ModuleName, analyse_program};
     use apy::v1::QualifiedName;
     use apygen_analysis::analysis;
-    use apygen_analysis::cfg::Cfg;
     use apygen_analysis::log::LogAnalysisObserver;
     use indoc::indoc;
     use rstest::rstest;
@@ -1642,13 +1641,14 @@ mod tests {
         let _ = env_logger::builder().is_test(true).try_init();
     }
 
-    pub struct TestCfgImporter {
-        pub modules: HashMap<ModuleName, Cfg>,
+    pub struct TestModuleLoader {
+        pub modules: HashMap<ModuleName, String>,
     }
 
-    impl CfgImporter for TestCfgImporter {
-        fn import_cfg(&self, module_name: &ModuleName) -> Option<Cfg> {
-            self.modules.get(module_name).cloned()
+    impl ModuleLoader for TestModuleLoader {
+        type Error = Infallible;
+        fn load(&self, module_name: &ModuleName) -> Result<String, Self::Error> {
+            Ok(self.modules.get(module_name).cloned().unwrap())
         }
     }
 
@@ -1693,9 +1693,9 @@ mod tests {
         indoc! {r##"
         module:
             a@{module[1:0]} = 0
-            a@{module[4:4]} = Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] ⊔ #deferred{(a@{module[4:8]}) + (1)}
-            b@{module[6:0]} = Never ⊔ #deferred{a@{module[6:4]}}
-            #raise = {Exception(type=Any, origin=Unknown)} ⊔ #deferred{a@{module[4:4]}, (a@{module[4:8]}) + (1)}
+            a@{module[4:4]} = Union[Any, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+            b@{module[6:0]} = Any
+            #raise = {Exception(type=Any, origin=Unknown)}
             #return = None
         "##},  // TODO: fix this when operations are implemented
     )]
@@ -1708,13 +1708,14 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            add_two@{module[1:4]} = function(add_two@module[1:4])
+            add_two@{module[1:4]} = function(add_two@module[1:0])
+            result@{module[4:0]} = Never ⊔ #deferred{(add_two@{module[4:9]})(42, 67)}
             #raise = {}
-            #return = Never
-        module[1:4]:
-            a@{module[1:12]} = @class(int@builtins[1:6])
+            #return = None
+        module[1:0]:
+            a@{module[1:12]} = Never ⊔ #deferred{#annotated(int@{module[1:15]})}
             b@{module[1:20]} = Never
-            #raise = {}
+            #raise = {} ⊔ #deferred{#annotated(int@{module[1:15]})}
             #return = Never
         "##},
     )]
@@ -1727,12 +1728,12 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = class(A@module[1:6])
+            A@{module[1:6]} = class(A@module[1:0])
             result@{module[4:0]} = 5
             #raise = {}
             #return = None
-        module[1:6]:
-            b@{module[1:6][2:4]} = 5
+        module[1:0]:
+            b@{module[1:0][2:4]} = 5
             #raise = {}
             #return = None
         "##},
@@ -1747,13 +1748,13 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = class(A@module[1:6])
-            a@{module[4:0]} = @class(A@module[1:6])
+            A@{module[1:6]} = class(A@module[1:0])
+            a@{module[4:0]} = @class(A@module[1:0])
             result@{module[5:0]} = 5
             #raise = {}
             #return = None
-        module[1:6]:
-            b@{module[1:6][2:4]} = 5
+        module[1:0]:
+            b@{module[1:0][2:4]} = 5
             #raise = {}
             #return = None
         "##},
@@ -1768,15 +1769,15 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = class(A@module[1:6])
-            result@{module[5:0]} = function(foo@module[1:6][2:8])
+            A@{module[1:6]} = class(A@module[1:0])
+            result@{module[5:0]} = function(foo@module[1:0][2:4])
             #raise = {}
             #return = None
-        module[1:6]:
-            foo@{module[1:6][2:8]} = function(foo@module[1:6][2:8])
+        module[1:0]:
+            foo@{module[1:0][2:8]} = function(foo@module[1:0][2:4])
             #raise = {}
             #return = None
-        module[1:6][2:8]:
+        module[1:0][2:4]:
             #raise = {}
             #return = 5
         "##},
@@ -1792,16 +1793,16 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = class(A@module[1:6])
-            a@{module[5:0]} = @class(A@module[1:6])
-            result@{module[6:0]} = method(class(A@module[1:6])[], function(foo@module[1:6][2:8]))
+            A@{module[1:6]} = class(A@module[1:0])
+            a@{module[5:0]} = @class(A@module[1:0])
+            result@{module[6:0]} = method(class(A@module[1:0])[], function(foo@module[1:0][2:4]))
             #raise = {}
             #return = None
-        module[1:6]:
-            foo@{module[1:6][2:8]} = function(foo@module[1:6][2:8])
+        module[1:0]:
+            foo@{module[1:0][2:8]} = function(foo@module[1:0][2:4])
             #raise = {}
             #return = None
-        module[1:6][2:8]:
+        module[1:0][2:4]:
             #raise = {}
             #return = 5
         "##},
@@ -1817,12 +1818,14 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            foo@{module[1:4]} = function(foo@module[1:4])
-            #raise = {Exception(type=@class(NameError@builtins[4:6]), origin=Specified)}
-            #return = Never
-        module[1:4]:
-            #raise = {Exception(type=@class(NameError@builtins[4:6]), origin=Specified)}
-            #return = Never
+            CONST@{module[6:0]} = 5
+            foo@{module[1:4]} = function(foo@module[1:0])
+            result@{module[4:0]} = Never ⊔ #deferred{(foo@{module[4:9]})()}
+            #raise = {}
+            #return = None
+        module[1:0]:
+            #raise = {} ⊔ #deferred{CONST@{module[1:0][2:11]}}
+            #return = Never ⊔ #deferred{CONST@{module[1:0][2:11]}}
         "##},
     )]
     #[case::forward_reference_function_call(
@@ -1837,11 +1840,11 @@ mod tests {
         indoc! {r##"
         module:
             CONST@{module[4:0]} = 5
-            foo@{module[1:4]} = function(foo@module[1:4])
+            foo@{module[1:4]} = function(foo@module[1:0])
             result@{module[6:0]} = 5
             #raise = {}
             #return = None
-        module[1:4]:
+        module[1:0]:
             #raise = {}
             #return = 5
         "##},
@@ -1850,18 +1853,17 @@ mod tests {
         init_logger();
 
         let module_name = Arc::new(QualifiedName::parse("module"));
-        let cfg = Cfg::parse(source).expect("Should build CFG");
-
-        let cfg_importer = TestCfgImporter {
+        let module_loader = TestModuleLoader {
             modules: HashMap::from_iter([
-                (module_name.clone(), cfg),
+                (module_name.clone(), source.to_string()),
                 (
                     Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                    Cfg::parse(TEST_BUILTINS).expect("Should build CFG"),
+                    String::new(),
                 ),
             ]),
         };
-        let dependent_graph = analyse_program(&cfg_importer, std::iter::once(module_name.clone()));
+
+        let dependent_graph = analyse_program(&module_loader, std::iter::once(module_name.clone()));
 
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 

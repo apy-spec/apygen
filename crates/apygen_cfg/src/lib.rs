@@ -1,89 +1,174 @@
-use bitflags::bitflags;
-pub use ruff_python_ast as nodes;
-use ruff_python_ast::{
-    ExceptHandler::ExceptHandler, Mod, Stmt, StmtBreak, StmtClassDef, StmtContinue, StmtFor,
-    StmtFunctionDef, StmtIf, StmtMatch, StmtRaise, StmtReturn, StmtTry, StmtWhile, StmtWith,
+use ast::{
+    ElifElseClause, ExceptHandler, Stmt, StmtAnnAssign, StmtAssert, StmtAssign, StmtAugAssign,
+    StmtBreak, StmtClassDef, StmtContinue, StmtDelete, StmtExpr, StmtFor, StmtFunctionDef,
+    StmtGlobal, StmtIf, StmtImport, StmtImportFrom, StmtIpyEscapeCommand, StmtMatch, StmtNonlocal,
+    StmtPass, StmtRaise, StmtReturn, StmtTry, StmtTypeAlias, StmtWhile, StmtWith, Suite,
 };
-use ruff_python_parser::{Mode, TokenKind, parse};
-pub use ruff_source_file::LineIndex;
-pub use ruff_source_file::OneIndexed;
-use ruff_source_file::{Locator, SourceCode};
-pub use ruff_text_size::{Ranged, TextRange};
-use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
-use std::fmt::Display;
+use bitflags::bitflags;
+pub use ruff_python_ast as ast;
+pub use ruff_python_parser as parser;
+pub use ruff_source_file as source_file;
+pub use ruff_text_size as text_size;
+use source_file::LineIndex;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt::{Display, Formatter};
 use std::hash::Hash;
+use text_size::{Ranged, TextSize};
+use thiserror::Error;
 
-#[derive(Eq, Hash, PartialEq, Debug, Clone, Copy, PartialOrd, Ord)]
+#[derive(Debug, Error)]
+#[error("failed to convert text size {0:?} to a location in the source code")]
+pub struct TryFromTextSizeError(TextSize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Location {
+    pub line: usize,
+    pub offset: usize,
+}
+
+impl Location {
+    pub fn new(line: usize, offset: usize) -> Self {
+        Self { line, offset }
+    }
+
+    pub fn try_from_text_size(
+        line_index: &LineIndex,
+        size: TextSize,
+    ) -> Result<Self, TryFromTextSizeError> {
+        let line = line_index.line_index(size).get();
+        let Some(line_size) = line_index.line_starts().get(line - 1) else {
+            return Err(TryFromTextSizeError(size));
+        };
+        let offset_size = size - line_size;
+        Ok(Location::new(line, offset_size.to_usize()))
+    }
+}
+
+impl Display for Location {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.line, self.offset)
+    }
+}
+
+#[derive(Eq, Hash, PartialEq, Debug, Clone, PartialOrd, Ord, Copy)]
 pub enum ProgramPoint {
     Entry,
-    Point(usize),
+    Location(Location),
+    End(Location),
     Exit,
 }
 
 impl Display for ProgramPoint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ProgramPoint::Entry => write!(f, "Entry"),
             ProgramPoint::Exit => write!(f, "Exit"),
-            ProgramPoint::Point(id) => write!(f, "Point({})", id),
+            ProgramPoint::Location(location) => write!(f, "Location({})", location),
+            ProgramPoint::End(location) => write!(f, "End({})", location),
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct StatementData {
-    pub statement: Stmt,
-    pub line_number: OneIndexed,
-    pub comments: HashMap<OneIndexed, String>,
+pub enum Node<'s> {
+    FunctionDef(&'s StmtFunctionDef),
+    ClassDef(&'s StmtClassDef),
+    Return(&'s StmtReturn),
+    Delete(&'s StmtDelete),
+    Assign(&'s StmtAssign),
+    AugAssign(&'s StmtAugAssign),
+    AnnAssign(&'s StmtAnnAssign),
+    TypeAlias(&'s StmtTypeAlias),
+    For(&'s StmtFor),
+    While(&'s StmtWhile),
+    If(&'s StmtIf),
+    Elif(&'s ElifElseClause),
+    With(&'s StmtWith),
+    Match(&'s StmtMatch),
+    Raise(&'s StmtRaise),
+    Try(&'s StmtTry),
+    Assert(&'s StmtAssert),
+    Import(&'s StmtImport),
+    ImportFrom(&'s StmtImportFrom),
+    Global(&'s StmtGlobal),
+    Nonlocal(&'s StmtNonlocal),
+    Expr(&'s StmtExpr),
+    Pass(&'s StmtPass),
+    Break(&'s StmtBreak),
+    Continue(&'s StmtContinue),
+
+    IpyEscapeCommand(&'s StmtIpyEscapeCommand),
 }
 
-impl StatementData {
-    pub fn statement(&self) -> &Stmt {
-        &self.statement
-    }
-
-    pub fn line_number(&self) -> OneIndexed {
-        self.line_number
-    }
-
-    pub fn comments(&self) -> &HashMap<OneIndexed, String> {
-        &self.comments
+impl<'s> From<&'s Stmt> for Node<'s> {
+    fn from(value: &'s Stmt) -> Self {
+        match value {
+            Stmt::FunctionDef(stmt_function_def) => Node::FunctionDef(stmt_function_def),
+            Stmt::ClassDef(stmt_class_def) => Node::ClassDef(stmt_class_def),
+            Stmt::Return(stmt_return) => Node::Return(stmt_return),
+            Stmt::Delete(stmt_delete) => Node::Delete(stmt_delete),
+            Stmt::Assign(stmt_assign) => Node::Assign(stmt_assign),
+            Stmt::AugAssign(stmt_aug_assign) => Node::AugAssign(stmt_aug_assign),
+            Stmt::AnnAssign(stmt_ann_assign) => Node::AnnAssign(stmt_ann_assign),
+            Stmt::TypeAlias(stmt_type_alias) => Node::TypeAlias(stmt_type_alias),
+            Stmt::For(stmt_for) => Node::For(stmt_for),
+            Stmt::While(stmt_while) => Node::While(stmt_while),
+            Stmt::If(stmt_if) => Node::If(stmt_if),
+            Stmt::With(stmt_with) => Node::With(stmt_with),
+            Stmt::Match(stmt_match) => Node::Match(stmt_match),
+            Stmt::Raise(stmt_raise) => Node::Raise(stmt_raise),
+            Stmt::Try(stmt_try) => Node::Try(stmt_try),
+            Stmt::Assert(stmt_assert) => Node::Assert(stmt_assert),
+            Stmt::Import(stmt_import) => Node::Import(stmt_import),
+            Stmt::ImportFrom(stmt_import_from) => Node::ImportFrom(stmt_import_from),
+            Stmt::Global(stmt_global) => Node::Global(stmt_global),
+            Stmt::Nonlocal(stmt_non_local) => Node::Nonlocal(stmt_non_local),
+            Stmt::Expr(stmt_expr) => Node::Expr(stmt_expr),
+            Stmt::Pass(stmt_pass) => Node::Pass(stmt_pass),
+            Stmt::Break(stmt_break) => Node::Break(stmt_break),
+            Stmt::Continue(stmt_continue) => Node::Continue(stmt_continue),
+            Stmt::IpyEscapeCommand(stmt_ipy_escape_command) => {
+                Node::IpyEscapeCommand(stmt_ipy_escape_command)
+            }
+        }
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub enum NodeData {
-    Statement(StatementData),
-    StatementEnd(ProgramPoint),
-    #[default]
-    None,
+#[derive(Default, Debug, Clone)]
+pub struct NodeEntry<'s> {
+    pub node: Option<Node<'s>>,
+    pub successors: BTreeSet<ProgramPoint>,
+    pub predecessors: BTreeSet<ProgramPoint>,
 }
 
-#[derive(Debug, Clone, Default)]
-struct CfgNode {
-    data: NodeData,
-    successors: HashSet<ProgramPoint>,
-    predecessors: HashSet<ProgramPoint>,
-}
-
-impl CfgNode {
-    fn set_statement(&mut self, context: &CfgContext, statement: Stmt) {
-        let statement_range = statement.range();
-        self.data = NodeData::Statement(StatementData {
-            statement,
-            line_number: context.get_line_number(&statement_range),
-            comments: context.comments_in_range(statement_range),
-        });
-    }
-
-    fn set_statement_end(&mut self, statement_end: ProgramPoint) {
-        self.data = NodeData::StatementEnd(statement_end);
+impl<'s> NodeEntry<'s> {
+    pub fn new(
+        node: Option<Node<'s>>,
+        successors: BTreeSet<ProgramPoint>,
+        predecessors: BTreeSet<ProgramPoint>,
+    ) -> Self {
+        Self {
+            node,
+            successors,
+            predecessors,
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Copy)]
-pub enum EdgeData {
+pub struct Edge {
+    pub from: ProgramPoint,
+    pub to: ProgramPoint,
+}
+
+impl Edge {
+    pub fn new(from: ProgramPoint, to: ProgramPoint) -> Self {
+        Self { from, to }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Copy)]
+pub enum EdgeKind {
     Unconditional,
     Conditional(bool),
     Match(usize),
@@ -94,7 +179,7 @@ pub enum EdgeData {
     Return,
 }
 
-impl EdgeData {
+impl EdgeKind {
     pub fn is_normal_flow(&self) -> bool {
         !self.is_exception_flow()
     }
@@ -106,7 +191,7 @@ impl EdgeData {
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    struct PointType: u8 {
+    pub struct PointType: u8 {
         const NONE = 0;
         const PREVIOUS = 1 << 0;
         const RETURN = 1 << 1;
@@ -117,16 +202,16 @@ bitflags! {
 }
 
 #[derive(Debug, Clone, Default)]
-struct ResultPoints {
-    previous_points: HashMap<ProgramPoint, EdgeData>,
-    return_points: HashSet<ProgramPoint>,
-    exception_points: HashSet<ProgramPoint>,
-    continue_points: HashSet<ProgramPoint>,
-    break_points: HashSet<ProgramPoint>,
+pub struct ResultPoints {
+    pub previous_points: HashSet<(ProgramPoint, EdgeKind)>,
+    pub return_points: HashSet<ProgramPoint>,
+    pub exception_points: HashSet<ProgramPoint>,
+    pub continue_points: HashSet<ProgramPoint>,
+    pub break_points: HashSet<ProgramPoint>,
 }
 
 impl ResultPoints {
-    fn merge_into(&mut self, other: ResultPoints) {
+    pub fn merge_into(&mut self, other: ResultPoints) {
         self.previous_points.extend(other.previous_points);
         self.return_points.extend(other.return_points);
         self.exception_points.extend(other.exception_points);
@@ -134,32 +219,32 @@ impl ResultPoints {
         self.break_points.extend(other.break_points);
     }
 
-    fn with_previous_point(mut self, point: ProgramPoint, edge_data: EdgeData) -> Self {
-        self.previous_points.insert(point, edge_data);
+    pub fn with_previous_point(mut self, point: ProgramPoint, edge_data: EdgeKind) -> Self {
+        self.previous_points.insert((point, edge_data));
         self
     }
 
-    fn with_return_point(mut self, point: ProgramPoint) -> Self {
+    pub fn with_return_point(mut self, point: ProgramPoint) -> Self {
         self.return_points.insert(point);
         self
     }
 
-    fn with_exception_point(mut self, point: ProgramPoint) -> Self {
+    pub fn with_exception_point(mut self, point: ProgramPoint) -> Self {
         self.exception_points.insert(point);
         self
     }
 
-    fn with_continue_point(mut self, point: ProgramPoint) -> Self {
+    pub fn with_continue_point(mut self, point: ProgramPoint) -> Self {
         self.continue_points.insert(point);
         self
     }
 
-    fn with_break_point(mut self, point: ProgramPoint) -> Self {
+    pub fn with_break_point(mut self, point: ProgramPoint) -> Self {
         self.break_points.insert(point);
         self
     }
 
-    fn point_type(&self) -> PointType {
+    pub fn point_type(&self) -> PointType {
         let mut point_type = PointType::NONE;
         if !self.previous_points.is_empty() {
             point_type |= PointType::PREVIOUS;
@@ -179,10 +264,10 @@ impl ResultPoints {
         point_type
     }
 
-    fn insert_as(&mut self, point_type: PointType, program_point: ProgramPoint) {
+    pub fn insert_as(&mut self, point_type: PointType, program_point: ProgramPoint) {
         if point_type.contains(PointType::PREVIOUS) {
             self.previous_points
-                .insert(program_point, EdgeData::Unconditional);
+                .insert((program_point, EdgeKind::Unconditional));
         }
         if point_type.contains(PointType::RETURN) {
             self.return_points.insert(program_point);
@@ -198,101 +283,33 @@ impl ResultPoints {
         }
     }
 
-    fn drain(&mut self) -> impl Iterator<Item = (ProgramPoint, EdgeData)> {
+    pub fn drain(&mut self) -> impl Iterator<Item = (ProgramPoint, EdgeKind)> {
         self.previous_points
             .drain()
             .chain(map_with(
                 self.return_points.drain(),
-                EdgeData::Unconditional,
+                EdgeKind::Unconditional,
             ))
             .chain(map_with(
                 self.exception_points.drain(),
-                EdgeData::Unconditional,
+                EdgeKind::Unconditional,
             ))
             .chain(map_with(
                 self.continue_points.drain(),
-                EdgeData::Unconditional,
+                EdgeKind::Unconditional,
             ))
-            .chain(map_with(self.break_points.drain(), EdgeData::Unconditional))
+            .chain(map_with(self.break_points.drain(), EdgeKind::Unconditional))
     }
 }
 
-enum StmtLoop {
-    For(StmtFor),
-    While(StmtWhile),
+pub enum StmtLoop<'s> {
+    For(&'s StmtFor),
+    While(&'s StmtWhile),
 }
 
-impl StmtLoop {
-    fn body_mut(&mut self) -> &mut Vec<Stmt> {
-        match self {
-            StmtLoop::For(stmt) => &mut stmt.body,
-            StmtLoop::While(stmt) => &mut stmt.body,
-        }
-    }
-
-    fn orelse_mut(&mut self) -> &mut Vec<Stmt> {
-        match self {
-            StmtLoop::For(stmt) => &mut stmt.orelse,
-            StmtLoop::While(stmt) => &mut stmt.orelse,
-        }
-    }
-}
-
-impl Into<Stmt> for StmtLoop {
-    fn into(self) -> Stmt {
-        match self {
-            StmtLoop::For(stmt) => Stmt::For(stmt),
-            StmtLoop::While(stmt) => Stmt::While(stmt),
-        }
-    }
-}
-
-struct CfgContext<'text> {
-    locator: &'text Locator<'text>,
-    source: &'text SourceCode<'text, 'text>,
-    comment_ranges: &'text Vec<TextRange>,
-    counter: usize,
-}
-
-impl<'text> CfgContext<'text> {
-    fn new(
-        locator: &'text Locator<'text>,
-        source: &'text SourceCode<'text, 'text>,
-        comment_ranges: &'text Vec<TextRange>,
-    ) -> CfgContext<'text> {
-        CfgContext {
-            locator,
-            source,
-            comment_ranges,
-            counter: 0,
-        }
-    }
-
-    fn get_line_number<R: Ranged>(&self, statement: &R) -> OneIndexed {
-        self.source.line_index(statement.range().start())
-    }
-
-    fn next_point(&mut self) -> ProgramPoint {
-        let point = ProgramPoint::Point(self.counter);
-        self.counter += 1;
-        point
-    }
-
-    fn comments_in_range(&self, range: TextRange) -> HashMap<OneIndexed, String> {
-        self.comment_ranges
-            .iter()
-            .filter(|comment_range| {
-                self.locator
-                    .line_range(range.start())
-                    .contains_range(**comment_range)
-            })
-            .map(|comment_range| {
-                let line_number = self.source.line_index(comment_range.start());
-                let comment_text = self.locator.slice(*comment_range).to_string();
-                (line_number, comment_text)
-            })
-            .collect()
-    }
+pub enum StmtDef<'s> {
+    FunctionDef(&'s StmtFunctionDef),
+    ClassDef(&'s StmtClassDef),
 }
 
 fn map_with<T, V: Clone>(
@@ -302,774 +319,211 @@ fn map_with<T, V: Clone>(
     iter.into_iter().map(move |key| (key, value.clone()))
 }
 
-#[derive(Debug, Clone)]
-pub struct Cfg {
-    pub line_index: LineIndex,
-    nodes: HashMap<ProgramPoint, CfgNode>,
-    edges: HashMap<(ProgramPoint, ProgramPoint), HashSet<EdgeData>>,
-    cfgs: HashMap<ProgramPoint, Cfg>,
+#[derive(Default, Debug, Clone)]
+pub struct Cfg<'s> {
+    entries: HashMap<ProgramPoint, NodeEntry<'s>>,
+    edges: HashMap<Edge, BTreeSet<EdgeKind>>,
+    cfgs: HashMap<Location, Cfg<'s>>,
 }
 
-impl Cfg {
-    pub fn new(line_index: LineIndex) -> Self {
-        Self {
-            line_index,
-            nodes: HashMap::default(),
-            edges: HashMap::default(),
-            cfgs: HashMap::default(),
-        }
+impl<'s> Cfg<'s> {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn empty() -> Self {
-        let mut cfg = Cfg::new(LineIndex::from_source_text(""));
-        cfg.nodes.insert(ProgramPoint::Entry, CfgNode::default());
-        cfg.nodes.insert(ProgramPoint::Exit, CfgNode::default());
-        cfg.edges
-            .insert((ProgramPoint::Entry, ProgramPoint::Exit), HashSet::new());
+        let mut cfg = Cfg::default();
+        cfg.insert_edge(
+            Edge::new(ProgramPoint::Entry, ProgramPoint::Exit),
+            BTreeSet::default(),
+        );
         cfg
     }
 
-    pub fn parse(source: &str) -> Option<Self> {
-        let parsed_module = parse(source, Mode::Module).ok()?;
-
-        let comment_ranges: Vec<TextRange> = parsed_module
-            .tokens()
-            .iter()
-            .filter(|token_kind| token_kind.kind() == TokenKind::Comment)
-            .map(|token| token.range())
-            .collect();
-
-        let Mod::Module(module_syntax) = parsed_module.into_syntax() else {
-            return None;
-        };
-
-        let line_index = LineIndex::from_source_text(source);
-        let locator = Locator::with_index(source, line_index.clone());
-        let source_code = SourceCode::new(source, &line_index);
-
-        let mut context = CfgContext::new(&locator, &source_code, &comment_ranges);
-        let mut cfg = Cfg::new(line_index.clone());
-
-        cfg.process_cfg(&mut context, module_syntax.body);
-
-        Some(cfg)
+    pub fn entries(&self) -> &HashMap<ProgramPoint, NodeEntry<'s>> {
+        &self.entries
     }
 
-    pub fn nodes(&self) -> impl Iterator<Item = &ProgramPoint> {
-        self.nodes.keys()
+    pub fn edges(&self) -> &HashMap<Edge, BTreeSet<EdgeKind>> {
+        &self.edges
     }
 
-    pub fn node_data(&self, program_point: &ProgramPoint) -> Option<&NodeData> {
-        self.nodes
-            .get(program_point)
-            .map(|node_data| &node_data.data)
-    }
-
-    pub fn edge_data(&self, from: ProgramPoint, to: ProgramPoint) -> Option<&HashSet<EdgeData>> {
-        self.edges.get(&(from, to))
-    }
-
-    pub fn cfgs(&self) -> &HashMap<ProgramPoint, Cfg> {
+    pub fn cfgs(&self) -> &HashMap<Location, Cfg<'s>> {
         &self.cfgs
     }
 
-    pub fn successors(
-        &self,
-        program_point: &ProgramPoint,
-    ) -> Option<impl Iterator<Item = &ProgramPoint>> {
-        self.nodes
-            .get(program_point)
-            .map(|node| node.successors.iter())
+    pub fn successors(&self, program_point: &ProgramPoint) -> Option<&BTreeSet<ProgramPoint>> {
+        self.entries.get(program_point).map(|node| &node.successors)
     }
 
-    pub fn predecessors(
-        &self,
-        program_point: &ProgramPoint,
-    ) -> Option<impl Iterator<Item = &ProgramPoint>> {
-        self.nodes
+    pub fn predecessors(&self, program_point: &ProgramPoint) -> Option<&BTreeSet<ProgramPoint>> {
+        self.entries
             .get(program_point)
-            .map(|node| node.predecessors.iter())
+            .map(|node| &node.predecessors)
     }
 
-    fn insert_edge(&mut self, from: ProgramPoint, to: ProgramPoint, edge_data: EdgeData) {
-        self.nodes
-            .get_mut(&from)
-            .expect(&format!["Node {:?} is missing in cfg", from])
+    fn insert_edge_in_entries(&mut self, edge: Edge) {
+        self.entries
+            .entry(edge.from)
+            .or_default()
             .successors
-            .insert(to);
-        self.nodes
-            .get_mut(&to)
-            .expect(&format!["Node {:?} is missing in cfg", to])
+            .insert(edge.to);
+        self.entries
+            .entry(edge.to)
+            .or_default()
             .predecessors
-            .insert(from);
-        self.edges
-            .entry((from, to))
-            .or_insert(HashSet::new())
-            .insert(edge_data);
+            .insert(edge.from);
     }
 
-    fn insert_node(
-        &mut self,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-    ) -> &mut CfgNode {
-        let mut predecessors = HashSet::new();
-        for (previous_point, edge_data) in previous_points {
-            self.nodes
-                .get_mut(&previous_point)
-                .expect(&format!["Node {:?} is missing in cfg", previous_point])
-                .successors
-                .insert(current_point);
-            predecessors.insert(previous_point);
-            self.edges
-                .entry((previous_point, current_point))
-                .or_insert(HashSet::new())
-                .insert(edge_data);
+    fn remove_edges_from_entry(&mut self, program_point: ProgramPoint, entry: NodeEntry<'_>) {
+        for successor in entry.successors {
+            self.edges.remove(&Edge::new(program_point, successor));
         }
-
-        let Entry::Vacant(entry) = self.nodes.entry(current_point) else {
-            panic!("Node {:?} already exists", current_point);
-        };
-
-        entry.insert(CfgNode {
-            data: NodeData::None,
-            successors: HashSet::new(),
-            predecessors,
-        })
-    }
-
-    fn set_statement(
-        &mut self,
-        context: &CfgContext,
-        program_point: ProgramPoint,
-        statement: Stmt,
-    ) {
-        let Entry::Occupied(mut entry) = self.nodes.entry(program_point) else {
-            panic!("Node {:?} does not exist", program_point);
-        };
-        entry.get_mut().set_statement(context, statement);
-    }
-
-    fn process_cfg(
-        &mut self,
-        context: &mut CfgContext,
-        statements: impl IntoIterator<Item = Stmt>,
-    ) {
-        self.nodes.insert(ProgramPoint::Entry, CfgNode::default());
-
-        let result_points = self.process_statements(
-            context,
-            vec![(ProgramPoint::Entry, EdgeData::Unconditional)],
-            statements,
-        );
-
-        debug_assert!(
-            result_points.break_points.is_empty(),
-            "Break points should be handled within loops."
-        );
-        debug_assert!(
-            result_points.continue_points.is_empty(),
-            "Continue points should be handled within loops."
-        );
-
-        let previous_points = result_points
-            .previous_points
-            .into_iter()
-            .chain(map_with(result_points.return_points, EdgeData::Return))
-            .chain(map_with(
-                result_points.exception_points,
-                EdgeData::UnhandledException,
-            ));
-
-        self.insert_node(previous_points, ProgramPoint::Exit);
-
-        self.check_invariant();
-    }
-
-    fn check_invariant(&self) {
-        self.nodes.contains_key(&ProgramPoint::Entry);
-        self.nodes.contains_key(&ProgramPoint::Exit);
-
-        for ((from, to), edge_data_set) in &self.edges {
-            debug_assert!(
-                self.nodes[from].successors.contains(to),
-                "Successor {:?} missing in {:?}",
-                to,
-                from,
-            );
-            debug_assert!(
-                self.nodes[to].predecessors.contains(from),
-                "Predecessor {:?} missing in {:?}",
-                from,
-                to
-            );
-
-            for edge_data in edge_data_set {
-                match edge_data {
-                    EdgeData::Conditional(_) => {
-                        debug_assert!(
-                            matches!(
-                                self.nodes[from].data,
-                                NodeData::Statement(StatementData {
-                                    statement: Stmt::If(_),
-                                    ..
-                                })
-                            ) || matches!(
-                                self.nodes[from].data,
-                                NodeData::Statement(StatementData {
-                                    statement: Stmt::For(_),
-                                    ..
-                                })
-                            ) || matches!(
-                                self.nodes[from].data,
-                                NodeData::Statement(StatementData {
-                                    statement: Stmt::While(_),
-                                    ..
-                                })
-                            ),
-                            "Conditional edge from {:?} to {:?} must originate from an If statement",
-                            from,
-                            to
-                        );
-                    }
-                    EdgeData::Match(_) => {
-                        debug_assert!(
-                            matches!(
-                                self.nodes[from].data,
-                                NodeData::Statement(StatementData {
-                                    statement: Stmt::Match(_),
-                                    ..
-                                })
-                            ),
-                            "Match edge from {:?} to {:?} must originate from an Match statement",
-                            from,
-                            to
-                        );
-                    }
-                    EdgeData::Exception(point, _) => {
-                        debug_assert!(
-                            self.nodes.contains_key(point),
-                            "Exception edge from {:?} to {:?} references non-existent point {:?}",
-                            from,
-                            to,
-                            point
-                        );
-                        debug_assert!(
-                            matches!(
-                                self.nodes[point].data,
-                                NodeData::Statement(StatementData {
-                                    statement: Stmt::Try(_),
-                                    ..
-                                })
-                            ),
-                            "Match edge from {:?} to {:?} must originate from an Try statement",
-                            from,
-                            to
-                        );
-                    }
-                    _ => {}
-                }
-            }
+        for predecessor in entry.predecessors {
+            self.edges.remove(&Edge::new(predecessor, program_point));
         }
     }
 
-    fn process_statements(
-        &mut self,
-        context: &mut CfgContext,
-        mut previous_points: Vec<(ProgramPoint, EdgeData)>,
-        statements: impl IntoIterator<Item = Stmt>,
-    ) -> ResultPoints {
-        let mut result_points = ResultPoints::default();
-
-        for statement in statements {
-            let current_point = context.next_point();
-            let mut current_result_points = match statement {
-                Stmt::FunctionDef(stmt_function_def) => self.process_function_statement(
-                    context,
-                    previous_points,
-                    current_point,
-                    stmt_function_def,
-                ),
-                Stmt::ClassDef(stmt_class_def) => self.process_class_statement(
-                    context,
-                    previous_points,
-                    current_point,
-                    stmt_class_def,
-                ),
-                Stmt::Return(stmt_return) => self.process_return_statement(
-                    context,
-                    previous_points,
-                    current_point,
-                    stmt_return,
-                ),
-                Stmt::For(stmt_for) => self.process_loop_statement(
-                    context,
-                    previous_points,
-                    current_point,
-                    StmtLoop::For(stmt_for),
-                ),
-                Stmt::While(stmt_while) => self.process_loop_statement(
-                    context,
-                    previous_points,
-                    current_point,
-                    StmtLoop::While(stmt_while),
-                ),
-                Stmt::If(stmt_if) => {
-                    self.process_if_statement(context, previous_points, current_point, stmt_if)
-                }
-                Stmt::With(stmt_with) => {
-                    self.process_with_statement(context, previous_points, current_point, stmt_with)
-                }
-                Stmt::Match(stmt_match) => self.process_match_statement(
-                    context,
-                    previous_points,
-                    current_point,
-                    stmt_match,
-                ),
-                Stmt::Raise(stmt_raise) => self.process_raise_statement(
-                    context,
-                    previous_points,
-                    current_point,
-                    stmt_raise,
-                ),
-                Stmt::Try(stmt_try) => {
-                    self.process_try_statement(context, previous_points, current_point, stmt_try)
-                }
-                Stmt::Break(stmt_break) => self.process_break_statement(
-                    context,
-                    previous_points,
-                    current_point,
-                    stmt_break,
-                ),
-                Stmt::Continue(stmt_continue) => self.process_continue_statement(
-                    context,
-                    previous_points,
-                    current_point,
-                    stmt_continue,
-                ),
-                _ => self.process_generic_statement(
-                    context,
-                    previous_points,
-                    current_point,
-                    statement,
-                ),
-            };
-            previous_points = current_result_points.previous_points.drain().collect();
-            result_points.merge_into(current_result_points);
+    pub fn insert_node(&mut self, program_point: ProgramPoint, node: Option<Node<'s>>) {
+        if let Some(previous_entry) = self.entries.insert(
+            program_point,
+            NodeEntry {
+                node,
+                ..Default::default()
+            },
+        ) {
+            self.remove_edges_from_entry(program_point, previous_entry);
         }
-
-        result_points.previous_points.extend(previous_points);
-
-        result_points
     }
 
-    fn process_generic_statement(
-        &mut self,
-        context: &mut CfgContext,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-        stmt: Stmt,
-    ) -> ResultPoints {
-        self.insert_node(previous_points, current_point)
-            .set_statement(context, stmt);
-
-        ResultPoints::default()
-            .with_previous_point(current_point, EdgeData::Unconditional)
-            .with_exception_point(current_point)
+    pub fn remove_node(&mut self, program_point: &ProgramPoint) {
+        if let Some(removed_entry) = self.entries.remove(program_point) {
+            self.remove_edges_from_entry(*program_point, removed_entry);
+        }
     }
 
-    fn process_function_statement(
-        &mut self,
-        context: &mut CfgContext,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-        mut stmt_function_def: StmtFunctionDef,
-    ) -> ResultPoints {
-        let mut function_cfg =
-            Cfg::new(context.locator.line_index().expect("should exist").clone());
-
-        function_cfg.process_cfg(context, stmt_function_def.body.drain(..));
-
-        self.cfgs.insert(current_point, function_cfg);
-
-        self.process_generic_statement(
-            context,
-            previous_points,
-            current_point,
-            Stmt::FunctionDef(stmt_function_def),
-        )
+    pub fn insert_edge(&mut self, edge: Edge, kinds: BTreeSet<EdgeKind>) {
+        self.insert_edge_in_entries(edge);
+        self.edges.insert(edge, kinds);
     }
 
-    fn process_class_statement(
-        &mut self,
-        context: &mut CfgContext,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-        mut stmt_class_def: StmtClassDef,
-    ) -> ResultPoints {
-        let mut class_cfg = Cfg::new(context.locator.line_index().expect("should exist").clone());
-
-        class_cfg.process_cfg(context, stmt_class_def.body.drain(..));
-
-        self.cfgs.insert(current_point, class_cfg);
-
-        self.process_generic_statement(
-            context,
-            previous_points,
-            current_point,
-            Stmt::ClassDef(stmt_class_def),
-        )
+    pub fn insert_edge_kind(&mut self, edge: Edge, kind: EdgeKind) {
+        self.insert_edge_in_entries(edge);
+        self.edges.entry(edge).or_default().insert(kind);
     }
 
-    fn process_return_statement(
-        &mut self,
-        context: &mut CfgContext,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-        stmt_return: StmtReturn,
-    ) -> ResultPoints {
-        self.insert_node(previous_points, current_point)
-            .set_statement(context, Stmt::Return(stmt_return));
-
-        ResultPoints::default()
-            .with_return_point(current_point)
-            .with_exception_point(current_point)
+    pub fn remove_edge(&mut self, edge: &Edge) {
+        self.edges.remove(edge);
+        if let Some(entry) = self.entries.get_mut(&edge.from) {
+            entry.successors.remove(&edge.to);
+        }
+        if let Some(entry) = self.entries.get_mut(&edge.to) {
+            entry.predecessors.remove(&edge.from);
+        }
     }
 
-    fn process_if_statement(
-        &mut self,
-        context: &mut CfgContext,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-        mut stmt_if: StmtIf,
-    ) -> ResultPoints {
-        self.insert_node(previous_points, current_point);
+    pub fn remove_edge_kind(&mut self, edge: &Edge, kind: &EdgeKind) {
+        if let Some(kinds) = self.edges.get_mut(edge) {
+            kinds.remove(kind);
+        }
+    }
 
-        let mut result_points = self.process_statements(
-            context,
-            vec![(current_point, EdgeData::Conditional(true))],
-            stmt_if.body.drain(..),
-        );
+    pub fn insert_cfg(&mut self, location: Location, cfg: Cfg<'s>) {
+        self.cfgs.insert(location, cfg);
+    }
 
-        let mut elif_else_stmts_iterator = stmt_if
-            .elif_else_clauses
-            .drain(..)
-            .collect::<Vec<_>>()
-            .into_iter();
+    pub fn remove_cfg(&mut self, location: Location) {
+        self.cfgs.remove(&location);
+    }
 
-        if let Some(mut elif_else) = elif_else_stmts_iterator.next() {
-            let elif_else_clauses = elif_else_stmts_iterator.collect::<Vec<_>>();
-            if let Some(test) = elif_else.test {
-                let elif = StmtIf {
-                    test: Box::new(test),
-                    body: elif_else.body,
-                    elif_else_clauses,
-                    range: elif_else.range,
+    pub fn dot(&self, graph_name: &str) -> String {
+        let mut dot_representation = format!("digraph \"{}\" {{\n", graph_name);
+
+        let entries = self.entries.iter().collect::<BTreeMap<_, _>>();
+        let edges = self.edges.iter().collect::<BTreeMap<_, _>>();
+
+        for (program_point, entry) in entries {
+            let line = if let Some(node) = &entry.node {
+                let label = match node {
+                    Node::FunctionDef(_) => "function_def",
+                    Node::ClassDef(_) => "class_def",
+                    Node::Return(_) => "return",
+                    Node::Delete(_) => "delete",
+                    Node::Assign(_) => "assign",
+                    Node::AugAssign(_) => "aug_assign",
+                    Node::AnnAssign(_) => "ann_assign",
+                    Node::TypeAlias(_) => "type_alias",
+                    Node::For(_) => "for",
+                    Node::While(_) => "while",
+                    Node::If(_) => "if",
+                    Node::Elif(_) => "elif",
+                    Node::With(_) => "with",
+                    Node::Match(_) => "match",
+                    Node::Raise(_) => "raise",
+                    Node::Try(_) => "try",
+                    Node::Assert(_) => "assert",
+                    Node::Import(_) => "import",
+                    Node::ImportFrom(_) => "import_from",
+                    Node::Global(_) => "global",
+                    Node::Nonlocal(_) => "nonlocal",
+                    Node::Expr(_) => "expr",
+                    Node::Pass(_) => "pass",
+                    Node::Break(_) => "break",
+                    Node::Continue(_) => "continue",
+                    Node::IpyEscapeCommand(_) => "ipy_escape_command",
                 };
-                let elif_point = context.next_point();
-                result_points.merge_into(self.process_if_statement(
-                    context,
-                    vec![(current_point, EdgeData::Conditional(false))],
-                    elif_point,
-                    elif,
-                ));
+                format!("    \"{}\" [label=\"{}\"];\n", program_point, label)
             } else {
-                debug_assert!(
-                    elif_else_clauses.is_empty(),
-                    "Else clause cannot have further elif/else clauses."
-                );
-                result_points.merge_into(self.process_statements(
-                    context,
-                    vec![(current_point, EdgeData::Conditional(false))],
-                    elif_else.body.drain(..),
-                ));
-                stmt_if.elif_else_clauses = vec![elif_else];
-            }
-        } else {
-            result_points
-                .previous_points
-                .insert(current_point, EdgeData::Conditional(false));
-        }
-
-        self.set_statement(context, current_point, Stmt::If(stmt_if));
-
-        result_points.with_exception_point(current_point)
-    }
-
-    fn process_loop_statement(
-        &mut self,
-        context: &mut CfgContext,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-        mut stmt_loop: StmtLoop,
-    ) -> ResultPoints {
-        self.insert_node(previous_points, current_point);
-
-        let mut result_points = self.process_statements(
-            context,
-            vec![(current_point, EdgeData::Conditional(true))],
-            stmt_loop.body_mut().drain(..),
-        );
-
-        for continue_point in result_points.continue_points.drain() {
-            self.insert_edge(continue_point, current_point, EdgeData::Continue);
-        }
-        for (previous_point, edge_data) in result_points.previous_points.drain() {
-            self.insert_edge(previous_point, current_point, edge_data);
-        }
-
-        result_points.previous_points.extend(map_with(
-            result_points.break_points.drain(),
-            EdgeData::Break,
-        ));
-
-        result_points.merge_into(self.process_statements(
-            context,
-            vec![(current_point, EdgeData::Conditional(false))],
-            stmt_loop.orelse_mut().drain(..),
-        ));
-
-        self.set_statement(context, current_point, stmt_loop.into());
-
-        result_points.with_exception_point(current_point)
-    }
-
-    fn process_with_statement(
-        &mut self,
-        context: &mut CfgContext,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-        mut stmt_with: StmtWith,
-    ) -> ResultPoints {
-        self.insert_node(previous_points, current_point);
-
-        let mut result_points = self.process_statements(
-            context,
-            vec![(current_point, EdgeData::Unconditional)],
-            stmt_with.body.drain(..),
-        );
-
-        let mut previous_points_type = result_points.point_type();
-
-        let previous_points = result_points.drain();
-
-        let end_point = context.next_point();
-
-        self.insert_node(previous_points, end_point)
-            .set_statement_end(current_point);
-
-        self.set_statement(context, current_point, Stmt::With(stmt_with));
-
-        previous_points_type.remove(PointType::EXCEPTION); // Exception are handled after
-        result_points.insert_as(previous_points_type, end_point);
-
-        result_points
-            .with_exception_point(current_point)
-            .with_exception_point(end_point)
-    }
-
-    fn process_match_statement(
-        &mut self,
-        context: &mut CfgContext,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-        mut stmt_match: StmtMatch,
-    ) -> ResultPoints {
-        self.insert_node(previous_points, current_point);
-
-        let mut result_points = ResultPoints::default();
-
-        for (index, case) in stmt_match.cases.iter_mut().enumerate() {
-            result_points.merge_into(self.process_statements(
-                context,
-                vec![(current_point, EdgeData::Match(index))],
-                case.body.drain(..),
-            ));
-        }
-
-        self.set_statement(context, current_point, Stmt::Match(stmt_match));
-
-        result_points.with_exception_point(current_point)
-    }
-
-    fn process_raise_statement(
-        &mut self,
-        context: &mut CfgContext,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-        stmt_raise: StmtRaise,
-    ) -> ResultPoints {
-        self.insert_node(previous_points, current_point)
-            .set_statement(context, Stmt::Raise(stmt_raise));
-
-        ResultPoints::default().with_exception_point(current_point)
-    }
-
-    fn process_try_statement(
-        &mut self,
-        context: &mut CfgContext,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-        mut stmt_try: StmtTry,
-    ) -> ResultPoints {
-        self.insert_node(previous_points, current_point);
-
-        let mut result_points = self.process_statements(
-            context,
-            vec![(current_point, EdgeData::Unconditional)],
-            stmt_try.body.drain(..),
-        );
-        let body_previous_points = result_points.previous_points.drain().collect();
-        let body_exception_points = result_points.exception_points.drain().collect::<Vec<_>>();
-        result_points.merge_into(self.process_statements(
-            context,
-            body_previous_points,
-            stmt_try.orelse.drain(..),
-        ));
-
-        for (index, ExceptHandler(handler)) in stmt_try.handlers.iter_mut().enumerate() {
-            let handler_previous_points = body_exception_points
-                .iter()
-                .map(|exception_point| {
-                    (*exception_point, EdgeData::Exception(current_point, index))
-                })
-                .collect();
-            result_points.merge_into(self.process_statements(
-                context,
-                handler_previous_points,
-                handler.body.drain(..),
-            ));
-        }
-
-        let previous_points_type = result_points.point_type();
-
-        let previous_points = result_points.drain();
-
-        let end_point = context.next_point();
-
-        let mut finally_result_points = self.process_statements(
-            context,
-            previous_points.collect(),
-            stmt_try.finalbody.drain(..),
-        );
-
-        self.insert_node(finally_result_points.previous_points.drain(), end_point)
-            .set_statement_end(current_point);
-
-        self.set_statement(context, current_point, Stmt::Try(stmt_try));
-
-        result_points.merge_into(finally_result_points);
-
-        result_points.insert_as(previous_points_type, end_point);
-
-        result_points
-    }
-
-    fn process_break_statement(
-        &mut self,
-        context: &mut CfgContext,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-        stmt_break: StmtBreak,
-    ) -> ResultPoints {
-        self.insert_node(previous_points, current_point)
-            .set_statement(context, Stmt::Break(stmt_break));
-
-        ResultPoints::default().with_break_point(current_point)
-    }
-
-    fn process_continue_statement(
-        &mut self,
-        context: &mut CfgContext,
-        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeData)>,
-        current_point: ProgramPoint,
-        stmt_continue: StmtContinue,
-    ) -> ResultPoints {
-        self.insert_node(previous_points, current_point)
-            .set_statement(context, Stmt::Continue(stmt_continue));
-
-        ResultPoints::default().with_continue_point(current_point)
-    }
-
-    pub fn dot(&self) -> String {
-        let mut dot_representation = String::from("digraph \"CFG\" {\n");
-
-        let mut nodes = self.nodes.iter().collect::<Vec<_>>();
-        let mut edges = self.edges.iter().collect::<Vec<_>>();
-
-        nodes.sort_by_key(|(program_point, _)| **program_point);
-        edges.sort_by_key(|((from, to), _)| (*from, *to));
-
-        for (point, node_data) in nodes {
-            let line = match &node_data.data {
-                NodeData::Statement(statement_data) => {
-                    let label = match statement_data.statement {
-                        Stmt::FunctionDef(_) => "function_def",
-                        Stmt::ClassDef(_) => "class_def",
-                        Stmt::Return(_) => "return",
-                        Stmt::Delete(_) => "delete",
-                        Stmt::Assign(_) => "assign",
-                        Stmt::AugAssign(_) => "aug_assign",
-                        Stmt::AnnAssign(_) => "ann_assign",
-                        Stmt::TypeAlias(_) => "type_alias",
-                        Stmt::For(_) => "for",
-                        Stmt::While(_) => "while",
-                        Stmt::If(_) => "if",
-                        Stmt::With(_) => "with",
-                        Stmt::Match(_) => "match",
-                        Stmt::Raise(_) => "raise",
-                        Stmt::Try(_) => "try",
-                        Stmt::Assert(_) => "assert",
-                        Stmt::Import(_) => "import",
-                        Stmt::ImportFrom(_) => "import_from",
-                        Stmt::Global(_) => "global",
-                        Stmt::Nonlocal(_) => "nonlocal",
-                        Stmt::Expr(_) => "expr",
-                        Stmt::Pass(_) => "pass",
-                        Stmt::Break(_) => "break",
-                        Stmt::Continue(_) => "continue",
-                        Stmt::IpyEscapeCommand(_) => "ipy_escape_command",
-                    };
-                    format!("    \"{}\" [label=\"{}\"];\n", point, label)
-                }
-                NodeData::StatementEnd(end_point) => {
-                    format!("    \"{}\" [label=\"end({})\"];\n", point, end_point)
-                }
-                NodeData::None => format!("    \"{}\";\n", point),
+                format!("    \"{}\";\n", program_point)
             };
             dot_representation.push_str(&line);
         }
 
-        for ((from, to), edge_data_set) in edges {
-            let mut edge_data_vec = edge_data_set.iter().collect::<Vec<_>>();
-            edge_data_vec.sort();
-            for edge_data in edge_data_vec {
-                let line = match edge_data {
-                    EdgeData::Unconditional => format!("    \"{}\" -> \"{}\";\n", from, to),
-                    EdgeData::Conditional(cond) => {
-                        format!("    \"{}\" -> \"{}\" [label=\"{}\"];\n", from, to, cond)
+        for (edge, edge_kinds) in edges {
+            for edge_kind in edge_kinds {
+                let line = match edge_kind {
+                    EdgeKind::Unconditional => {
+                        format!("    \"{}\" -> \"{}\";\n", edge.from, edge.to)
                     }
-                    EdgeData::Match(index) => {
+                    EdgeKind::Conditional(cond) => {
                         format!(
-                            "    \"{}\" -> \"{}\" [label=\"match({})\"];\n",
-                            from, to, index
+                            "    \"{}\" -> \"{}\" [label=\"{}\"];\n",
+                            edge.from, edge.to, cond
                         )
                     }
-                    EdgeData::Exception(point, index) => format!(
+                    EdgeKind::Match(index) => {
+                        format!(
+                            "    \"{}\" -> \"{}\" [label=\"match({})\"];\n",
+                            edge.from, edge.to, index
+                        )
+                    }
+                    EdgeKind::Exception(point, index) => format!(
                         "    \"{}\" -> \"{}\" [label=\"except({}, {})\"];\n",
-                        from, to, point, index
+                        edge.from, edge.to, point, index
                     ),
-                    EdgeData::UnhandledException => {
-                        format!("    \"{}\" -> \"{}\" [label=\"except\"];\n", from, to)
+                    EdgeKind::UnhandledException => {
+                        format!(
+                            "    \"{}\" -> \"{}\" [label=\"except\"];\n",
+                            edge.from, edge.to
+                        )
                     }
-                    EdgeData::Break => {
-                        format!("    \"{}\" -> \"{}\" [label=\"break\"];\n", from, to)
+                    EdgeKind::Break => {
+                        format!(
+                            "    \"{}\" -> \"{}\" [label=\"break\"];\n",
+                            edge.from, edge.to
+                        )
                     }
-                    EdgeData::Continue => {
-                        format!("    \"{}\" -> \"{}\" [label=\"continue\"];\n", from, to)
+                    EdgeKind::Continue => {
+                        format!(
+                            "    \"{}\" -> \"{}\" [label=\"continue\"];\n",
+                            edge.from, edge.to
+                        )
                     }
-                    EdgeData::Return => {
-                        format!("    \"{}\" -> \"{}\" [label=\"return\"];\n", from, to)
+                    EdgeKind::Return => {
+                        format!(
+                            "    \"{}\" -> \"{}\" [label=\"return\"];\n",
+                            edge.from, edge.to
+                        )
                     }
                 };
                 dot_representation.push_str(&line);
@@ -1082,30 +536,561 @@ impl Cfg {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum BuildCfgError {
+    #[error("{0}")]
+    TryFromTextSize(#[from] TryFromTextSizeError),
+    #[error("invalid elif statement at location {0}")]
+    InvalidElifStatement(Location),
+    #[error("break statement outside of any loop")]
+    BreakStatementOutsideLoop,
+    #[error("continue statement outside of any loop")]
+    ContinueStatementOutsideLoop,
+}
+
+#[derive(Debug, Clone)]
+pub struct CfgBuilder<'i> {
+    pub index: &'i LineIndex,
+}
+
+impl<'i> CfgBuilder<'i> {
+    pub fn new(index: &'i LineIndex) -> Self {
+        Self { index }
+    }
+
+    pub fn create_location(&self, ranged: &impl Ranged) -> Result<Location, TryFromTextSizeError> {
+        Location::try_from_text_size(self.index, ranged.start())
+    }
+
+    pub fn create_program_point(
+        &self,
+        ranged: &impl Ranged,
+    ) -> Result<ProgramPoint, TryFromTextSizeError> {
+        Ok(ProgramPoint::Location(self.create_location(ranged)?))
+    }
+
+    pub fn insert_current_node<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        current_point: ProgramPoint,
+        node: Option<Node<'s>>,
+    ) {
+        cfg.insert_node(current_point, node);
+
+        for (previous_point, edge_kind) in previous_points {
+            cfg.insert_edge_kind(Edge::new(previous_point, current_point), edge_kind);
+        }
+    }
+
+    pub fn build_cfg<'s>(&self, suite: &'s Suite) -> Result<Cfg<'s>, BuildCfgError> {
+        let mut cfg = Cfg::default();
+
+        let result_points = self.process_suite(
+            &mut cfg,
+            HashSet::from_iter([(ProgramPoint::Entry, EdgeKind::Unconditional)]),
+            suite,
+        )?;
+
+        if !result_points.break_points.is_empty() {
+            return Err(BuildCfgError::BreakStatementOutsideLoop);
+        }
+        if !result_points.continue_points.is_empty() {
+            return Err(BuildCfgError::ContinueStatementOutsideLoop);
+        }
+
+        let previous_points = result_points
+            .previous_points
+            .into_iter()
+            .chain(map_with(result_points.return_points, EdgeKind::Return))
+            .chain(map_with(
+                result_points.exception_points,
+                EdgeKind::UnhandledException,
+            ));
+
+        self.insert_current_node(&mut cfg, previous_points, ProgramPoint::Exit, None);
+
+        Ok(cfg)
+    }
+
+    pub fn process_def_stmt<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        stmt_def: StmtDef<'s>,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let (location, node, body_suite) = match stmt_def {
+            StmtDef::FunctionDef(stmt_function_def) => (
+                self.create_location(stmt_function_def)?,
+                Node::FunctionDef(stmt_function_def),
+                &stmt_function_def.body,
+            ),
+            StmtDef::ClassDef(stmt_class_def) => (
+                self.create_location(stmt_class_def)?,
+                Node::ClassDef(stmt_class_def),
+                &stmt_class_def.body,
+            ),
+        };
+        cfg.insert_cfg(location, self.build_cfg(body_suite)?);
+
+        let current_point = ProgramPoint::Location(location);
+
+        self.insert_current_node(cfg, previous_points, current_point, Some(node));
+
+        Ok(ResultPoints::default()
+            .with_previous_point(current_point, EdgeKind::Unconditional)
+            .with_exception_point(current_point))
+    }
+
+    pub fn process_return_stmt<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        stmt_return: &'s StmtReturn,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let current_point = self.create_program_point(stmt_return)?;
+
+        self.insert_current_node(
+            cfg,
+            previous_points,
+            current_point,
+            Some(Node::Return(stmt_return)),
+        );
+
+        Ok(ResultPoints::default()
+            .with_return_point(current_point)
+            .with_exception_point(current_point))
+    }
+
+    pub fn process_if_stmt<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        stmt_if: &'s StmtIf,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let mut current_point = self.create_program_point(stmt_if)?;
+
+        self.insert_current_node(cfg, previous_points, current_point, Some(Node::If(stmt_if)));
+
+        let mut result_points = self
+            .process_suite(
+                cfg,
+                HashSet::from_iter([(current_point, EdgeKind::Conditional(true))]),
+                &stmt_if.body,
+            )?
+            .with_exception_point(current_point);
+
+        let mut else_reached = false;
+        for elif_else_clause in &stmt_if.elif_else_clauses {
+            let elif_else_clause_location = self.create_location(elif_else_clause)?;
+
+            if else_reached {
+                return Err(BuildCfgError::InvalidElifStatement(
+                    elif_else_clause_location,
+                ));
+            }
+
+            let elif_else_clause_point = ProgramPoint::Location(elif_else_clause_location);
+
+            result_points.merge_into(if elif_else_clause.test.is_some() {
+                self.insert_current_node(
+                    cfg,
+                    [(current_point, EdgeKind::Conditional(false))],
+                    elif_else_clause_point,
+                    Some(Node::Elif(elif_else_clause)),
+                );
+                self.process_suite(
+                    cfg,
+                    HashSet::from_iter([(elif_else_clause_point, EdgeKind::Conditional(true))]),
+                    &elif_else_clause.body,
+                )?
+                .with_exception_point(elif_else_clause_point)
+            } else {
+                else_reached = true;
+                self.process_suite(
+                    cfg,
+                    HashSet::from_iter([(current_point, EdgeKind::Conditional(false))]),
+                    &elif_else_clause.body,
+                )?
+            });
+
+            current_point = elif_else_clause_point;
+        }
+
+        if !else_reached {
+            result_points
+                .previous_points
+                .insert((current_point, EdgeKind::Conditional(false)));
+        }
+
+        Ok(result_points)
+    }
+
+    pub fn process_loop_stmt<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        stmt_loop: StmtLoop<'s>,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let (current_point, node, body_suite, else_suite) = match stmt_loop {
+            StmtLoop::For(stmt_for) => (
+                self.create_program_point(stmt_for)?,
+                Node::For(stmt_for),
+                &stmt_for.body,
+                &stmt_for.orelse,
+            ),
+            StmtLoop::While(stmt_while) => (
+                self.create_program_point(stmt_while)?,
+                Node::While(stmt_while),
+                &stmt_while.body,
+                &stmt_while.orelse,
+            ),
+        };
+
+        self.insert_current_node(cfg, previous_points, current_point, Some(node));
+
+        let mut result_points = self.process_suite(
+            cfg,
+            HashSet::from_iter([(current_point, EdgeKind::Conditional(true))]),
+            body_suite,
+        )?;
+
+        for continue_point in result_points.continue_points.drain() {
+            cfg.insert_edge_kind(Edge::new(continue_point, current_point), EdgeKind::Continue);
+        }
+        for (previous_point, edge_kind) in result_points.previous_points.drain() {
+            cfg.insert_edge_kind(Edge::new(previous_point, current_point), edge_kind);
+        }
+
+        result_points.previous_points.extend(map_with(
+            result_points.break_points.drain(),
+            EdgeKind::Break,
+        ));
+
+        result_points.merge_into(self.process_suite(
+            cfg,
+            HashSet::from_iter([(current_point, EdgeKind::Conditional(false))]),
+            else_suite,
+        )?);
+
+        Ok(result_points.with_exception_point(current_point))
+    }
+
+    pub fn process_with_stmt<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        stmt_with: &'s StmtWith,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let location = self.create_location(stmt_with)?;
+
+        let current_point = ProgramPoint::Location(location);
+
+        self.insert_current_node(
+            cfg,
+            previous_points,
+            current_point,
+            Some(Node::With(stmt_with)),
+        );
+
+        let mut result_points = self.process_suite(
+            cfg,
+            HashSet::from_iter([(current_point, EdgeKind::Unconditional)]),
+            &stmt_with.body,
+        )?;
+
+        let mut previous_points_type = result_points.point_type();
+
+        let previous_points = result_points.drain();
+
+        let end_point = ProgramPoint::End(location);
+
+        self.insert_current_node(cfg, previous_points, end_point, None);
+
+        previous_points_type.remove(PointType::EXCEPTION); // Exception are handled after
+        result_points.insert_as(previous_points_type, end_point);
+
+        Ok(result_points
+            .with_exception_point(current_point)
+            .with_exception_point(end_point))
+    }
+
+    pub fn process_match_stmt<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        stmt_match: &'s StmtMatch,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let current_point = self.create_program_point(stmt_match)?;
+
+        self.insert_current_node(
+            cfg,
+            previous_points,
+            current_point,
+            Some(Node::Match(stmt_match)),
+        );
+
+        let mut result_points = ResultPoints::default();
+
+        for (index, match_case) in stmt_match.cases.iter().enumerate() {
+            result_points.merge_into(self.process_suite(
+                cfg,
+                HashSet::from_iter([(current_point, EdgeKind::Match(index))]),
+                &match_case.body,
+            )?);
+        }
+
+        Ok(result_points.with_exception_point(current_point))
+    }
+
+    pub fn process_raise_stmt<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        stmt_raise: &'s StmtRaise,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let current_point = self.create_program_point(stmt_raise)?;
+
+        self.insert_current_node(
+            cfg,
+            previous_points,
+            current_point,
+            Some(Node::Raise(stmt_raise)),
+        );
+
+        Ok(ResultPoints::default().with_exception_point(current_point))
+    }
+
+    pub fn process_try_stmt<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        stmt_try: &'s StmtTry,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let location = self.create_location(stmt_try)?;
+
+        let current_point = ProgramPoint::Location(location);
+
+        self.insert_current_node(
+            cfg,
+            previous_points,
+            current_point,
+            Some(Node::Try(stmt_try)),
+        );
+
+        let mut result_points = self.process_suite(
+            cfg,
+            HashSet::from_iter([(current_point, EdgeKind::Unconditional)]),
+            &stmt_try.body,
+        )?;
+
+        let body_previous_points = result_points.previous_points;
+        result_points.previous_points = HashSet::default();
+
+        let body_exception_points = result_points.exception_points;
+        result_points.exception_points = HashSet::default();
+
+        result_points.merge_into(self.process_suite(
+            cfg,
+            body_previous_points,
+            &stmt_try.orelse,
+        )?);
+
+        for (index, ExceptHandler::ExceptHandler(handler)) in stmt_try.handlers.iter().enumerate() {
+            let handler_previous_points = body_exception_points
+                .iter()
+                .map(|exception_point| {
+                    (*exception_point, EdgeKind::Exception(current_point, index))
+                })
+                .collect();
+            result_points.merge_into(self.process_suite(
+                cfg,
+                handler_previous_points,
+                &handler.body,
+            )?);
+        }
+
+        let previous_points_type = result_points.point_type();
+
+        let previous_points = result_points.drain();
+
+        let end_point = ProgramPoint::End(location);
+
+        let mut finally_result_points =
+            self.process_suite(cfg, previous_points.collect(), &stmt_try.finalbody)?;
+
+        self.insert_current_node(
+            cfg,
+            finally_result_points.previous_points.drain(),
+            end_point,
+            None,
+        );
+
+        result_points.merge_into(finally_result_points);
+
+        result_points.insert_as(previous_points_type, end_point);
+
+        Ok(result_points)
+    }
+
+    pub fn process_pass_stmt<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        stmt_pass: &'s StmtPass,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let current_point = self.create_program_point(stmt_pass)?;
+
+        self.insert_current_node(
+            cfg,
+            previous_points,
+            current_point,
+            Some(Node::Pass(stmt_pass)),
+        );
+
+        Ok(ResultPoints::default().with_previous_point(current_point, EdgeKind::Unconditional))
+    }
+
+    pub fn process_break_stmt<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        stmt_break: &'s StmtBreak,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let current_point = self.create_program_point(stmt_break)?;
+
+        self.insert_current_node(
+            cfg,
+            previous_points,
+            current_point,
+            Some(Node::Break(stmt_break)),
+        );
+
+        Ok(ResultPoints::default().with_break_point(current_point))
+    }
+
+    pub fn process_continue_stmt<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        stmt_continue: &'s StmtContinue,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let current_point = self.create_program_point(stmt_continue)?;
+
+        self.insert_current_node(
+            cfg,
+            previous_points,
+            current_point,
+            Some(Node::Continue(stmt_continue)),
+        );
+
+        Ok(ResultPoints::default().with_continue_point(current_point))
+    }
+
+    pub fn process_stmt<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        previous_points: impl IntoIterator<Item = (ProgramPoint, EdgeKind)>,
+        stmt: &'s Stmt,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let current_point = self.create_program_point(stmt)?;
+
+        self.insert_current_node(cfg, previous_points, current_point, Some(Node::from(stmt)));
+
+        Ok(ResultPoints::default()
+            .with_previous_point(current_point, EdgeKind::Unconditional)
+            .with_exception_point(current_point))
+    }
+
+    pub fn process_suite<'s>(
+        &self,
+        cfg: &mut Cfg<'s>,
+        mut previous_points: HashSet<(ProgramPoint, EdgeKind)>,
+        suite: &'s Suite,
+    ) -> Result<ResultPoints, BuildCfgError> {
+        let mut result_points = ResultPoints::default();
+
+        for stmt in suite {
+            let mut stmt_result_points = match stmt {
+                Stmt::FunctionDef(stmt_function_def) => self.process_def_stmt(
+                    cfg,
+                    previous_points,
+                    StmtDef::FunctionDef(stmt_function_def),
+                )?,
+                Stmt::ClassDef(stmt_class_def) => {
+                    self.process_def_stmt(cfg, previous_points, StmtDef::ClassDef(stmt_class_def))?
+                }
+                Stmt::Return(stmt_return) => {
+                    self.process_return_stmt(cfg, previous_points, stmt_return)?
+                }
+                Stmt::For(stmt_for) => {
+                    self.process_loop_stmt(cfg, previous_points, StmtLoop::For(stmt_for))?
+                }
+                Stmt::While(stmt_while) => {
+                    self.process_loop_stmt(cfg, previous_points, StmtLoop::While(stmt_while))?
+                }
+                Stmt::If(stmt_if) => self.process_if_stmt(cfg, previous_points, stmt_if)?,
+                Stmt::With(stmt_with) => self.process_with_stmt(cfg, previous_points, stmt_with)?,
+                Stmt::Match(stmt_match) => {
+                    self.process_match_stmt(cfg, previous_points, stmt_match)?
+                }
+                Stmt::Raise(stmt_raise) => {
+                    self.process_raise_stmt(cfg, previous_points, stmt_raise)?
+                }
+                Stmt::Try(stmt_try) => self.process_try_stmt(cfg, previous_points, stmt_try)?,
+                Stmt::Pass(stmt_pass) => self.process_pass_stmt(cfg, previous_points, stmt_pass)?,
+                Stmt::Break(stmt_break) => {
+                    self.process_break_stmt(cfg, previous_points, stmt_break)?
+                }
+                Stmt::Continue(stmt_continue) => {
+                    self.process_continue_stmt(cfg, previous_points, stmt_continue)?
+                }
+                _ => self.process_stmt(cfg, previous_points, stmt)?,
+            };
+
+            previous_points = stmt_result_points.previous_points;
+            stmt_result_points.previous_points = HashSet::default();
+
+            result_points.merge_into(stmt_result_points);
+        }
+
+        result_points.previous_points = previous_points;
+
+        Ok(result_points)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ast::ModModule;
+    use indoc::{formatdoc, indoc};
+    use parser::{Mode, parse};
     use rstest::{fixture, rstest};
 
-    fn build_cfg_from_source(source: &str) -> Cfg {
-        Cfg::parse(source).expect("Should build CFG")
+    fn parse_source(source: &str) -> (LineIndex, ModModule) {
+        (
+            LineIndex::from_source_text(source),
+            parse(source, Mode::Module)
+                .expect("Should parse source")
+                .try_into_module()
+                .expect("Should be a module")
+                .into_syntax(),
+        )
     }
 
-    fn build_dot_from_cfg(cfg: &Cfg) -> String {
-        cfg.dot().trim().to_owned()
+    fn build_cfg<'s>(line_index: &LineIndex, mod_module: &'s ModModule) -> Cfg<'s> {
+        CfgBuilder::new(line_index)
+            .build_cfg(&mod_module.body)
+            .expect("Should build cfg")
     }
 
-    fn build_dot_from_source(source: &str) -> String {
-        build_dot_from_cfg(&build_cfg_from_source(source))
-    }
+    fn build_dot(source: &str) -> String {
+        let (line_index, mod_module) = parse_source(source);
 
-    fn source_code(text: &str) -> String {
-        text.trim()
-            .lines()
-            .map(|line| line.strip_prefix("        ").unwrap_or(line))
-            .collect::<Vec<_>>()
-            .join("\n")
-            .to_owned()
+        let cfg = build_cfg(&line_index, &mod_module);
+
+        cfg.dot("CFG")
     }
 
     #[fixture]
@@ -1129,1503 +1114,236 @@ mod tests {
     }
 
     #[rstest]
-    fn test_process_comments() {
-        let text = source_code(
-            r#"
+    #[case::generic_statement(
+        indoc! {r##"
         a = 5
-        b = 10 # This is a comment
-        c = 15
-        "#,
-        );
-
-        let cfg = build_cfg_from_source(&text);
-
-        let NodeData::Statement(program_point_0) = &cfg.nodes[&ProgramPoint::Point(0)].data else {
-            panic!("Should be a NodeData::Statement");
-        };
-        let NodeData::Statement(program_point_1) = &cfg.nodes[&ProgramPoint::Point(1)].data else {
-            panic!("Should be a NodeData::Statement");
-        };
-        let NodeData::Statement(program_point_2) = &cfg.nodes[&ProgramPoint::Point(2)].data else {
-            panic!("Should be a NodeData::Statement");
-        };
-
-        assert!(
-            program_point_0.comments.is_empty(),
-            "Program point 0 should have no comments"
-        );
-        assert_eq!(
-            program_point_1.comments,
-            HashMap::from_iter(vec![(
-                program_point_1.line_number,
-                String::from("# This is a comment")
-            )]),
-            "Program point 1 should have the correct comment"
-        );
-        assert!(
-            program_point_2.comments.is_empty(),
-            "Program point 2 should have no comments"
-        );
-    }
-
-    #[rstest]
-    fn test_process_generic_statement() {
-        let text = source_code(
-            r#"
-        a = 5
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
+        "##},
+        indoc! {r##"
         digraph "CFG" {
             "Entry";
-            "Point(0)" [label="assign"];
+            "Location(1:0)" [label="assign"];
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Exit";
-            "Point(0)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Exit";
+            "Location(1:0)" -> "Exit" [label="except"];
         }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    fn test_process_multiple_generic_statements() {
-        let text = source_code(
-            r#"
+        "##},
+    )]
+    #[case::multiple_generic_statements(
+        indoc! {r##"
         a = 5
         b = 10
         c = a + b
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
+        "##},
+        indoc! {r##"
         digraph "CFG" {
             "Entry";
-            "Point(0)" [label="assign"];
-            "Point(1)" [label="assign"];
-            "Point(2)" [label="assign"];
+            "Location(1:0)" [label="assign"];
+            "Location(2:0)" [label="assign"];
+            "Location(3:0)" [label="assign"];
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)";
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)";
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit";
-            "Point(2)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:0)";
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:0)" -> "Location(3:0)";
+            "Location(2:0)" -> "Exit" [label="except"];
+            "Location(3:0)" -> "Exit";
+            "Location(3:0)" -> "Exit" [label="except"];
         }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    fn test_process_simple_if_else_statement() {
-        let text = source_code(
-            r#"
+        "##},
+    )]
+    #[case::simple_if_else_statement(
+        indoc! {r##"
         if True:
             a = 5
         else:
             a = 10
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
+        "##},
+        indoc! {r##"
         digraph "CFG" {
             "Entry";
-            "Point(0)" [label="if"];
-            "Point(1)" [label="assign"];
-            "Point(2)" [label="assign"];
+            "Location(1:0)" [label="if"];
+            "Location(2:4)" [label="assign"];
+            "Location(4:4)" [label="assign"];
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(2)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Exit";
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit";
-            "Point(2)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(4:4)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Exit";
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(4:4)" -> "Exit";
+            "Location(4:4)" -> "Exit" [label="except"];
         }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    fn test_process_simple_if_without_else_statement() {
-        let text = source_code(
-            r#"
+        "##},
+    )]
+    #[case::simple_if_without_else_statement(
+        indoc! {r##"
         if True:
             a = 5
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
+        "##},
+        indoc! {r##"
         digraph "CFG" {
             "Entry";
-            "Point(0)" [label="if"];
-            "Point(1)" [label="assign"];
+            "Location(1:0)" [label="if"];
+            "Location(2:4)" [label="assign"];
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Exit";
-            "Point(1)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Exit";
+            "Location(2:4)" -> "Exit" [label="except"];
         }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    fn test_process_simple_if_elif_else_statement() {
-        let text = source_code(
-            r#"
+        "##},
+    )]
+    #[case::simple_if_elif_else_statement(
+        indoc! {r##"
         if True:
             a = 5
         elif False:
             a = 10
         else:
             a = 15
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
+        "##},
+        indoc! {r##"
         digraph "CFG" {
             "Entry";
-            "Point(0)" [label="if"];
-            "Point(1)" [label="assign"];
-            "Point(2)" [label="if"];
-            "Point(3)" [label="assign"];
-            "Point(4)" [label="assign"];
+            "Location(1:0)" [label="if"];
+            "Location(2:4)" [label="assign"];
+            "Location(3:0)" [label="elif"];
+            "Location(4:4)" [label="assign"];
+            "Location(6:4)" [label="assign"];
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(2)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Exit";
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(3)" [label="true"];
-            "Point(2)" -> "Point(4)" [label="false"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Exit";
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(4)" -> "Exit";
-            "Point(4)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(3:0)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Exit";
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:0)" -> "Location(4:4)" [label="true"];
+            "Location(3:0)" -> "Location(6:4)" [label="false"];
+            "Location(3:0)" -> "Exit" [label="except"];
+            "Location(4:4)" -> "Exit";
+            "Location(4:4)" -> "Exit" [label="except"];
+            "Location(6:4)" -> "Exit";
+            "Location(6:4)" -> "Exit" [label="except"];
         }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    fn test_process_simple_if_elif_without_else_statement() {
-        let text = source_code(
-            r#"
+        "##},
+    )]
+    #[case::simple_if_elif_without_else_statement(
+        indoc! {r##"
         if True:
             a = 5
         elif False:
             a = 10
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
+        "##},
+        indoc! {r##"
         digraph "CFG" {
             "Entry";
-            "Point(0)" [label="if"];
-            "Point(1)" [label="assign"];
-            "Point(2)" [label="if"];
-            "Point(3)" [label="assign"];
+            "Location(1:0)" [label="if"];
+            "Location(2:4)" [label="assign"];
+            "Location(3:0)" [label="elif"];
+            "Location(4:4)" [label="assign"];
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(2)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Exit";
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(3)" [label="true"];
-            "Point(2)" -> "Exit" [label="false"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Exit";
-            "Point(3)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(3:0)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Exit";
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:0)" -> "Location(4:4)" [label="true"];
+            "Location(3:0)" -> "Exit" [label="false"];
+            "Location(3:0)" -> "Exit" [label="except"];
+            "Location(4:4)" -> "Exit";
+            "Location(4:4)" -> "Exit" [label="except"];
         }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loop(while_i_fixture())]
-    #[case::for_loop(for_i_fixture())]
-    fn test_process_simple_loop_statement(#[case] (loop_header, loop_name): (String, String)) {
-        let text = source_code(&format!(
-            r#"
-        {loop_header}:
-            a = i
-        "#
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(0)";
-            "Point(1)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loop(while_i_fixture())]
-    #[case::for_loop(for_i_fixture())]
-    fn test_process_loop_with_continue_statement(
-        #[case] (loop_header, loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {loop_header}:
-            if i % 2 == 0:
-                continue
-            a = i
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="continue"];
-            "Point(3)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(0)" [label="continue"];
-            "Point(3)" -> "Point(0)";
-            "Point(3)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loop(while_i_fixture())]
-    #[case::for_loop(for_i_fixture())]
-    fn test_process_loop_with_break_statement(#[case] (loop_header, loop_name): (String, String)) {
-        let text = source_code(&format!(
-            r#"
-        {loop_header}:
-            if i % 2 == 0:
-                a = 1
-            else:
-                break
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="assign"];
-            "Point(3)" [label="break"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(0)";
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Exit" [label="break"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loop(while_i_fixture())]
-    #[case::for_loop(for_i_fixture())]
-    fn test_process_loop_with_return_statement(#[case] (loop_header, loop_name): (String, String)) {
-        let text = source_code(&format!(
-            r#"
-        {loop_header}:
-            if i % 2 == 0:
-                return a
-            a = i
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="return"];
-            "Point(3)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="return"];
-            "Point(3)" -> "Point(0)";
-            "Point(3)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loop(while_i_fixture())]
-    #[case::for_loop(for_i_fixture())]
-    fn test_process_loop_with_raise_statement(#[case] (loop_header, loop_name): (String, String)) {
-        let text = source_code(&format!(
-            r#"
-        {loop_header}:
-            if i % 2 == 0:
-                raise Exception()
-            a = i
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="raise"];
-            "Point(3)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Point(0)";
-            "Point(3)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loop(while_i_fixture())]
-    #[case::for_loop(for_i_fixture())]
-    fn test_process_simple_loop_else_statement(#[case] (loop_header, loop_name): (String, String)) {
-        let text = source_code(&format!(
-            r#"
-        {loop_header}:
-            a = i
-        else:
-            a = 100
-        "#
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="assign"];
-            "Point(2)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(2)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(0)";
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit";
-            "Point(2)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loop(while_i_fixture())]
-    #[case::for_loop(for_i_fixture())]
-    fn test_process_loop_else_with_break_statement(
-        #[case] (loop_header, loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {loop_header}:
-            if i == 5:
-                break
-            a = i
-        else:
-            a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="break"];
-            "Point(3)" [label="assign"];
-            "Point(4)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(4)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="break"];
-            "Point(3)" -> "Point(0)";
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(4)" -> "Exit";
-            "Point(4)" -> "Exit" [label="except"];
-        }}
-        "#
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loop(while_i_fixture())]
-    #[case::for_loop(for_i_fixture())]
-    fn test_process_loop_else_with_continue_statement(
-        #[case] (loop_header, loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {loop_header}:
-            if i == 5:
-                continue
-            a = i
-        else:
-            a = 100
-        "#
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="continue"];
-            "Point(3)" [label="assign"];
-            "Point(4)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(4)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(0)" [label="continue"];
-            "Point(3)" -> "Point(0)";
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(4)" -> "Exit";
-            "Point(4)" -> "Exit" [label="except"];
-        }}
-        "#
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loop(while_i_fixture())]
-    #[case::for_loop(for_i_fixture())]
-    fn test_process_loop_else_with_return_statement(
-        #[case] (loop_header, loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {loop_header}:
-            if i == 5:
-                return
-            a = i
-        else:
-            a = 100
-        a = 200
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="return"];
-            "Point(3)" [label="assign"];
-            "Point(4)" [label="assign"];
-            "Point(5)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(4)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="return"];
-            "Point(3)" -> "Point(0)";
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(4)" -> "Point(5)";
-            "Point(4)" -> "Exit" [label="except"];
-            "Point(5)" -> "Exit";
-            "Point(5)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loop(while_i_fixture())]
-    #[case::for_loop(for_i_fixture())]
-    fn test_process_loop_else_with_raise_statement(
-        #[case] (loop_header, loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {loop_header}:
-            if i == 5:
-                raise Exception()
-            a = i
-        else:
-            a = 100
-        a = 200
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="raise"];
-            "Point(3)" [label="assign"];
-            "Point(4)" [label="assign"];
-            "Point(5)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(4)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Point(0)";
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(4)" -> "Point(5)";
-            "Point(4)" -> "Exit" [label="except"];
-            "Point(5)" -> "Exit";
-            "Point(5)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loops(while_i_fixture(), while_j_fixture())]
-    #[case::for_loops(for_i_fixture(), for_j_fixture())]
-    #[case::for_while(while_i_fixture(), for_j_fixture())]
-    #[case::while_for(for_i_fixture(), while_j_fixture())]
-    fn test_process_double_loop_statements(
-        #[case] (outer_loop_header, outer_loop_name): (String, String),
-        #[case] (inner_loop_header, inner_loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {outer_loop_header}:
-            {inner_loop_header}:
-                a = i + j
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{outer_loop_name}"];
-            "Point(1)" [label="{inner_loop_name}"];
-            "Point(2)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(0)" [label="false"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(1)";
-            "Point(2)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loops(while_i_fixture(), while_j_fixture())]
-    #[case::for_loops(for_i_fixture(), for_j_fixture())]
-    #[case::for_while(while_i_fixture(), for_j_fixture())]
-    #[case::while_for(for_i_fixture(), while_j_fixture())]
-    fn test_process_inner_loop_else_statement(
-        #[case] (outer_loop_header, outer_loop_name): (String, String),
-        #[case] (inner_loop_header, inner_loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {outer_loop_header}:
-            {inner_loop_header}:
-                a = i + j
-            else:
-                a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{outer_loop_name}"];
-            "Point(1)" [label="{inner_loop_name}"];
-            "Point(2)" [label="assign"];
-            "Point(3)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(1)";
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Point(0)";
-            "Point(3)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loops(while_i_fixture(), while_j_fixture())]
-    #[case::for_loops(for_i_fixture(), for_j_fixture())]
-    #[case::for_while(while_i_fixture(), for_j_fixture())]
-    #[case::while_for(for_i_fixture(), while_j_fixture())]
-    fn test_process_inner_loop_else_with_break_statement(
-        #[case] (outer_loop_header, outer_loop_name): (String, String),
-        #[case] (inner_loop_header, inner_loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {outer_loop_header}:
-            {inner_loop_header}:
-                if j == 5:
-                    break
-                a = i
-            else:
-                a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{outer_loop_name}"];
-            "Point(1)" [label="{inner_loop_name}"];
-            "Point(2)" [label="if"];
-            "Point(3)" [label="break"];
-            "Point(4)" [label="assign"];
-            "Point(5)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(5)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(3)" [label="true"];
-            "Point(2)" -> "Point(4)" [label="false"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Point(0)" [label="break"];
-            "Point(4)" -> "Point(1)";
-            "Point(4)" -> "Exit" [label="except"];
-            "Point(5)" -> "Point(0)";
-            "Point(5)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loops(while_i_fixture(), while_j_fixture())]
-    #[case::for_loops(for_i_fixture(), for_j_fixture())]
-    #[case::for_while(while_i_fixture(), for_j_fixture())]
-    #[case::while_for(for_i_fixture(), while_j_fixture())]
-    fn test_process_inner_loop_else_with_continue_statement(
-        #[case] (outer_loop_header, outer_loop_name): (String, String),
-        #[case] (inner_loop_header, inner_loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {outer_loop_header}:
-            {inner_loop_header}:
-                if j == 5:
-                    continue
-                a = i
-            else:
-                a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{outer_loop_name}"];
-            "Point(1)" [label="{inner_loop_name}"];
-            "Point(2)" [label="if"];
-            "Point(3)" [label="continue"];
-            "Point(4)" [label="assign"];
-            "Point(5)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(5)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(3)" [label="true"];
-            "Point(2)" -> "Point(4)" [label="false"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Point(1)" [label="continue"];
-            "Point(4)" -> "Point(1)";
-            "Point(4)" -> "Exit" [label="except"];
-            "Point(5)" -> "Point(0)";
-            "Point(5)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loops(while_i_fixture(), while_j_fixture())]
-    #[case::for_loops(for_i_fixture(), for_j_fixture())]
-    #[case::for_while(while_i_fixture(), for_j_fixture())]
-    #[case::while_for(for_i_fixture(), while_j_fixture())]
-    fn test_process_inner_loop_else_with_return_statement(
-        #[case] (outer_loop_header, outer_loop_name): (String, String),
-        #[case] (inner_loop_header, inner_loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-       {outer_loop_header}:
-            {inner_loop_header}:
-                if j == 5:
-                    return
-                a = i
-            else:
-                a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{outer_loop_name}"];
-            "Point(1)" [label="{inner_loop_name}"];
-            "Point(2)" [label="if"];
-            "Point(3)" [label="return"];
-            "Point(4)" [label="assign"];
-            "Point(5)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(5)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(3)" [label="true"];
-            "Point(2)" -> "Point(4)" [label="false"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(3)" -> "Exit" [label="return"];
-            "Point(4)" -> "Point(1)";
-            "Point(4)" -> "Exit" [label="except"];
-            "Point(5)" -> "Point(0)";
-            "Point(5)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loops(while_i_fixture(), while_j_fixture())]
-    #[case::for_loops(for_i_fixture(), for_j_fixture())]
-    #[case::for_while(while_i_fixture(), for_j_fixture())]
-    #[case::while_for(for_i_fixture(), while_j_fixture())]
-    fn test_process_inner_loop_else_with_raise_statement(
-        #[case] (outer_loop_header, outer_loop_name): (String, String),
-        #[case] (inner_loop_header, inner_loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-       {outer_loop_header}:
-            {inner_loop_header}:
-                if j == 5:
-                    raise Exception()
-                a = i
-            else:
-                a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{outer_loop_name}"];
-            "Point(1)" [label="{inner_loop_name}"];
-            "Point(2)" [label="if"];
-            "Point(3)" [label="raise"];
-            "Point(4)" [label="assign"];
-            "Point(5)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(5)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(3)" [label="true"];
-            "Point(2)" -> "Point(4)" [label="false"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(4)" -> "Point(1)";
-            "Point(4)" -> "Exit" [label="except"];
-            "Point(5)" -> "Point(0)";
-            "Point(5)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loops(while_i_fixture(), while_j_fixture())]
-    #[case::for_loops(for_i_fixture(), for_j_fixture())]
-    #[case::for_while(while_i_fixture(), for_j_fixture())]
-    #[case::while_for(for_i_fixture(), while_j_fixture())]
-    fn test_process_outer_loop_else_statement(
-        #[case] (outer_loop_header, outer_loop_name): (String, String),
-        #[case] (inner_loop_header, inner_loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {outer_loop_header}:
-            {inner_loop_header}:
-                a = i + j
-        else:
-            a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{outer_loop_name}"];
-            "Point(1)" [label="{inner_loop_name}"];
-            "Point(2)" [label="assign"];
-            "Point(3)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(3)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(0)" [label="false"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(1)";
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Exit";
-            "Point(3)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loops(while_i_fixture(), while_j_fixture())]
-    #[case::for_loops(for_i_fixture(), for_j_fixture())]
-    #[case::for_while(while_i_fixture(), for_j_fixture())]
-    #[case::while_for(for_i_fixture(), while_j_fixture())]
-    fn test_process_outer_loop_else_with_break_statement(
-        #[case] (outer_loop_header, outer_loop_name): (String, String),
-        #[case] (inner_loop_header, inner_loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {outer_loop_header}:
-            if i == 5:
-                break
-            {inner_loop_header}:
-                a = i + j
-        else:
-            a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{outer_loop_name}"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="break"];
-            "Point(3)" [label="{inner_loop_name}"];
-            "Point(4)" [label="assign"];
-            "Point(5)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(5)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="break"];
-            "Point(3)" -> "Point(0)" [label="false"];
-            "Point(3)" -> "Point(4)" [label="true"];
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(4)" -> "Point(3)";
-            "Point(4)" -> "Exit" [label="except"];
-            "Point(5)" -> "Exit";
-            "Point(5)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loops(while_i_fixture(), while_j_fixture())]
-    #[case::for_loops(for_i_fixture(), for_j_fixture())]
-    #[case::for_while(while_i_fixture(), for_j_fixture())]
-    #[case::while_for(for_i_fixture(), while_j_fixture())]
-    fn test_process_outer_loop_else_with_continue_statement(
-        #[case] (outer_loop_header, outer_loop_name): (String, String),
-        #[case] (inner_loop_header, inner_loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {outer_loop_header}:
-            if i == 5:
-                continue
-            {inner_loop_header}:
-                a = i + j
-        else:
-            a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{outer_loop_name}"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="continue"];
-            "Point(3)" [label="{inner_loop_name}"];
-            "Point(4)" [label="assign"];
-            "Point(5)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(5)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(0)" [label="continue"];
-            "Point(3)" -> "Point(0)" [label="false"];
-            "Point(3)" -> "Point(4)" [label="true"];
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(4)" -> "Point(3)";
-            "Point(4)" -> "Exit" [label="except"];
-            "Point(5)" -> "Exit";
-            "Point(5)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loops(while_i_fixture(), while_j_fixture())]
-    #[case::for_loops(for_i_fixture(), for_j_fixture())]
-    #[case::for_while(while_i_fixture(), for_j_fixture())]
-    #[case::while_for(for_i_fixture(), while_j_fixture())]
-    fn test_process_outer_loop_else_with_return_statement(
-        #[case] (outer_loop_header, outer_loop_name): (String, String),
-        #[case] (inner_loop_header, inner_loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {outer_loop_header}:
-            if i == 5:
-                return
-            {inner_loop_header}:
-                a = i + j
-        else:
-            a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{outer_loop_name}"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="return"];
-            "Point(3)" [label="{inner_loop_name}"];
-            "Point(4)" [label="assign"];
-            "Point(5)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(5)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="return"];
-            "Point(3)" -> "Point(0)" [label="false"];
-            "Point(3)" -> "Point(4)" [label="true"];
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(4)" -> "Point(3)";
-            "Point(4)" -> "Exit" [label="except"];
-            "Point(5)" -> "Exit";
-            "Point(5)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loops(while_i_fixture(), while_j_fixture())]
-    #[case::for_loops(for_i_fixture(), for_j_fixture())]
-    #[case::for_while(while_i_fixture(), for_j_fixture())]
-    #[case::while_for(for_i_fixture(), while_j_fixture())]
-    fn test_process_outer_loop_else_with_raise_statement(
-        #[case] (outer_loop_header, outer_loop_name): (String, String),
-        #[case] (inner_loop_header, inner_loop_name): (String, String),
-    ) {
-        let text = source_code(&format!(
-            r#"
-        {outer_loop_header}:
-            if i == 5:
-                raise Exception()
-            {inner_loop_header}:
-                a = i + j
-        else:
-            a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{outer_loop_name}"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="raise"];
-            "Point(3)" [label="{inner_loop_name}"];
-            "Point(4)" [label="assign"];
-            "Point(5)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Point(5)" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Point(0)" [label="false"];
-            "Point(3)" -> "Point(4)" [label="true"];
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(4)" -> "Point(3)";
-            "Point(4)" -> "Exit" [label="except"];
-            "Point(5)" -> "Exit";
-            "Point(5)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    fn test_process_simple_with_statement() {
-        let text = source_code(
-            r#"
+        "##},
+    )]
+    #[case::simple_with_statement(
+        indoc! {r##"
         with open('file.txt') as f:
             a = f.read()
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
+        "##},
+        indoc! {r##"
         digraph "CFG" {
             "Entry";
-            "Point(0)" [label="with"];
-            "Point(1)" [label="assign"];
-            "Point(2)" [label="end(Point(0))"];
+            "Location(1:0)" [label="with"];
+            "Location(2:4)" [label="assign"];
+            "End(1:0)";
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)";
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)";
-            "Point(2)" -> "Exit";
-            "Point(2)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)";
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "End(1:0)";
+            "End(1:0)" -> "Exit";
+            "End(1:0)" -> "Exit" [label="except"];
         }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loop(while_i_fixture())]
-    #[case::for_loop(for_i_fixture())]
-    fn test_process_break_in_with_statement(#[case] (loop_header, loop_name): (String, String)) {
-        let text = source_code(&format!(
-            r#"
-        {loop_header}:
-            with open('file.txt') as f:
-                if True:
-                    break
-            a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="with"];
-            "Point(2)" [label="if"];
-            "Point(3)" [label="break"];
-            "Point(4)" [label="end(Point(1))"];
-            "Point(5)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)";
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(3)" [label="true"];
-            "Point(2)" -> "Point(4)";
-            "Point(2)" -> "Point(4)" [label="false"];
-            "Point(3)" -> "Point(4)";
-            "Point(4)" -> "Point(5)";
-            "Point(4)" -> "Exit" [label="except"];
-            "Point(4)" -> "Exit" [label="break"];
-            "Point(5)" -> "Point(0)";
-            "Point(5)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    #[case::while_loop(while_i_fixture())]
-    #[case::for_loop(for_i_fixture())]
-    fn test_process_continue_in_with_statement(#[case] (loop_header, loop_name): (String, String)) {
-        let text = source_code(&format!(
-            r#"
-        {loop_header}:
-            with open('file.txt') as f:
-                if True:
-                    continue
-            a = 100
-        "#,
-        ));
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
-        digraph "CFG" {{
-            "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="with"];
-            "Point(2)" [label="if"];
-            "Point(3)" [label="continue"];
-            "Point(4)" [label="end(Point(1))"];
-            "Point(5)" [label="assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)";
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Point(3)" [label="true"];
-            "Point(2)" -> "Point(4)";
-            "Point(2)" -> "Point(4)" [label="false"];
-            "Point(3)" -> "Point(4)";
-            "Point(4)" -> "Point(0)" [label="continue"];
-            "Point(4)" -> "Point(5)";
-            "Point(4)" -> "Exit" [label="except"];
-            "Point(5)" -> "Point(0)";
-            "Point(5)" -> "Exit" [label="except"];
-        }}
-        "#,
-        ));
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    fn test_process_return_in_with_statement() {
-        let text = source_code(
-            r#"
+        "##},
+    )]
+    #[case::return_in_with_statement(
+        indoc! {r##"
         with open('file.txt') as f:
             if True:
                 return f.read()
         a = 100
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
+        "##},
+        indoc! {r##"
         digraph "CFG" {
             "Entry";
-            "Point(0)" [label="with"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="return"];
-            "Point(3)" [label="end(Point(0))"];
-            "Point(4)" [label="assign"];
+            "Location(1:0)" [label="with"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="return"];
+            "Location(4:0)" [label="assign"];
+            "End(1:0)";
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)";
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)";
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(2)" -> "Point(3)";
-            "Point(3)" -> "Point(4)";
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(3)" -> "Exit" [label="return"];
-            "Point(4)" -> "Exit";
-            "Point(4)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)";
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "End(1:0)";
+            "Location(2:4)" -> "End(1:0)" [label="false"];
+            "Location(3:8)" -> "End(1:0)";
+            "Location(4:0)" -> "Exit";
+            "Location(4:0)" -> "Exit" [label="except"];
+            "End(1:0)" -> "Location(4:0)";
+            "End(1:0)" -> "Exit" [label="except"];
+            "End(1:0)" -> "Exit" [label="return"];
         }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    fn test_process_raise_in_with_statement() {
-        let text = source_code(
-            r#"
+        "##},
+    )]
+    #[case::raise_in_with_statement(
+        indoc! {r##"
         with open('file.txt') as f:
             if True:
                 raise Exception()
         a = 100
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
+        "##},
+        indoc! {r##"
         digraph "CFG" {
             "Entry";
-            "Point(0)" [label="with"];
-            "Point(1)" [label="if"];
-            "Point(2)" [label="raise"];
-            "Point(3)" [label="end(Point(0))"];
-            "Point(4)" [label="assign"];
+            "Location(1:0)" [label="with"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="raise"];
+            "Location(4:0)" [label="assign"];
+            "End(1:0)";
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)";
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="true"];
-            "Point(1)" -> "Point(3)";
-            "Point(1)" -> "Point(3)" [label="false"];
-            "Point(2)" -> "Point(3)";
-            "Point(3)" -> "Point(4)";
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(4)" -> "Exit";
-            "Point(4)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)";
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "End(1:0)";
+            "Location(2:4)" -> "End(1:0)" [label="false"];
+            "Location(3:8)" -> "End(1:0)";
+            "Location(4:0)" -> "Exit";
+            "Location(4:0)" -> "Exit" [label="except"];
+            "End(1:0)" -> "Location(4:0)";
+            "End(1:0)" -> "Exit" [label="except"];
         }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    fn test_process_match_statement() {
-        let text = source_code(
-            r#"
+        "##},
+    )]
+    #[case::match_statement(
+        indoc! {r##"
         match command:
             case "start":
                 a = 0
@@ -2633,44 +1351,1200 @@ mod tests {
                 a += 1
             case _:
                 None
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
+        "##},
+        indoc! {r##"
         digraph "CFG" {
             "Entry";
-            "Point(0)" [label="match"];
-            "Point(1)" [label="assign"];
-            "Point(2)" [label="aug_assign"];
-            "Point(3)" [label="expr"];
+            "Location(1:0)" [label="match"];
+            "Location(3:8)" [label="assign"];
+            "Location(5:8)" [label="aug_assign"];
+            "Location(7:8)" [label="expr"];
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="match(0)"];
-            "Point(0)" -> "Point(2)" [label="match(1)"];
-            "Point(0)" -> "Point(3)" [label="match(2)"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Exit";
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit";
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(3)" -> "Exit";
-            "Point(3)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(3:8)" [label="match(0)"];
+            "Location(1:0)" -> "Location(5:8)" [label="match(1)"];
+            "Location(1:0)" -> "Location(7:8)" [label="match(2)"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit";
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(5:8)" -> "Exit";
+            "Location(5:8)" -> "Exit" [label="except"];
+            "Location(7:8)" -> "Exit";
+            "Location(7:8)" -> "Exit" [label="except"];
         }
-        "#,
-        );
+        "##},
+    )]
+    #[case::simple_try_single_except_statement(
+        indoc! {r##"
+        try:
+            a = 1 / 0
+        except:
+            None
+        "##},
+        indoc! {r##"
+        digraph "CFG" {
+            "Entry";
+            "Location(1:0)" [label="try"];
+            "Location(2:4)" [label="assign"];
+            "Location(4:4)" [label="expr"];
+            "End(1:0)";
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)";
+            "Location(2:4)" -> "Location(4:4)" [label="except(Location(1:0), 0)"];
+            "Location(2:4)" -> "End(1:0)";
+            "Location(4:4)" -> "End(1:0)";
+            "End(1:0)" -> "Exit";
+            "End(1:0)" -> "Exit" [label="except"];
+        }
+        "##},
+    )]
+    #[case::simple_try_multiple_except_statement(
+        indoc! {r##"
+        try:
+            a = 1 / 0
+        except ZeroDivisionError:
+            a += 50
+        except:
+            100
+        "##},
+        indoc! {r##"
+        digraph "CFG" {
+            "Entry";
+            "Location(1:0)" [label="try"];
+            "Location(2:4)" [label="assign"];
+            "Location(4:4)" [label="aug_assign"];
+            "Location(6:4)" [label="expr"];
+            "End(1:0)";
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)";
+            "Location(2:4)" -> "Location(4:4)" [label="except(Location(1:0), 0)"];
+            "Location(2:4)" -> "Location(6:4)" [label="except(Location(1:0), 1)"];
+            "Location(2:4)" -> "End(1:0)";
+            "Location(4:4)" -> "End(1:0)";
+            "Location(6:4)" -> "End(1:0)";
+            "End(1:0)" -> "Exit";
+            "End(1:0)" -> "Exit" [label="except"];
+        }
+        "##},
+    )]
+    #[case::simple_try_except_else_statement(
+        indoc! {r##"
+        try:
+            a = 1 / 0
+        except:
+            None
+        else:
+            a += 100
+        "##},
+        indoc! {r##"
+        digraph "CFG" {
+            "Entry";
+            "Location(1:0)" [label="try"];
+            "Location(2:4)" [label="assign"];
+            "Location(4:4)" [label="expr"];
+            "Location(6:4)" [label="aug_assign"];
+            "End(1:0)";
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)";
+            "Location(2:4)" -> "Location(4:4)" [label="except(Location(1:0), 0)"];
+            "Location(2:4)" -> "Location(6:4)";
+            "Location(4:4)" -> "End(1:0)";
+            "Location(6:4)" -> "End(1:0)";
+            "End(1:0)" -> "Exit";
+            "End(1:0)" -> "Exit" [label="except"];
+        }
+        "##},
+    )]
+    #[case::simple_try_except_finally_statement(
+        indoc! {r##"
+        try:
+            a = 1 / 0
+        except:
+            None
+        finally:
+            a += 50
+        "##},
+        indoc! {r##"
+        digraph "CFG" {
+            "Entry";
+            "Location(1:0)" [label="try"];
+            "Location(2:4)" [label="assign"];
+            "Location(4:4)" [label="expr"];
+            "Location(6:4)" [label="aug_assign"];
+            "End(1:0)";
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)";
+            "Location(2:4)" -> "Location(4:4)" [label="except(Location(1:0), 0)"];
+            "Location(2:4)" -> "Location(6:4)";
+            "Location(4:4)" -> "Location(6:4)";
+            "Location(6:4)" -> "End(1:0)";
+            "Location(6:4)" -> "Exit" [label="except"];
+            "End(1:0)" -> "Exit";
+            "End(1:0)" -> "Exit" [label="except"];
+        }
+        "##},
+    )]
+    fn test_build_cfg(#[case] source: &str, #[case] expected_dot: &str) {
+        let actual_dot = build_dot(source);
 
-        assert_eq!(expected, actual);
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
     }
 
     #[rstest]
     #[case::while_loop(while_i_fixture())]
     #[case::for_loop(for_i_fixture())]
-    fn test_process_loop_with_match_statement(#[case] (loop_header, loop_name): (String, String)) {
-        let text = source_code(&format!(
-            r#"
+    fn test_build_cfg_simple_loop_statement(#[case] (loop_header, loop_name): (String, String)) {
+        let source = formatdoc! {r##"
+        {loop_header}:
+            a = i
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(1:0)";
+            "Location(2:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loop(while_i_fixture())]
+    #[case::for_loop(for_i_fixture())]
+    fn test_build_cfg_loop_with_continue_statement(
+        #[case] (loop_header, loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {loop_header}:
+            if i % 2 == 0:
+                continue
+            a = i
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="continue"];
+            "Location(4:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(4:4)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Location(1:0)" [label="continue"];
+            "Location(4:4)" -> "Location(1:0)";
+            "Location(4:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loop(while_i_fixture())]
+    #[case::for_loop(for_i_fixture())]
+    fn test_build_cfg_loop_with_break_statement(
+        #[case] (loop_header, loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {loop_header}:
+            if i % 2 == 0:
+                break
+            a = 1
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="break"];
+            "Location(4:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(4:4)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="break"];
+            "Location(4:4)" -> "Location(1:0)";
+            "Location(4:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loop(while_i_fixture())]
+    #[case::for_loop(for_i_fixture())]
+    fn test_build_cfg_loop_with_return_statement(
+        #[case] (loop_header, loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {loop_header}:
+            if i % 2 == 0:
+                return a
+            a = i
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="return"];
+            "Location(4:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(4:4)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="return"];
+            "Location(4:4)" -> "Location(1:0)";
+            "Location(4:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loop(while_i_fixture())]
+    #[case::for_loop(for_i_fixture())]
+    fn test_build_cfg_loop_with_raise_statement(
+        #[case] (loop_header, loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {loop_header}:
+            if i % 2 == 0:
+                raise Exception()
+            a = i
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="raise"];
+            "Location(4:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(4:4)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(4:4)" -> "Location(1:0)";
+            "Location(4:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loop(while_i_fixture())]
+    #[case::for_loop(for_i_fixture())]
+    fn test_build_cfg_simple_loop_else_statement(
+        #[case] (loop_header, loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {loop_header}:
+            a = i
+        else:
+            a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="assign"];
+            "Location(4:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(4:4)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(1:0)";
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(4:4)" -> "Exit";
+            "Location(4:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loop(while_i_fixture())]
+    #[case::for_loop(for_i_fixture())]
+    fn test_build_cfg_loop_else_with_break_statement(
+        #[case] (loop_header, loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {loop_header}:
+            if i == 5:
+                break
+            a = i
+        else:
+            a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="break"];
+            "Location(4:4)" [label="assign"];
+            "Location(6:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(6:4)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(4:4)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="break"];
+            "Location(4:4)" -> "Location(1:0)";
+            "Location(4:4)" -> "Exit" [label="except"];
+            "Location(6:4)" -> "Exit";
+            "Location(6:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loop(while_i_fixture())]
+    #[case::for_loop(for_i_fixture())]
+    fn test_build_cfg_loop_else_with_continue_statement(
+        #[case] (loop_header, loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {loop_header}:
+            if i == 5:
+                continue
+            a = i
+        else:
+            a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="continue"];
+            "Location(4:4)" [label="assign"];
+            "Location(6:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(6:4)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(4:4)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Location(1:0)" [label="continue"];
+            "Location(4:4)" -> "Location(1:0)";
+            "Location(4:4)" -> "Exit" [label="except"];
+            "Location(6:4)" -> "Exit";
+            "Location(6:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loop(while_i_fixture())]
+    #[case::for_loop(for_i_fixture())]
+    fn test_build_cfg_loop_else_with_return_statement(
+        #[case] (loop_header, loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {loop_header}:
+            if i == 5:
+                return
+            a = i
+        else:
+            a = 100
+        a = 200
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="return"];
+            "Location(4:4)" [label="assign"];
+            "Location(6:4)" [label="assign"];
+            "Location(7:0)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(6:4)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(4:4)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="return"];
+            "Location(4:4)" -> "Location(1:0)";
+            "Location(4:4)" -> "Exit" [label="except"];
+            "Location(6:4)" -> "Location(7:0)";
+            "Location(6:4)" -> "Exit" [label="except"];
+            "Location(7:0)" -> "Exit";
+            "Location(7:0)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loop(while_i_fixture())]
+    #[case::for_loop(for_i_fixture())]
+    fn test_build_cfg_loop_else_with_raise_statement(
+        #[case] (loop_header, loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {loop_header}:
+            if i == 5:
+                raise Exception()
+            a = i
+        else:
+            a = 100
+        a = 200
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="raise"];
+            "Location(4:4)" [label="assign"];
+            "Location(6:4)" [label="assign"];
+            "Location(7:0)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(6:4)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(4:4)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(4:4)" -> "Location(1:0)";
+            "Location(4:4)" -> "Exit" [label="except"];
+            "Location(6:4)" -> "Location(7:0)";
+            "Location(6:4)" -> "Exit" [label="except"];
+            "Location(7:0)" -> "Exit";
+            "Location(7:0)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loops(while_i_fixture(), while_j_fixture())]
+    #[case::for_loops(for_i_fixture(), for_j_fixture())]
+    #[case::for_while(while_i_fixture(), for_j_fixture())]
+    #[case::while_for(for_i_fixture(), while_j_fixture())]
+    fn test_build_cfg_double_loop_statements(
+        #[case] (outer_loop_header, outer_loop_name): (String, String),
+        #[case] (inner_loop_header, inner_loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {outer_loop_header}:
+            {inner_loop_header}:
+                a = i + j
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{outer_loop_name}"];
+            "Location(2:4)" [label="{inner_loop_name}"];
+            "Location(3:8)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(1:0)" [label="false"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Location(2:4)";
+            "Location(3:8)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loops(while_i_fixture(), while_j_fixture())]
+    #[case::for_loops(for_i_fixture(), for_j_fixture())]
+    #[case::for_while(while_i_fixture(), for_j_fixture())]
+    #[case::while_for(for_i_fixture(), while_j_fixture())]
+    fn test_build_cfg_inner_loop_else_statement(
+        #[case] (outer_loop_header, outer_loop_name): (String, String),
+        #[case] (inner_loop_header, inner_loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {outer_loop_header}:
+            {inner_loop_header}:
+                a = i + j
+            else:
+                a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{outer_loop_name}"];
+            "Location(2:4)" [label="{inner_loop_name}"];
+            "Location(3:8)" [label="assign"];
+            "Location(5:8)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(5:8)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Location(2:4)";
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(5:8)" -> "Location(1:0)";
+            "Location(5:8)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loops(while_i_fixture(), while_j_fixture())]
+    #[case::for_loops(for_i_fixture(), for_j_fixture())]
+    #[case::for_while(while_i_fixture(), for_j_fixture())]
+    #[case::while_for(for_i_fixture(), while_j_fixture())]
+    fn test_build_cfg_inner_loop_else_with_break_statement(
+        #[case] (outer_loop_header, outer_loop_name): (String, String),
+        #[case] (inner_loop_header, inner_loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {outer_loop_header}:
+            {inner_loop_header}:
+                if j == 5:
+                    break
+                a = i
+            else:
+                a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{outer_loop_name}"];
+            "Location(2:4)" [label="{inner_loop_name}"];
+            "Location(3:8)" [label="if"];
+            "Location(4:12)" [label="break"];
+            "Location(5:8)" [label="assign"];
+            "Location(7:8)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(7:8)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Location(4:12)" [label="true"];
+            "Location(3:8)" -> "Location(5:8)" [label="false"];
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(4:12)" -> "Location(1:0)" [label="break"];
+            "Location(5:8)" -> "Location(2:4)";
+            "Location(5:8)" -> "Exit" [label="except"];
+            "Location(7:8)" -> "Location(1:0)";
+            "Location(7:8)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loops(while_i_fixture(), while_j_fixture())]
+    #[case::for_loops(for_i_fixture(), for_j_fixture())]
+    #[case::for_while(while_i_fixture(), for_j_fixture())]
+    #[case::while_for(for_i_fixture(), while_j_fixture())]
+    fn test_build_cfg_inner_loop_else_with_continue_statement(
+        #[case] (outer_loop_header, outer_loop_name): (String, String),
+        #[case] (inner_loop_header, inner_loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {outer_loop_header}:
+            {inner_loop_header}:
+                if j == 5:
+                    continue
+                a = i
+            else:
+                a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{outer_loop_name}"];
+            "Location(2:4)" [label="{inner_loop_name}"];
+            "Location(3:8)" [label="if"];
+            "Location(4:12)" [label="continue"];
+            "Location(5:8)" [label="assign"];
+            "Location(7:8)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(7:8)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Location(4:12)" [label="true"];
+            "Location(3:8)" -> "Location(5:8)" [label="false"];
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(4:12)" -> "Location(2:4)" [label="continue"];
+            "Location(5:8)" -> "Location(2:4)";
+            "Location(5:8)" -> "Exit" [label="except"];
+            "Location(7:8)" -> "Location(1:0)";
+            "Location(7:8)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loops(while_i_fixture(), while_j_fixture())]
+    #[case::for_loops(for_i_fixture(), for_j_fixture())]
+    #[case::for_while(while_i_fixture(), for_j_fixture())]
+    #[case::while_for(for_i_fixture(), while_j_fixture())]
+    fn test_build_cfg_inner_loop_else_with_return_statement(
+        #[case] (outer_loop_header, outer_loop_name): (String, String),
+        #[case] (inner_loop_header, inner_loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {outer_loop_header}:
+            {inner_loop_header}:
+                if j == 5:
+                    return
+                a = i
+            else:
+                a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{outer_loop_name}"];
+            "Location(2:4)" [label="{inner_loop_name}"];
+            "Location(3:8)" [label="if"];
+            "Location(4:12)" [label="return"];
+            "Location(5:8)" [label="assign"];
+            "Location(7:8)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(7:8)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Location(4:12)" [label="true"];
+            "Location(3:8)" -> "Location(5:8)" [label="false"];
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(4:12)" -> "Exit" [label="except"];
+            "Location(4:12)" -> "Exit" [label="return"];
+            "Location(5:8)" -> "Location(2:4)";
+            "Location(5:8)" -> "Exit" [label="except"];
+            "Location(7:8)" -> "Location(1:0)";
+            "Location(7:8)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loops(while_i_fixture(), while_j_fixture())]
+    #[case::for_loops(for_i_fixture(), for_j_fixture())]
+    #[case::for_while(while_i_fixture(), for_j_fixture())]
+    #[case::while_for(for_i_fixture(), while_j_fixture())]
+    fn test_build_cfg_inner_loop_else_with_raise_statement(
+        #[case] (outer_loop_header, outer_loop_name): (String, String),
+        #[case] (inner_loop_header, inner_loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {outer_loop_header}:
+            {inner_loop_header}:
+                if j == 5:
+                    raise Exception()
+                a = i
+            else:
+                a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{outer_loop_name}"];
+            "Location(2:4)" [label="{inner_loop_name}"];
+            "Location(3:8)" [label="if"];
+            "Location(4:12)" [label="raise"];
+            "Location(5:8)" [label="assign"];
+            "Location(7:8)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(7:8)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Location(4:12)" [label="true"];
+            "Location(3:8)" -> "Location(5:8)" [label="false"];
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(4:12)" -> "Exit" [label="except"];
+            "Location(5:8)" -> "Location(2:4)";
+            "Location(5:8)" -> "Exit" [label="except"];
+            "Location(7:8)" -> "Location(1:0)";
+            "Location(7:8)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loops(while_i_fixture(), while_j_fixture())]
+    #[case::for_loops(for_i_fixture(), for_j_fixture())]
+    #[case::for_while(while_i_fixture(), for_j_fixture())]
+    #[case::while_for(for_i_fixture(), while_j_fixture())]
+    fn test_build_cfg_outer_loop_else_statement(
+        #[case] (outer_loop_header, outer_loop_name): (String, String),
+        #[case] (inner_loop_header, inner_loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {outer_loop_header}:
+            {inner_loop_header}:
+                a = i + j
+        else:
+            a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{outer_loop_name}"];
+            "Location(2:4)" [label="{inner_loop_name}"];
+            "Location(3:8)" [label="assign"];
+            "Location(5:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(5:4)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(1:0)" [label="false"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Location(2:4)";
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(5:4)" -> "Exit";
+            "Location(5:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loops(while_i_fixture(), while_j_fixture())]
+    #[case::for_loops(for_i_fixture(), for_j_fixture())]
+    #[case::for_while(while_i_fixture(), for_j_fixture())]
+    #[case::while_for(for_i_fixture(), while_j_fixture())]
+    fn test_build_cfg_outer_loop_else_with_break_statement(
+        #[case] (outer_loop_header, outer_loop_name): (String, String),
+        #[case] (inner_loop_header, inner_loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {outer_loop_header}:
+            if i == 5:
+                break
+            {inner_loop_header}:
+                a = i + j
+        else:
+            a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{outer_loop_name}"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="break"];
+            "Location(4:4)" [label="{inner_loop_name}"];
+            "Location(5:8)" [label="assign"];
+            "Location(7:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(7:4)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(4:4)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="break"];
+            "Location(4:4)" -> "Location(1:0)" [label="false"];
+            "Location(4:4)" -> "Location(5:8)" [label="true"];
+            "Location(4:4)" -> "Exit" [label="except"];
+            "Location(5:8)" -> "Location(4:4)";
+            "Location(5:8)" -> "Exit" [label="except"];
+            "Location(7:4)" -> "Exit";
+            "Location(7:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loops(while_i_fixture(), while_j_fixture())]
+    #[case::for_loops(for_i_fixture(), for_j_fixture())]
+    #[case::for_while(while_i_fixture(), for_j_fixture())]
+    #[case::while_for(for_i_fixture(), while_j_fixture())]
+    fn test_build_cfg_outer_loop_else_with_continue_statement(
+        #[case] (outer_loop_header, outer_loop_name): (String, String),
+        #[case] (inner_loop_header, inner_loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {outer_loop_header}:
+            if i == 5:
+                continue
+            {inner_loop_header}:
+                a = i + j
+        else:
+            a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{outer_loop_name}"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="continue"];
+            "Location(4:4)" [label="{inner_loop_name}"];
+            "Location(5:8)" [label="assign"];
+            "Location(7:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(7:4)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(4:4)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Location(1:0)" [label="continue"];
+            "Location(4:4)" -> "Location(1:0)" [label="false"];
+            "Location(4:4)" -> "Location(5:8)" [label="true"];
+            "Location(4:4)" -> "Exit" [label="except"];
+            "Location(5:8)" -> "Location(4:4)";
+            "Location(5:8)" -> "Exit" [label="except"];
+            "Location(7:4)" -> "Exit";
+            "Location(7:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loops(while_i_fixture(), while_j_fixture())]
+    #[case::for_loops(for_i_fixture(), for_j_fixture())]
+    #[case::for_while(while_i_fixture(), for_j_fixture())]
+    #[case::while_for(for_i_fixture(), while_j_fixture())]
+    fn test_build_cfg_outer_loop_else_with_return_statement(
+        #[case] (outer_loop_header, outer_loop_name): (String, String),
+        #[case] (inner_loop_header, inner_loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {outer_loop_header}:
+            if i == 5:
+                return
+            {inner_loop_header}:
+                a = i + j
+        else:
+            a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{outer_loop_name}"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="return"];
+            "Location(4:4)" [label="{inner_loop_name}"];
+            "Location(5:8)" [label="assign"];
+            "Location(7:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(7:4)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(4:4)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="return"];
+            "Location(4:4)" -> "Location(1:0)" [label="false"];
+            "Location(4:4)" -> "Location(5:8)" [label="true"];
+            "Location(4:4)" -> "Exit" [label="except"];
+            "Location(5:8)" -> "Location(4:4)";
+            "Location(5:8)" -> "Exit" [label="except"];
+            "Location(7:4)" -> "Exit";
+            "Location(7:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loops(while_i_fixture(), while_j_fixture())]
+    #[case::for_loops(for_i_fixture(), for_j_fixture())]
+    #[case::for_while(while_i_fixture(), for_j_fixture())]
+    #[case::while_for(for_i_fixture(), while_j_fixture())]
+    fn test_build_cfg_outer_loop_else_with_raise_statement(
+        #[case] (outer_loop_header, outer_loop_name): (String, String),
+        #[case] (inner_loop_header, inner_loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {outer_loop_header}:
+            if i == 5:
+                raise Exception()
+            {inner_loop_header}:
+                a = i + j
+        else:
+            a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{outer_loop_name}"];
+            "Location(2:4)" [label="if"];
+            "Location(3:8)" [label="raise"];
+            "Location(4:4)" [label="{inner_loop_name}"];
+            "Location(5:8)" [label="assign"];
+            "Location(7:4)" [label="assign"];
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Location(7:4)" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)" [label="true"];
+            "Location(2:4)" -> "Location(4:4)" [label="false"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(4:4)" -> "Location(1:0)" [label="false"];
+            "Location(4:4)" -> "Location(5:8)" [label="true"];
+            "Location(4:4)" -> "Exit" [label="except"];
+            "Location(5:8)" -> "Location(4:4)";
+            "Location(5:8)" -> "Exit" [label="except"];
+            "Location(7:4)" -> "Exit";
+            "Location(7:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loop(while_i_fixture())]
+    #[case::for_loop(for_i_fixture())]
+    fn test_build_cfg_break_in_with_statement(#[case] (loop_header, loop_name): (String, String)) {
+        let source = formatdoc! {r##"
+        {loop_header}:
+            with open('file.txt') as f:
+                if True:
+                    break
+            a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="with"];
+            "Location(3:8)" [label="if"];
+            "Location(4:12)" [label="break"];
+            "Location(5:4)" [label="assign"];
+            "End(2:4)";
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)";
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Location(4:12)" [label="true"];
+            "Location(3:8)" -> "End(2:4)";
+            "Location(3:8)" -> "End(2:4)" [label="false"];
+            "Location(4:12)" -> "End(2:4)";
+            "Location(5:4)" -> "Location(1:0)";
+            "Location(5:4)" -> "Exit" [label="except"];
+            "End(2:4)" -> "Location(5:4)";
+            "End(2:4)" -> "Exit" [label="except"];
+            "End(2:4)" -> "Exit" [label="break"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loop(while_i_fixture())]
+    #[case::for_loop(for_i_fixture())]
+    fn test_build_cfg_continue_in_with_statement(
+        #[case] (loop_header, loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
+        {loop_header}:
+            with open('file.txt') as f:
+                if True:
+                    continue
+            a = 100
+        "##};
+
+        let expected_dot = formatdoc! {r##"
+        digraph "CFG" {{
+            "Entry";
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="with"];
+            "Location(3:8)" [label="if"];
+            "Location(4:12)" [label="continue"];
+            "Location(5:4)" [label="assign"];
+            "End(2:4)";
+            "Exit";
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)";
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Location(4:12)" [label="true"];
+            "Location(3:8)" -> "End(2:4)";
+            "Location(3:8)" -> "End(2:4)" [label="false"];
+            "Location(4:12)" -> "End(2:4)";
+            "Location(5:4)" -> "Location(1:0)";
+            "Location(5:4)" -> "Exit" [label="except"];
+            "End(2:4)" -> "Location(1:0)" [label="continue"];
+            "End(2:4)" -> "Location(5:4)";
+            "End(2:4)" -> "Exit" [label="except"];
+        }}
+        "##};
+
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+    }
+
+    #[rstest]
+    #[case::while_loop(while_i_fixture())]
+    #[case::for_loop(for_i_fixture())]
+    fn test_build_cfg_loop_with_match_statement(
+        #[case] (loop_header, loop_name): (String, String),
+    ) {
+        let source = formatdoc! {r##"
         {loop_header}:
             match command:
                 case "return":
@@ -2681,210 +2555,48 @@ mod tests {
                     continue
                 case _:
                     None
-        "#,
-        ));
+        "##};
 
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
+        let expected_dot = formatdoc! {r##"
         digraph "CFG" {{
             "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="match"];
-            "Point(2)" [label="return"];
-            "Point(3)" [label="break"];
-            "Point(4)" [label="continue"];
-            "Point(5)" [label="expr"];
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="match"];
+            "Location(4:12)" [label="return"];
+            "Location(6:12)" [label="break"];
+            "Location(8:12)" [label="continue"];
+            "Location(10:12)" [label="expr"];
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)" [label="match(0)"];
-            "Point(1)" -> "Point(3)" [label="match(1)"];
-            "Point(1)" -> "Point(4)" [label="match(2)"];
-            "Point(1)" -> "Point(5)" [label="match(3)"];
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="return"];
-            "Point(3)" -> "Exit" [label="break"];
-            "Point(4)" -> "Point(0)" [label="continue"];
-            "Point(5)" -> "Point(0)";
-            "Point(5)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(4:12)" [label="match(0)"];
+            "Location(2:4)" -> "Location(6:12)" [label="match(1)"];
+            "Location(2:4)" -> "Location(8:12)" [label="match(2)"];
+            "Location(2:4)" -> "Location(10:12)" [label="match(3)"];
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(4:12)" -> "Exit" [label="except"];
+            "Location(4:12)" -> "Exit" [label="return"];
+            "Location(6:12)" -> "Exit" [label="break"];
+            "Location(8:12)" -> "Location(1:0)" [label="continue"];
+            "Location(10:12)" -> "Location(1:0)";
+            "Location(10:12)" -> "Exit" [label="except"];
         }}
-        "#,
-        ));
+        "##};
 
-        assert_eq!(expected, actual);
-    }
+        let actual_dot = build_dot(&source);
 
-    #[rstest]
-    fn test_process_simple_try_single_except_statement() {
-        let text = source_code(
-            r#"
-        try:
-            a = 1 / 0
-        except:
-            None
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
-        digraph "CFG" {
-            "Entry";
-            "Point(0)" [label="try"];
-            "Point(1)" [label="assign"];
-            "Point(2)" [label="expr"];
-            "Point(3)" [label="end(Point(0))"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)";
-            "Point(1)" -> "Point(2)" [label="except(Point(0), 0)"];
-            "Point(1)" -> "Point(3)";
-            "Point(2)" -> "Point(3)";
-            "Point(3)" -> "Exit";
-            "Point(3)" -> "Exit" [label="except"];
-        }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    fn test_process_simple_try_multiple_except_statement() {
-        let text = source_code(
-            r#"
-        try:
-            a = 1 / 0
-        except ZeroDivisionError:
-            a += 50
-        except:
-            100
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
-        digraph "CFG" {
-            "Entry";
-            "Point(0)" [label="try"];
-            "Point(1)" [label="assign"];
-            "Point(2)" [label="aug_assign"];
-            "Point(3)" [label="expr"];
-            "Point(4)" [label="end(Point(0))"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)";
-            "Point(1)" -> "Point(2)" [label="except(Point(0), 0)"];
-            "Point(1)" -> "Point(3)" [label="except(Point(0), 1)"];
-            "Point(1)" -> "Point(4)";
-            "Point(2)" -> "Point(4)";
-            "Point(3)" -> "Point(4)";
-            "Point(4)" -> "Exit";
-            "Point(4)" -> "Exit" [label="except"];
-        }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    fn test_process_simple_try_except_else_statement() {
-        let text = source_code(
-            r#"
-        try:
-            a = 1 / 0
-        except:
-            None
-        else:
-            a += 100
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
-        digraph "CFG" {
-            "Entry";
-            "Point(0)" [label="try"];
-            "Point(1)" [label="assign"];
-            "Point(2)" [label="aug_assign"];
-            "Point(3)" [label="expr"];
-            "Point(4)" [label="end(Point(0))"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)";
-            "Point(1)" -> "Point(2)";
-            "Point(1)" -> "Point(3)" [label="except(Point(0), 0)"];
-            "Point(2)" -> "Point(4)";
-            "Point(3)" -> "Point(4)";
-            "Point(4)" -> "Exit";
-            "Point(4)" -> "Exit" [label="except"];
-        }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
-    }
-
-    #[rstest]
-    fn test_process_simple_try_except_finally_statement() {
-        let text = source_code(
-            r#"
-        try:
-            a = 1 / 0
-        except:
-            None
-        finally:
-            a += 50
-        "#,
-        );
-
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(
-            r#"
-        digraph "CFG" {
-            "Entry";
-            "Point(0)" [label="try"];
-            "Point(1)" [label="assign"];
-            "Point(2)" [label="expr"];
-            "Point(3)" [label="end(Point(0))"];
-            "Point(4)" [label="aug_assign"];
-            "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)";
-            "Point(1)" -> "Point(2)" [label="except(Point(0), 0)"];
-            "Point(1)" -> "Point(4)";
-            "Point(2)" -> "Point(4)";
-            "Point(3)" -> "Exit";
-            "Point(3)" -> "Exit" [label="except"];
-            "Point(4)" -> "Point(3)";
-            "Point(4)" -> "Exit" [label="except"];
-        }
-        "#,
-        );
-
-        assert_eq!(expected, actual);
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
     }
 
     #[rstest]
     #[case::while_loop(while_i_fixture())]
     #[case::for_loop(for_i_fixture())]
-    fn test_process_complex_try_except_else_finally_statement(
+    fn test_build_cfg_complex_try_except_else_finally_statement(
         #[case] (loop_header, loop_name): (String, String),
     ) {
-        let text = source_code(&format!(
-            r#"
+        let source = formatdoc! {r##"
         {loop_header}:
             try:
                 if True:
@@ -2930,244 +2642,227 @@ mod tests {
                     raise Exception()
                 else:
                     a = 1 / 0
-        "#,
-        ));
+        "##};
 
-        let actual = build_dot_from_source(&text);
-
-        let expected = source_code(&format!(
-            r#"
+        let expected_dot = formatdoc! {r##"
         digraph "CFG" {{
             "Entry";
-            "Point(0)" [label="{loop_name}"];
-            "Point(1)" [label="try"];
-            "Point(2)" [label="if"];
-            "Point(3)" [label="return"];
-            "Point(4)" [label="if"];
-            "Point(5)" [label="break"];
-            "Point(6)" [label="if"];
-            "Point(7)" [label="continue"];
-            "Point(8)" [label="if"];
-            "Point(9)" [label="raise"];
-            "Point(10)" [label="assign"];
-            "Point(11)" [label="if"];
-            "Point(12)" [label="return"];
-            "Point(13)" [label="if"];
-            "Point(14)" [label="break"];
-            "Point(15)" [label="if"];
-            "Point(16)" [label="continue"];
-            "Point(17)" [label="if"];
-            "Point(18)" [label="raise"];
-            "Point(19)" [label="assign"];
-            "Point(20)" [label="if"];
-            "Point(21)" [label="return"];
-            "Point(22)" [label="if"];
-            "Point(23)" [label="break"];
-            "Point(24)" [label="if"];
-            "Point(25)" [label="continue"];
-            "Point(26)" [label="if"];
-            "Point(27)" [label="raise"];
-            "Point(28)" [label="assign"];
-            "Point(29)" [label="end(Point(1))"];
-            "Point(30)" [label="if"];
-            "Point(31)" [label="return"];
-            "Point(32)" [label="if"];
-            "Point(33)" [label="break"];
-            "Point(34)" [label="if"];
-            "Point(35)" [label="continue"];
-            "Point(36)" [label="if"];
-            "Point(37)" [label="raise"];
-            "Point(38)" [label="assign"];
+            "Location(1:0)" [label="{loop_name}"];
+            "Location(2:4)" [label="try"];
+            "Location(3:8)" [label="if"];
+            "Location(4:12)" [label="return"];
+            "Location(5:8)" [label="elif"];
+            "Location(6:12)" [label="break"];
+            "Location(7:8)" [label="elif"];
+            "Location(8:12)" [label="continue"];
+            "Location(9:8)" [label="elif"];
+            "Location(10:12)" [label="raise"];
+            "Location(12:12)" [label="assign"];
+            "Location(14:8)" [label="if"];
+            "Location(15:12)" [label="return"];
+            "Location(16:8)" [label="elif"];
+            "Location(17:12)" [label="break"];
+            "Location(18:8)" [label="elif"];
+            "Location(19:12)" [label="continue"];
+            "Location(20:8)" [label="elif"];
+            "Location(21:12)" [label="raise"];
+            "Location(23:12)" [label="assign"];
+            "Location(25:8)" [label="if"];
+            "Location(26:12)" [label="return"];
+            "Location(27:8)" [label="elif"];
+            "Location(28:12)" [label="break"];
+            "Location(29:8)" [label="elif"];
+            "Location(30:12)" [label="continue"];
+            "Location(31:8)" [label="elif"];
+            "Location(32:12)" [label="raise"];
+            "Location(34:12)" [label="assign"];
+            "Location(36:8)" [label="if"];
+            "Location(37:12)" [label="return"];
+            "Location(38:8)" [label="elif"];
+            "Location(39:12)" [label="break"];
+            "Location(40:8)" [label="elif"];
+            "Location(41:12)" [label="continue"];
+            "Location(42:8)" [label="elif"];
+            "Location(43:12)" [label="raise"];
+            "Location(45:12)" [label="assign"];
+            "End(2:4)";
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Point(1)" [label="true"];
-            "Point(0)" -> "Exit" [label="false"];
-            "Point(0)" -> "Exit" [label="except"];
-            "Point(1)" -> "Point(2)";
-            "Point(2)" -> "Point(3)" [label="true"];
-            "Point(2)" -> "Point(4)" [label="false"];
-            "Point(2)" -> "Point(20)" [label="except(Point(1), 0)"];
-            "Point(3)" -> "Point(20)" [label="except(Point(1), 0)"];
-            "Point(3)" -> "Point(30)";
-            "Point(4)" -> "Point(5)" [label="true"];
-            "Point(4)" -> "Point(6)" [label="false"];
-            "Point(4)" -> "Point(20)" [label="except(Point(1), 0)"];
-            "Point(5)" -> "Point(30)";
-            "Point(6)" -> "Point(7)" [label="true"];
-            "Point(6)" -> "Point(8)" [label="false"];
-            "Point(6)" -> "Point(20)" [label="except(Point(1), 0)"];
-            "Point(7)" -> "Point(30)";
-            "Point(8)" -> "Point(9)" [label="true"];
-            "Point(8)" -> "Point(10)" [label="false"];
-            "Point(8)" -> "Point(20)" [label="except(Point(1), 0)"];
-            "Point(9)" -> "Point(20)" [label="except(Point(1), 0)"];
-            "Point(10)" -> "Point(11)";
-            "Point(10)" -> "Point(20)" [label="except(Point(1), 0)"];
-            "Point(11)" -> "Point(12)" [label="true"];
-            "Point(11)" -> "Point(13)" [label="false"];
-            "Point(11)" -> "Point(30)";
-            "Point(12)" -> "Point(30)";
-            "Point(13)" -> "Point(14)" [label="true"];
-            "Point(13)" -> "Point(15)" [label="false"];
-            "Point(13)" -> "Point(30)";
-            "Point(14)" -> "Point(30)";
-            "Point(15)" -> "Point(16)" [label="true"];
-            "Point(15)" -> "Point(17)" [label="false"];
-            "Point(15)" -> "Point(30)";
-            "Point(16)" -> "Point(30)";
-            "Point(17)" -> "Point(18)" [label="true"];
-            "Point(17)" -> "Point(19)" [label="false"];
-            "Point(17)" -> "Point(30)";
-            "Point(18)" -> "Point(30)";
-            "Point(19)" -> "Point(30)";
-            "Point(20)" -> "Point(21)" [label="true"];
-            "Point(20)" -> "Point(22)" [label="false"];
-            "Point(20)" -> "Point(30)";
-            "Point(21)" -> "Point(30)";
-            "Point(22)" -> "Point(23)" [label="true"];
-            "Point(22)" -> "Point(24)" [label="false"];
-            "Point(22)" -> "Point(30)";
-            "Point(23)" -> "Point(30)";
-            "Point(24)" -> "Point(25)" [label="true"];
-            "Point(24)" -> "Point(26)" [label="false"];
-            "Point(24)" -> "Point(30)";
-            "Point(25)" -> "Point(30)";
-            "Point(26)" -> "Point(27)" [label="true"];
-            "Point(26)" -> "Point(28)" [label="false"];
-            "Point(26)" -> "Point(30)";
-            "Point(27)" -> "Point(30)";
-            "Point(28)" -> "Point(30)";
-            "Point(29)" -> "Point(0)";
-            "Point(29)" -> "Point(0)" [label="continue"];
-            "Point(29)" -> "Exit" [label="except"];
-            "Point(29)" -> "Exit" [label="break"];
-            "Point(29)" -> "Exit" [label="return"];
-            "Point(30)" -> "Point(31)" [label="true"];
-            "Point(30)" -> "Point(32)" [label="false"];
-            "Point(30)" -> "Exit" [label="except"];
-            "Point(31)" -> "Exit" [label="except"];
-            "Point(31)" -> "Exit" [label="return"];
-            "Point(32)" -> "Point(33)" [label="true"];
-            "Point(32)" -> "Point(34)" [label="false"];
-            "Point(32)" -> "Exit" [label="except"];
-            "Point(33)" -> "Exit" [label="break"];
-            "Point(34)" -> "Point(35)" [label="true"];
-            "Point(34)" -> "Point(36)" [label="false"];
-            "Point(34)" -> "Exit" [label="except"];
-            "Point(35)" -> "Point(0)" [label="continue"];
-            "Point(36)" -> "Point(37)" [label="true"];
-            "Point(36)" -> "Point(38)" [label="false"];
-            "Point(36)" -> "Exit" [label="except"];
-            "Point(37)" -> "Exit" [label="except"];
-            "Point(38)" -> "Point(29)";
-            "Point(38)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Location(2:4)" [label="true"];
+            "Location(1:0)" -> "Exit" [label="false"];
+            "Location(1:0)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Location(3:8)";
+            "Location(3:8)" -> "Location(4:12)" [label="true"];
+            "Location(3:8)" -> "Location(5:8)" [label="false"];
+            "Location(3:8)" -> "Location(14:8)" [label="except(Location(2:4), 0)"];
+            "Location(4:12)" -> "Location(14:8)" [label="except(Location(2:4), 0)"];
+            "Location(4:12)" -> "Location(36:8)";
+            "Location(5:8)" -> "Location(6:12)" [label="true"];
+            "Location(5:8)" -> "Location(7:8)" [label="false"];
+            "Location(5:8)" -> "Location(14:8)" [label="except(Location(2:4), 0)"];
+            "Location(6:12)" -> "Location(36:8)";
+            "Location(7:8)" -> "Location(8:12)" [label="true"];
+            "Location(7:8)" -> "Location(9:8)" [label="false"];
+            "Location(7:8)" -> "Location(14:8)" [label="except(Location(2:4), 0)"];
+            "Location(8:12)" -> "Location(36:8)";
+            "Location(9:8)" -> "Location(10:12)" [label="true"];
+            "Location(9:8)" -> "Location(12:12)" [label="false"];
+            "Location(9:8)" -> "Location(14:8)" [label="except(Location(2:4), 0)"];
+            "Location(10:12)" -> "Location(14:8)" [label="except(Location(2:4), 0)"];
+            "Location(12:12)" -> "Location(14:8)" [label="except(Location(2:4), 0)"];
+            "Location(12:12)" -> "Location(25:8)";
+            "Location(14:8)" -> "Location(15:12)" [label="true"];
+            "Location(14:8)" -> "Location(16:8)" [label="false"];
+            "Location(14:8)" -> "Location(36:8)";
+            "Location(15:12)" -> "Location(36:8)";
+            "Location(16:8)" -> "Location(17:12)" [label="true"];
+            "Location(16:8)" -> "Location(18:8)" [label="false"];
+            "Location(16:8)" -> "Location(36:8)";
+            "Location(17:12)" -> "Location(36:8)";
+            "Location(18:8)" -> "Location(19:12)" [label="true"];
+            "Location(18:8)" -> "Location(20:8)" [label="false"];
+            "Location(18:8)" -> "Location(36:8)";
+            "Location(19:12)" -> "Location(36:8)";
+            "Location(20:8)" -> "Location(21:12)" [label="true"];
+            "Location(20:8)" -> "Location(23:12)" [label="false"];
+            "Location(20:8)" -> "Location(36:8)";
+            "Location(21:12)" -> "Location(36:8)";
+            "Location(23:12)" -> "Location(36:8)";
+            "Location(25:8)" -> "Location(26:12)" [label="true"];
+            "Location(25:8)" -> "Location(27:8)" [label="false"];
+            "Location(25:8)" -> "Location(36:8)";
+            "Location(26:12)" -> "Location(36:8)";
+            "Location(27:8)" -> "Location(28:12)" [label="true"];
+            "Location(27:8)" -> "Location(29:8)" [label="false"];
+            "Location(27:8)" -> "Location(36:8)";
+            "Location(28:12)" -> "Location(36:8)";
+            "Location(29:8)" -> "Location(30:12)" [label="true"];
+            "Location(29:8)" -> "Location(31:8)" [label="false"];
+            "Location(29:8)" -> "Location(36:8)";
+            "Location(30:12)" -> "Location(36:8)";
+            "Location(31:8)" -> "Location(32:12)" [label="true"];
+            "Location(31:8)" -> "Location(34:12)" [label="false"];
+            "Location(31:8)" -> "Location(36:8)";
+            "Location(32:12)" -> "Location(36:8)";
+            "Location(34:12)" -> "Location(36:8)";
+            "Location(36:8)" -> "Location(37:12)" [label="true"];
+            "Location(36:8)" -> "Location(38:8)" [label="false"];
+            "Location(36:8)" -> "Exit" [label="except"];
+            "Location(37:12)" -> "Exit" [label="except"];
+            "Location(37:12)" -> "Exit" [label="return"];
+            "Location(38:8)" -> "Location(39:12)" [label="true"];
+            "Location(38:8)" -> "Location(40:8)" [label="false"];
+            "Location(38:8)" -> "Exit" [label="except"];
+            "Location(39:12)" -> "Exit" [label="break"];
+            "Location(40:8)" -> "Location(41:12)" [label="true"];
+            "Location(40:8)" -> "Location(42:8)" [label="false"];
+            "Location(40:8)" -> "Exit" [label="except"];
+            "Location(41:12)" -> "Location(1:0)" [label="continue"];
+            "Location(42:8)" -> "Location(43:12)" [label="true"];
+            "Location(42:8)" -> "Location(45:12)" [label="false"];
+            "Location(42:8)" -> "Exit" [label="except"];
+            "Location(43:12)" -> "Exit" [label="except"];
+            "Location(45:12)" -> "End(2:4)";
+            "Location(45:12)" -> "Exit" [label="except"];
+            "End(2:4)" -> "Location(1:0)";
+            "End(2:4)" -> "Location(1:0)" [label="continue"];
+            "End(2:4)" -> "Exit" [label="except"];
+            "End(2:4)" -> "Exit" [label="break"];
+            "End(2:4)" -> "Exit" [label="return"];
         }}
-        "#,
-        ));
+        "##};
 
-        assert_eq!(expected, actual);
+        let actual_dot = build_dot(&source);
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
     }
 
     #[rstest]
-    fn test_process_function_statement() {
-        let text = source_code(
-            r#"
+    fn test_build_cfg_function_statement() {
+        let source = indoc! {r##"
         def multiply(a, b):
             return a * b
-        "#,
-        );
+        "##};
 
-        let module_cfg = build_cfg_from_source(&text);
-        let module_actual = build_dot_from_cfg(&module_cfg);
-        let module_expected = source_code(
-            r#"
+        let expected_dot = indoc! {r##"
         digraph "CFG" {
             "Entry";
-            "Point(0)" [label="function_def"];
+            "Location(1:0)" [label="function_def"];
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Exit";
-            "Point(0)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Exit";
+            "Location(1:0)" -> "Exit" [label="except"];
         }
-        "#,
-        );
-
-        let function_cfg = &module_cfg.cfgs()[&ProgramPoint::Point(0)];
-        let function_actual = build_dot_from_cfg(function_cfg);
-        let function_expected = source_code(
-            r#"
-        digraph "CFG" {
+        digraph "1:0" {
             "Entry";
-            "Point(1)" [label="return"];
+            "Location(2:4)" [label="return"];
             "Exit";
-            "Entry" -> "Point(1)";
-            "Point(1)" -> "Exit" [label="except"];
-            "Point(1)" -> "Exit" [label="return"];
+            "Entry" -> "Location(2:4)";
+            "Location(2:4)" -> "Exit" [label="except"];
+            "Location(2:4)" -> "Exit" [label="return"];
         }
-        "#,
-        );
+        "##};
 
-        assert_eq!(module_expected, module_actual);
-        assert_eq!(function_expected, function_actual);
+        let (line_index, mod_module) = parse_source(&source);
+
+        let cfg = build_cfg(&line_index, &mod_module);
+
+        let mut actual_dot = cfg.dot("CFG");
+        for (sub_location, sub_cfg) in cfg.cfgs().iter().collect::<BTreeMap<_, _>>() {
+            actual_dot.push_str(&sub_cfg.dot(&sub_location.to_string()));
+        }
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
     }
 
     #[rstest]
-    fn test_process_class_statement() {
-        let text = source_code(
-            r#"
+    fn test_build_cfg_class_statement() {
+        let source = indoc! {r##"
         class Calculator:
             def multiply(a, b):
                 return a * b
-        "#,
-        );
+        "##};
 
-        let module_cfg = build_cfg_from_source(&text);
-        let module_actual = build_dot_from_cfg(&module_cfg);
-        let module_expected = source_code(
-            r#"
+        let expected_dot = indoc! {r##"
         digraph "CFG" {
             "Entry";
-            "Point(0)" [label="class_def"];
+            "Location(1:0)" [label="class_def"];
             "Exit";
-            "Entry" -> "Point(0)";
-            "Point(0)" -> "Exit";
-            "Point(0)" -> "Exit" [label="except"];
+            "Entry" -> "Location(1:0)";
+            "Location(1:0)" -> "Exit";
+            "Location(1:0)" -> "Exit" [label="except"];
         }
-        "#,
-        );
-
-        let class_cfg = &module_cfg.cfgs()[&ProgramPoint::Point(0)];
-        let class_actual = build_dot_from_cfg(class_cfg);
-        let class_expected = source_code(
-            r#"
-        digraph "CFG" {
+        digraph "1:0" {
             "Entry";
-            "Point(1)" [label="function_def"];
+            "Location(2:4)" [label="function_def"];
             "Exit";
-            "Entry" -> "Point(1)";
-            "Point(1)" -> "Exit";
-            "Point(1)" -> "Exit" [label="except"];
+            "Entry" -> "Location(2:4)";
+            "Location(2:4)" -> "Exit";
+            "Location(2:4)" -> "Exit" [label="except"];
         }
-        "#,
-        );
-
-        let method_cfg = &class_cfg.cfgs()[&ProgramPoint::Point(1)];
-        let method_actual = build_dot_from_cfg(method_cfg);
-        let method_expected = source_code(
-            r#"
-        digraph "CFG" {
+        digraph "2:4" {
             "Entry";
-            "Point(2)" [label="return"];
+            "Location(3:8)" [label="return"];
             "Exit";
-            "Entry" -> "Point(2)";
-            "Point(2)" -> "Exit" [label="except"];
-            "Point(2)" -> "Exit" [label="return"];
+            "Entry" -> "Location(3:8)";
+            "Location(3:8)" -> "Exit" [label="except"];
+            "Location(3:8)" -> "Exit" [label="return"];
         }
-        "#,
-        );
+        "##};
 
-        assert_eq!(module_expected, module_actual);
-        assert_eq!(class_expected, class_actual);
-        assert_eq!(method_expected, method_actual);
+        let (line_index, mod_module) = parse_source(&source);
+
+        let cfg = build_cfg(&line_index, &mod_module);
+
+        let mut actual_dot = cfg.dot("CFG");
+        for (sub_location, sub_cfg) in cfg.cfgs().iter().collect::<BTreeMap<_, _>>() {
+            actual_dot.push_str(&sub_cfg.dot(&sub_location.to_string()));
+            for (sub_sub_location, sub_sub_cfg) in sub_cfg.cfgs().iter().collect::<BTreeMap<_, _>>()
+            {
+                actual_dot.push_str(&sub_sub_cfg.dot(&sub_sub_location.to_string()));
+            }
+        }
+
+        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
     }
 }

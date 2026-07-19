@@ -1,11 +1,12 @@
-use crate::constraints::{ModuleNode, SpecCfgImporter, analyse_program};
+use crate::constraints::{ModuleNode, SpecModuleLoader, analyse_program};
 use crate::converter::v1::convert_apy_v1;
 use crate::solver::ModuleConstraintSolver;
 pub use apy;
 use apy::v1::{Identifier, QualifiedName};
 pub use apygen_analysis as analysis;
-use apygen_analysis::analysis;
 use apygen_analysis::log::LogAnalysisObserver;
+use apygen_analysis::rayon::par_analysis;
+pub use apygen_cfg as cfg;
 pub use apygen_finder as finder;
 pub use finder::filesystem::{AbsolutePathBuf, Filesystem, LocalFilesystem};
 pub use finder::pathfinder::PathFinder;
@@ -13,7 +14,6 @@ use log::debug;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use apygen_analysis::rayon::par_analysis;
 
 pub mod abstract_environment;
 pub mod constraints;
@@ -49,9 +49,9 @@ pub fn analyse_workdir(
         })
         .collect();
 
-    let cfg_importer = SpecCfgImporter { specs };
+    let module_loader = SpecModuleLoader { specs };
 
-    let dependent_graph = analyse_program(&cfg_importer, target_modules.into_iter());
+    let dependent_graph = analyse_program(&module_loader, target_modules.into_iter());
 
     let solver = ModuleConstraintSolver::new(&dependent_graph);
 

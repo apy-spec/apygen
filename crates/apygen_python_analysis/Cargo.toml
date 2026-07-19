@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 apygen_analysis = { workspace = true }
 apygen_finder = { workspace = true }
+apygen_cfg = { workspace = true }
 apy = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }

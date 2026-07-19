@@ -1,7 +1,7 @@
-use crate::analysis::cfg::nodes::{
+use crate::abstract_environment::{Identifier, ParseIdentifierError};
+use crate::cfg::ast::{
     Expr, ExprAttribute, ExprList, ExprName, ExprStarred, ExprSubscript, ExprTuple,
 };
-use crate::abstract_environment::{ParseIdentifierError, Identifier};
 use thiserror::Error;
 
 #[derive(Debug, Error)]

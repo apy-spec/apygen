@@ -1,4 +1,3 @@
-pub use apygen_cfg as cfg;
 use std::collections::BTreeSet;
 
 pub mod abstract_state;

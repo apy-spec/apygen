@@ -2,7 +2,7 @@ use crate::abstract_environment::{
     LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger, LiteralString,
     Type, TypeLiteral,
 };
-use crate::analysis::cfg::nodes::{
+use crate::cfg::ast::{
     ExprBooleanLiteral, ExprBytesLiteral, ExprNumberLiteral, ExprStringLiteral, Number,
 };
 use num_bigint::BigInt;
