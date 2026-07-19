@@ -1,5 +1,9 @@
 use std::fmt::{self, Formatter};
 
+pub fn escape_dot(string: &str) -> String {
+    string.replace('"', r#"\""#)
+}
+
 pub trait Dot {
     fn fmt(&self, f: &mut Formatter<'_>, name: &str) -> fmt::Result;
 }
