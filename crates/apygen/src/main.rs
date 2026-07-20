@@ -1,5 +1,6 @@
 use apy::Apy;
-use apygen_python_analysis::{AbsolutePathBuf, LocalFilesystem, analyse_workdir};
+use apygen::analyse_workdir;
+use apygen_finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
 use std::fs::File;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

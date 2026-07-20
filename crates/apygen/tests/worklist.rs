@@ -1,3 +1,4 @@
+use apygen_converter::v1::convert_apy_v1;
 use apygen_python_analysis::analysis::log::LogAnalysisObserver;
 use apygen_python_analysis::analysis::rayon::par_analysis;
 use apygen_python_analysis::cfg::graph::dot::ToDot;
@@ -6,7 +7,6 @@ use apygen_python_analysis::constraint_builder::constraints::expressions::{
 };
 use apygen_python_analysis::constraint_builder::constraints::{ModuleDependentGraph, ModuleNode};
 use apygen_python_analysis::constraint_builder::{SpecModuleLoader, analyse_program};
-use apygen_python_analysis::converter::v1::convert_apy_v1;
 use apygen_python_analysis::finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
 use apygen_python_analysis::finder::pathfinder::PathFinder;
 use apygen_python_analysis::solver::ModuleConstraintSolver;

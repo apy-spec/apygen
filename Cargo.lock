@@ -118,8 +118,16 @@ name = "apygen"
 version = "0.1.0"
 dependencies = [
  "apy",
+ "apygen_analysis",
+ "apygen_constraint_builder",
+ "apygen_converter",
+ "apygen_finder",
  "apygen_python_analysis",
  "env_logger",
+ "indoc",
+ "log",
+ "rayon",
+ "rstest",
 ]
 
 [[package]]
@@ -188,6 +196,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "apygen_converter"
+version = "0.1.0"
+dependencies = [
+ "apy",
+ "apygen_analysis",
+ "apygen_constraints",
+ "apygen_inference",
+ "apygen_primitives",
+ "apygen_python_analysis",
+ "imbl",
+ "log",
+ "rayon",
+]
+
+[[package]]
 name = "apygen_finder"
 version = "0.1.0"
 dependencies = [
@@ -236,8 +259,6 @@ dependencies = [
  "env_logger",
  "imbl",
  "indoc",
- "log",
- "rayon",
  "rstest",
  "thiserror",
 ]

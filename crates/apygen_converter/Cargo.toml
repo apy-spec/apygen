@@ -1,0 +1,17 @@
+[package]
+name = "apygen_converter"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+apygen_analysis = { workspace = true }
+apygen_constraints = { workspace = true }
+apygen_python_analysis = { workspace = true }
+apygen_inference = { workspace = true }
+apygen_primitives = { workspace = true }
+apy = { workspace = true }
+rayon = { workspace = true }
+imbl = { workspace = true }
+log = { workspace = true }

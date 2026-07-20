@@ -6,6 +6,18 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+apygen_analysis = { workspace = true }
+apygen_finder = { workspace = true }
+apygen_constraint_builder = { workspace = true }
 apygen_python_analysis = { workspace = true }
-apy = { workspace = true, features = ["yaml"] }
+apygen_converter = { workspace = true }
+apy = { workspace = true }
 env_logger = { workspace = true }
+log = { workspace = true }
+rayon = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }
+apy = { workspace = true, features = ["yaml"] }
+rstest = { workspace = true }
+indoc = { workspace = true }
