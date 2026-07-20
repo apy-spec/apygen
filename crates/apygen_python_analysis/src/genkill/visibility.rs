@@ -1,4 +1,4 @@
-use crate::abstract_environment::{QualifiedName, Visibility};
+use crate::inference::{QualifiedName, Visibility};
 
 pub fn is_dunder_name(name: &str) -> bool {
     name.starts_with("__") && name.ends_with("__")

@@ -1,4 +1,4 @@
-use crate::abstract_environment::{
+use crate::inference::{
     BUILTINS_MODULE, Base, LiteralClass, LiteralDict, LiteralFunction, LiteralGeneric,
     LiteralImportedModule, LiteralList, LiteralTuple, LiteralTypeAlias, QualifiedName,
     RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion,

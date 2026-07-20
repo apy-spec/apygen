@@ -11,6 +11,7 @@ pub use apygen_cfg as cfg;
 pub use apygen_constraint_builder as constraint_builder;
 pub use apygen_finder as finder;
 pub use apygen_primitives as primitives;
+pub use apygen_inference as inference;
 pub use finder::filesystem::{AbsolutePathBuf, Filesystem, LocalFilesystem};
 pub use finder::pathfinder::PathFinder;
 use log::debug;
@@ -18,7 +19,6 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-pub mod abstract_environment;
 pub mod converter;
 pub mod genkill;
 pub mod solver;

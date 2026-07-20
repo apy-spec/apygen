@@ -203,6 +203,17 @@ name = "apygen_graph"
 version = "0.1.0"
 
 [[package]]
+name = "apygen_inference"
+version = "0.1.0"
+dependencies = [
+ "apy",
+ "apygen_analysis",
+ "apygen_constraints",
+ "apygen_primitives",
+ "imbl",
+]
+
+[[package]]
 name = "apygen_primitives"
 version = "0.1.0"
 dependencies = [
@@ -222,6 +233,7 @@ dependencies = [
  "apygen_constraint_builder",
  "apygen_constraints",
  "apygen_finder",
+ "apygen_inference",
  "apygen_primitives",
  "criterion",
  "env_logger",

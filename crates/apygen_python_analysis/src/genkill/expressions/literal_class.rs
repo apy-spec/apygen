@@ -1,4 +1,4 @@
-use crate::abstract_environment::LiteralClass;
+use crate::inference::LiteralClass;
 use std::collections::VecDeque;
 
 /// References:
@@ -63,7 +63,7 @@ pub fn method_resolution_order(literal_class: &LiteralClass) -> Option<VecDeque<
 
 #[cfg(test)]
 mod tests {
-    use crate::abstract_environment::{ClassType, LiteralClass};
+    use crate::inference::{ClassType, LiteralClass};
     use crate::genkill::expressions::literal_class::method_resolution_order;
     use apy::v1::{Identifier, QualifiedName};
     use apygen_constraints::expressions::{ProgramEntityIdentifier, QualifiedLocation};

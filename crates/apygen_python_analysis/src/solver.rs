@@ -1,4 +1,4 @@
-use crate::abstract_environment::{
+use crate::inference::{
     BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Exception, ExceptionOrigin, FunctionType,
     LiteralClass, LiteralFunction, LiteralMethod, RaisedExceptions, StructuralDepth,
     StructuralWidth, TYPES_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion, WIDTH_LIMIT,
@@ -1625,7 +1625,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abstract_environment::BUILTINS_MODULE;
+    use crate::inference::BUILTINS_MODULE;
     use crate::constraint_builder::{ModuleLoader, analyse_program};
     use apy::v1::QualifiedName;
     use apygen_analysis::analysis;

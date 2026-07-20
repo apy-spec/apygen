@@ -3,7 +3,7 @@ pub mod expressions;
 pub mod literals;
 pub mod visibility;
 
-use crate::abstract_environment::Identifier;
+use crate::inference::Identifier;
 use crate::cfg::ast::{Expr, ExprAttribute, ExprName};
 use apy::OneOrMany;
 use apy::v1::{ParseIdentifierError, QualifiedName};

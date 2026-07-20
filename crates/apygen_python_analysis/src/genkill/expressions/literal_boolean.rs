@@ -1,4 +1,4 @@
-use crate::abstract_environment::Type;
+use crate::inference::Type;
 use crate::genkill::expressions;
 use crate::genkill::expressions::PyTypeEval;
 use crate::primitives::literals::{LiteralBool, LiteralInt};

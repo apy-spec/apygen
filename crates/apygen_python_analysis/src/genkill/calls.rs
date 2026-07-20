@@ -1,4 +1,4 @@
-use crate::abstract_environment::{LiteralTuple, Parameter, Sourced, Type, TypeLiteral, TypeUnion};
+use crate::inference::{LiteralTuple, Parameter, Sourced, Type, TypeLiteral, TypeUnion};
 use crate::primitives::literals::LiteralStr;
 use apy::v1::{Identifier, ParameterKind};
 use imbl;

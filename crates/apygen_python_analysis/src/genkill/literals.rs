@@ -1,4 +1,4 @@
-use crate::abstract_environment::{Type, TypeLiteral};
+use crate::inference::{Type, TypeLiteral};
 use crate::cfg::ast::{ExprBooleanLiteral, ExprBytesLiteral, ExprStringLiteral};
 use crate::primitives::literals::{LiteralBool, LiteralBytes, LiteralStr};
 use std::sync::Arc;
