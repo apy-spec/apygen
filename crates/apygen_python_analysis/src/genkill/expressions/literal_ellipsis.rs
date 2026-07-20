@@ -1,7 +1,7 @@
 use crate::abstract_environment::{Exception, Type};
-use crate::constraints::UnaryOperator;
 use crate::genkill::expressions::PyTypeEval;
 use crate::primitives::literals::LiteralBool;
+use apygen_constraints::expressions::UnaryOperator;
 
 pub fn as_boolean() -> bool {
     true

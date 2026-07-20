@@ -1,9 +1,6 @@
-use crate::abstract_environment::{
-    TYPES_MODULE, TYPING_MODULE, TypeAliasKind, TypeInstance, TypeLiteral,
-};
-use crate::constraints::{BinaryOperator, UnaryOperator};
+use crate::abstract_environment::TypeLiteral;
 use crate::genkill::expressions::{self, PyTypeEval};
-use apy::v1::{Identifier, QualifiedName};
+use apygen_constraints::expressions::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
     match type_literal {

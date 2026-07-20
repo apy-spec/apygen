@@ -3,7 +3,6 @@ use crate::abstract_environment::{
     LiteralImportedModule, LiteralList, LiteralTuple, LiteralTypeAlias, QualifiedName,
     RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion,
 };
-use crate::constraints::{Expression, ExpressionVariable, ModuleName, QualifiedLocation};
 use crate::genkill::visibility::visibility_from_name;
 use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
@@ -12,6 +11,9 @@ use crate::solver::{EvaluationState, ProgramEvaluation};
 use apy;
 use apygen_analysis::abstract_state::AbstractState;
 use apygen_analysis::lattice::Join;
+use apygen_constraints::expressions::{
+    Expression, ExpressionVariable, ModuleName, QualifiedLocation,
+};
 use log::debug;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;

@@ -1,8 +1,8 @@
 use crate::abstract_environment::{Exception, Type};
-use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::PyTypeEval;
 use crate::primitives::ToPrimitive;
 use crate::primitives::literals::{LiteralBool, LiteralBytes, LiteralInt};
+use apygen_constraints::expressions::{BinaryOperator, UnaryOperator};
 use std::sync::Arc;
 
 pub fn as_boolean(literal_bytes: &LiteralBytes) -> bool {

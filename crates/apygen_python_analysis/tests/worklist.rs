@@ -1,12 +1,11 @@
 use apy::v1::{Identifier, QualifiedName};
 use apygen_analysis::log::LogAnalysisObserver;
 use apygen_analysis::rayon::par_analysis;
+use apygen_cfg::graph::dot::ToDot;
+use apygen_constraints::{ModuleDependentGraph, ModuleNode};
 use apygen_finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
 use apygen_finder::pathfinder::PathFinder;
-use apygen_python_analysis::constraints::{
-    DependentGraph, ModuleNode, ProgramEntityConstraints, QualifiedLocation, SpecModuleLoader,
-    analyse_program,
-};
+use apygen_python_analysis::constraints::{SpecModuleLoader, analyse_program};
 use apygen_python_analysis::converter::v1::convert_apy_v1;
 use apygen_python_analysis::solver::ModuleConstraintSolver;
 use rstest::rstest;
@@ -15,7 +14,6 @@ use std::fs;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
-use apygen_cfg::graph::dot::ToDot;
 
 fn init_logger() {
     let _ = env_logger::builder().is_test(true).try_init();
@@ -39,10 +37,7 @@ fn typeshed_dir() -> AbsolutePathBuf {
 pub fn analyse_directory(
     directory: AbsolutePathBuf,
     target_module: Arc<QualifiedName>,
-) -> (
-    DependentGraph<ModuleNode, imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>>,
-    apy::Apy,
-) {
+) -> (ModuleDependentGraph, apy::Apy) {
     let finder = PathFinder::new(
         Arc::new(LocalFilesystem),
         vec![directory.clone()],

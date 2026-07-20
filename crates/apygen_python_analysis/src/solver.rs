@@ -3,12 +3,6 @@ use crate::abstract_environment::{
     LiteralClass, LiteralFunction, LiteralMethod, RaisedExceptions, StructuralDepth,
     StructuralWidth, TYPES_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion, WIDTH_LIMIT,
 };
-use crate::constraints::{
-    BinaryOperator, Constraint, ConstraintNode, DependentGraph, Expression, ExpressionAnnotated,
-    ExpressionAttribute, ExpressionBinary, ExpressionCall, ExpressionClass, ExpressionFunction,
-    ExpressionSubscript, ExpressionUnary, ExpressionVariable, Guard, Location, ModuleName,
-    ModuleNode, ProgramEntityConstraints, QualifiedLocation, VariableName,
-};
 use crate::genkill::calls::Arguments;
 use crate::genkill::expressions::literal_class::method_resolution_order;
 use crate::genkill::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
@@ -18,6 +12,14 @@ use apygen_analysis::abstract_state::{AbstractState, AbstractStateProxy};
 use apygen_analysis::fmt::{fmt_display_set, fmt_set};
 use apygen_analysis::lattice::Join;
 use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
+use apygen_constraints::expressions::{
+    BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
+    ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionSubscript, ExpressionUnary,
+    ExpressionVariable, Location, ModuleName, QualifiedLocation, VariableName,
+};
+use apygen_constraints::{
+    Constraint, ConstraintNode, ModuleDependentGraph, Guard, ModuleNode, ProgramEntityConstraints,
+};
 use imbl::ordmap::Entry;
 use std::convert::Infallible;
 use std::fmt::{Debug, Display};
@@ -1519,17 +1521,11 @@ pub fn analyse_program_entity<
 }
 
 pub struct ModuleConstraintSolver<'a> {
-    pub graph:
-        &'a DependentGraph<ModuleNode, imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>>,
+    pub graph: &'a ModuleDependentGraph,
 }
 
 impl<'a> ModuleConstraintSolver<'a> {
-    pub fn new(
-        graph: &'a DependentGraph<
-            ModuleNode,
-            imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
-        >,
-    ) -> Self {
+    pub fn new(graph: &'a ModuleDependentGraph) -> Self {
         Self { graph }
     }
 }
@@ -1630,7 +1626,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 mod tests {
     use super::*;
     use crate::abstract_environment::BUILTINS_MODULE;
-    use crate::constraints::{ModuleLoader, ModuleName, analyse_program};
+    use crate::constraints::{ModuleLoader, analyse_program};
     use apy::v1::QualifiedName;
     use apygen_analysis::analysis;
     use apygen_analysis::log::LogAnalysisObserver;

@@ -1,8 +1,8 @@
 use crate::abstract_environment::Type;
-use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions;
 use crate::genkill::expressions::PyTypeEval;
 use crate::primitives::literals::{LiteralBool, LiteralInt};
+use apygen_constraints::expressions::{BinaryOperator, UnaryOperator};
 
 pub fn as_integer(literal_boolean: &LiteralBool) -> i64 {
     if literal_boolean.value { 1 } else { 0 }

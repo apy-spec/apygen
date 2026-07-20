@@ -1,8 +1,8 @@
 use crate::abstract_environment::{Exception, Type};
-use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::PyTypeEval;
 use crate::primitives::Zero;
 use crate::primitives::literals::{LiteralBool, LiteralFloat, LiteralInt};
+use apygen_constraints::expressions::{BinaryOperator, UnaryOperator};
 use apygen_primitives::{Pow, PowOutput};
 
 pub fn as_boolean(literal_integer: &LiteralInt) -> bool {

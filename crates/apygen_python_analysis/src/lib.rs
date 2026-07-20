@@ -1,4 +1,5 @@
-use crate::constraints::{ModuleNode, SpecModuleLoader, analyse_program};
+use crate::constraints::{SpecModuleLoader, analyse_program};
+use apygen_constraints::ModuleNode;
 use crate::converter::v1::convert_apy_v1;
 use crate::solver::ModuleConstraintSolver;
 pub use apy;

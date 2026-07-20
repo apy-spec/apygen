@@ -160,6 +160,14 @@ dependencies = [
 [[package]]
 name = "apygen_constraints"
 version = "0.1.0"
+dependencies = [
+ "apy",
+ "apygen_analysis",
+ "apygen_graph",
+ "apygen_primitives",
+ "imbl",
+ "thiserror",
+]
 
 [[package]]
 name = "apygen_finder"
@@ -191,6 +199,7 @@ dependencies = [
  "apy",
  "apygen_analysis",
  "apygen_cfg",
+ "apygen_constraints",
  "apygen_finder",
  "apygen_primitives",
  "criterion",
