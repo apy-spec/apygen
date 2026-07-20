@@ -5,34 +5,29 @@ use apygen_constraint_builder::{SpecModuleLoader, analyse_program};
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-fn absolute_manifest_dir() -> AbsolutePathBuf {
-    AbsolutePathBuf::try_from(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
-        .expect("MANIFEST_DIR should be an absolute path")
-}
-
 fn typeshed_dir() -> AbsolutePathBuf {
     AbsolutePathBuf::try_from(
-        fs::canonicalize(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor/typeshed/stdlib"),
-        )
-        .expect("vendor/typeshed/stdlib should exist"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../vendor/typeshed/stdlib")
+            .canonicalize()
+            .expect("vendor/typeshed/stdlib should exist"),
     )
     .expect("canonicalized path is always absolute")
 }
 
-fn build_builtins_constraints() {
-    let absolute_manifest_dir = absolute_manifest_dir();
-    let modules_dir = absolute_manifest_dir.join("tests/data/modules");
+fn build_builtins_constraints(module_loader: &SpecModuleLoader<LocalFilesystem>) {
+    analyse_program(module_loader, std::iter::empty());
+}
 
+fn bench_constraint_builder(criterion: &mut Criterion) {
     let finder = PathFinder::new(
         Arc::new(LocalFilesystem),
-        vec![modules_dir.clone()],
+        vec![],
         Vec::new(),
-        Some(modules_dir),
+        None,
         Some(typeshed_dir()),
     );
 
@@ -40,12 +35,8 @@ fn build_builtins_constraints() {
 
     let module_loader = SpecModuleLoader { specs };
 
-    analyse_program(&module_loader, std::iter::empty());
-}
-
-fn bench_constraint_builder(criterion: &mut Criterion) {
-    criterion.bench_function("builtins constraints", |bencher| {
-        bencher.iter(|| build_builtins_constraints())
+    criterion.bench_function("build builtins constraints", |bencher| {
+        bencher.iter(|| build_builtins_constraints(&module_loader))
     });
 }
 
