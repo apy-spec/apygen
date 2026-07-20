@@ -207,6 +207,7 @@ dependencies = [
  "apygen_identifiers",
  "apygen_inference",
  "apygen_primitives",
+ "criterion",
  "env_logger",
  "imbl",
  "indoc",

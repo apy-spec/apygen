@@ -20,3 +20,8 @@ env_logger = { workspace = true }
 apy = { workspace = true, features = ["yaml"] }
 rstest = { workspace = true }
 indoc = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "solve_builtins_constraint_graph"
+harness = false
