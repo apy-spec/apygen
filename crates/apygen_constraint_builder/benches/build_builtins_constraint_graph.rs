@@ -1,7 +1,7 @@
-use apygen_python_analysis::constraint_builder::constraints::expressions::Identifier;
-use apygen_python_analysis::constraint_builder::{SpecModuleLoader, analyse_program};
-use apygen_python_analysis::finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
-use apygen_python_analysis::finder::pathfinder::PathFinder;
+use apygen_constraint_builder::constraints::expressions::Identifier;
+use apygen_constraint_builder::{SpecModuleLoader, analyse_program};
+use apygen_finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
+use apygen_finder::pathfinder::PathFinder;
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::collections::HashMap;
 use std::fs;
@@ -23,7 +23,7 @@ fn typeshed_dir() -> AbsolutePathBuf {
     .expect("canonicalized path is always absolute")
 }
 
-fn build_constraints() {
+fn build_builtins_constraints() {
     let absolute_manifest_dir = absolute_manifest_dir();
     let modules_dir = absolute_manifest_dir.join("tests/data/modules");
 
@@ -44,7 +44,7 @@ fn build_constraints() {
 
 fn bench_constraint_builder(criterion: &mut Criterion) {
     criterion.bench_function("builtins constraints", |bencher| {
-        bencher.iter(|| build_constraints())
+        bencher.iter(|| build_builtins_constraints())
     });
 }
 
