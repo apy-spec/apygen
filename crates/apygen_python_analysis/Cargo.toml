@@ -9,15 +9,12 @@ license.workspace = true
 apygen_analysis = { workspace = true }
 apygen_finder = { workspace = true }
 apygen_cfg = { workspace = true }
+apygen_primitives = { workspace = true }
 apy = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }
 imbl = { workspace = true }
 log = { workspace = true }
-num-bigint = { workspace = true }
-num-traits = { workspace = true }
-num-rational = { workspace = true }
-num-complex = { workspace = true }
 
 [dev-dependencies]
 env_logger = { workspace = true }

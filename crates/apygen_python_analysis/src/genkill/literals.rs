@@ -1,13 +1,5 @@
-use crate::abstract_environment::{
-    LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger, LiteralString,
-    Type, TypeLiteral,
-};
-use crate::cfg::ast::{
-    ExprBooleanLiteral, ExprBytesLiteral, ExprNumberLiteral, ExprStringLiteral, Number,
-};
-use num_bigint::BigInt;
-use num_complex::Complex64;
-use num_traits::Num;
+use crate::abstract_environment::{LiteralBoolean, LiteralBytes, LiteralString, Type, TypeLiteral};
+use crate::cfg::ast::{ExprBooleanLiteral, ExprBytesLiteral, ExprStringLiteral};
 use std::sync::Arc;
 
 pub fn gen_expr_string_literal(expression: &ExprStringLiteral) -> Type {
@@ -24,33 +16,6 @@ pub fn gen_expr_bytes_literal(expression: &ExprBytesLiteral) -> Type {
             .flat_map(|part| part.as_slice().iter().copied())
             .collect(),
     }))
-}
-
-pub fn gen_expr_number_literal(expression: &ExprNumberLiteral) -> Type {
-    match &expression.value {
-        Number::Int(int) => Type::new_literal(match int.as_i64() {
-            Some(value) => TypeLiteral::Integer(LiteralInteger::Int(value)),
-            None => TypeLiteral::Integer(LiteralInteger::BigInt({
-                let base = int.to_string();
-
-                if base.starts_with("0x") || base.starts_with("0X") {
-                    BigInt::from_str_radix(&base[2..], 16).unwrap()
-                } else if base.starts_with("0o") || base.starts_with("0O") {
-                    BigInt::from_str_radix(&base[2..], 8).unwrap()
-                } else if base.starts_with("0b") || base.starts_with("0B") {
-                    BigInt::from_str_radix(&base[2..], 2).unwrap()
-                } else {
-                    BigInt::from_str_radix(&base, 10).unwrap()
-                }
-            })),
-        }),
-        Number::Float(float) => {
-            Type::new_literal(TypeLiteral::Float(LiteralFloat { value: *float }))
-        }
-        Number::Complex { real, imag } => Type::new_literal(TypeLiteral::Complex(LiteralComplex {
-            value: Complex64::new(*real, *imag),
-        })),
-    }
 }
 
 pub fn gen_expr_boolean_literal(expression: &ExprBooleanLiteral) -> Type {

@@ -1,17 +1,13 @@
+use crate::analysis::fmt::fmt_display_wrapped;
+use crate::analysis::lattice::{Join, LatticeOrd, OrdJoin, OrdLatticeOrd};
 use crate::constraints::{ProgramEntityIdentifier, QualifiedLocation};
+use crate::primitives::{BigInt, Complex64, Int, ToPrimitive};
 pub use apy::OneOrMany;
 pub use apy::v1::{GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName};
-use apygen_analysis::fmt::fmt_display_wrapped;
-use apygen_analysis::lattice::{Join, LatticeOrd, OrdJoin, OrdLatticeOrd};
 use imbl;
-pub use num_bigint::BigInt;
-use num_bigint::BigUint;
-use num_complex::Complex64;
-use num_traits::{Pow, ToPrimitive, checked_pow};
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
-use std::ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Neg, Not, Rem, Shl, Shr, Sub};
 use std::sync::Arc;
 
 pub const BUILTINS_MODULE: &str = "builtins";
@@ -411,316 +407,35 @@ pub struct ImportedModuleType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LiteralInteger {
-    Int(i64),
-    BigInt(BigInt),
+pub struct LiteralInteger {
+    pub value: Int,
 }
 
 impl LiteralInteger {
-    pub fn is_zero(&self) -> bool {
-        match self {
-            LiteralInteger::Int(n) => *n == 0,
-            LiteralInteger::BigInt(n) => n == &BigInt::ZERO,
-        }
-    }
-
-    pub fn is_positive(&self) -> bool {
-        match self {
-            LiteralInteger::Int(n) => *n > 0,
-            LiteralInteger::BigInt(n) => n > &BigInt::ZERO,
-        }
-    }
-
-    pub fn is_negative(&self) -> bool {
-        match self {
-            LiteralInteger::Int(n) => *n < 0,
-            LiteralInteger::BigInt(n) => n < &BigInt::ZERO,
-        }
+    pub fn new(value: Int) -> Self {
+        Self { value }
     }
 
     pub fn to_literal_float(&self) -> Option<LiteralFloat> {
-        Some(LiteralFloat::new(self.to_f64()?))
+        Some(LiteralFloat::new(self.value.to_f64()?))
     }
 }
 
-macro_rules! impl_literal_integer_binop_method {
-    ($rhs_ty:ty, $method:ident, $checked:ident, $op:tt) => {
-        fn $method(self, rhs: $rhs_ty) -> Self::Output {
-            match (&self, &rhs) {
-                (LiteralInteger::Int(left), LiteralInteger::Int(right)) => {
-                    if let Some(result) = left.$checked(*right) {
-                        LiteralInteger::Int(result)
-                    } else {
-                        LiteralInteger::BigInt(BigInt::from(*left) $op right)
-                    }
-                }
-                (LiteralInteger::Int(left), LiteralInteger::BigInt(right)) => {
-                    LiteralInteger::BigInt(BigInt::from(*left) $op right)
-                }
-                (LiteralInteger::BigInt(left), LiteralInteger::Int(right)) => {
-                    LiteralInteger::BigInt(left $op right)
-                }
-                (LiteralInteger::BigInt(left), LiteralInteger::BigInt(right)) => {
-                    LiteralInteger::BigInt(left $op right)
-                }
-            }
-        }
-    };
-    (infallible: $rhs_ty:ty, $method:ident, $op:tt) => {
-        fn $method(self, rhs: $rhs_ty) -> Self::Output {
-            match (&self, &rhs) {
-                (LiteralInteger::Int(left), LiteralInteger::Int(right)) => {
-                    LiteralInteger::Int(left $op right)
-                }
-                (LiteralInteger::Int(left), LiteralInteger::BigInt(right)) => {
-                    LiteralInteger::BigInt(BigInt::from(*left) $op right)
-                }
-                (LiteralInteger::BigInt(left), LiteralInteger::Int(right)) => {
-                    LiteralInteger::BigInt(left $op BigInt::from(*right))
-                }
-                (LiteralInteger::BigInt(left), LiteralInteger::BigInt(right)) => {
-                    LiteralInteger::BigInt(left $op right)
-                }
-            }
-        }
-    };
-    (shift: $rhs_ty:ty, $method:ident, $checked:ident, $op:tt) => {
-        fn $method(self, rhs: $rhs_ty) -> Self::Output {
-            match &self {
-                LiteralInteger::Int(left) => {
-                    if let Some(result) = u32::try_from(rhs.clone())
-                        .ok()
-                        .and_then(|right| left.$checked(right))
-                    {
-                        LiteralInteger::Int(result)
-                    } else {
-                        LiteralInteger::BigInt(BigInt::from(*left) $op rhs)
-                    }
-                }
-                LiteralInteger::BigInt(left) => LiteralInteger::BigInt(left $op rhs),
-            }
-        }
-    };
-    (pow_usize: $rhs_ty:ty) => {
-        fn pow(self, rhs: $rhs_ty) -> Self::Output {
-            match &self {
-                LiteralInteger::Int(n) => {
-                    if let Some(result) = checked_pow(*n, rhs.clone()) {
-                        LiteralInteger::Int(result)
-                    } else {
-                        LiteralInteger::BigInt(Pow::pow(BigInt::from(*n), rhs))
-                    }
-                }
-                LiteralInteger::BigInt(n) => LiteralInteger::BigInt(Pow::pow(n, rhs)),
-            }
-        }
-    };
-    (pow_biguint: $rhs_ty:ty) => {
-        fn pow(self, rhs: $rhs_ty) -> Self::Output {
-            match &self {
-                LiteralInteger::Int(n) => LiteralInteger::BigInt(Pow::pow(BigInt::from(*n), rhs)),
-                LiteralInteger::BigInt(n) => LiteralInteger::BigInt(Pow::pow(n, rhs)),
-            }
-        }
+impl From<i64> for LiteralInteger {
+    fn from(value: i64) -> Self {
+        Self::new(Int::SmallInt(value))
     }
 }
 
-macro_rules! impl_literal_integer_binop {
-    ($trait:ident, $method:ident, $checked:ident, $op:tt) => {
-        impl $trait<LiteralInteger> for LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!(LiteralInteger, $method, $checked, $op);
-        }
-        impl $trait<LiteralInteger> for &LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!(LiteralInteger, $method, $checked, $op);
-        }
-        impl $trait<&LiteralInteger> for LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!(&LiteralInteger, $method, $checked, $op);
-        }
-        impl $trait<&LiteralInteger> for &LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!(&LiteralInteger, $method, $checked, $op);
-        }
-    };
-    (infallible: $trait:ident, $method:ident, $op:tt) => {
-        impl $trait<LiteralInteger> for LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!(infallible: LiteralInteger, $method, $op);
-        }
-        impl $trait<LiteralInteger> for &LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!(infallible: LiteralInteger, $method, $op);
-        }
-        impl $trait<&LiteralInteger> for LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!(infallible: &LiteralInteger, $method, $op);
-        }
-        impl $trait<&LiteralInteger> for &LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!(infallible: &LiteralInteger, $method, $op);
-        }
-    };
-    (shift: $trait:ident<$rhs_ty:ty>, $method:ident, $checked:ident, $op:tt) => {
-        impl $trait<$rhs_ty> for LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!(shift: $rhs_ty, $method, $checked, $op);
-        }
-        impl $trait<$rhs_ty> for &LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!(shift: $rhs_ty, $method, $checked, $op);
-        }
-        impl $trait<&$rhs_ty> for LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!(shift: &$rhs_ty, $method, $checked, $op);
-        }
-        impl $trait<&$rhs_ty> for &LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!(shift: &$rhs_ty, $method, $checked, $op);
-        }
-    };
-    (pow: $implementation:tt, $rhs_ty:ty) => {
-        impl Pow<$rhs_ty> for LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!($implementation: $rhs_ty);
-        }
-        impl Pow<$rhs_ty> for &LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!($implementation: $rhs_ty);
-        }
-        impl Pow<&$rhs_ty> for LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!($implementation: &$rhs_ty);
-        }
-        impl Pow<&$rhs_ty> for &LiteralInteger {
-            type Output = LiteralInteger;
-
-            impl_literal_integer_binop_method!($implementation: &$rhs_ty);
-        }
+impl From<BigInt> for LiteralInteger {
+    fn from(value: BigInt) -> Self {
+        Self::new(Int::BigInt(value))
     }
-}
-
-impl_literal_integer_binop!(Add, add, checked_add, +);
-impl_literal_integer_binop!(Sub, sub, checked_sub, -);
-impl_literal_integer_binop!(Mul, mul, checked_mul, *);
-impl_literal_integer_binop!(Div, div, checked_div, /);
-impl_literal_integer_binop!(Rem, rem, checked_rem, %);
-impl_literal_integer_binop!(shift: Shl<usize>, shl, checked_shl, <<);
-impl_literal_integer_binop!(shift: Shl<isize>, shl, checked_shl, <<);
-impl_literal_integer_binop!(shift: Shr<usize>, shr, checked_shr, >>);
-impl_literal_integer_binop!(shift: Shr<isize>, shr, checked_shr, >>);
-impl_literal_integer_binop!(infallible: BitOr,  bitor,  |);
-impl_literal_integer_binop!(infallible: BitXor, bitxor, ^);
-impl_literal_integer_binop!(infallible: BitAnd, bitand, &);
-impl_literal_integer_binop!(pow: pow_usize, usize);
-impl_literal_integer_binop!(pow: pow_biguint, BigUint);
-
-macro_rules! impl_literal_integer_neg_method {
-    () => {
-        fn neg(self) -> Self::Output {
-            match &self {
-                LiteralInteger::Int(n) => {
-                    if let Some(result) = n.checked_neg() {
-                        LiteralInteger::Int(result)
-                    } else {
-                        LiteralInteger::BigInt(-BigInt::from(*n))
-                    }
-                }
-                LiteralInteger::BigInt(n) => LiteralInteger::BigInt(-n),
-            }
-        }
-    };
-}
-
-impl Neg for LiteralInteger {
-    type Output = LiteralInteger;
-
-    impl_literal_integer_neg_method!();
-}
-
-impl Neg for &LiteralInteger {
-    type Output = LiteralInteger;
-
-    impl_literal_integer_neg_method!();
-}
-
-macro_rules! impl_literal_integer_not_method {
-    () => {
-        fn not(self) -> Self::Output {
-            match self {
-                LiteralInteger::Int(n) => LiteralInteger::Int(!n),
-                LiteralInteger::BigInt(n) => LiteralInteger::BigInt(!n),
-            }
-        }
-    };
-}
-
-impl Not for LiteralInteger {
-    type Output = LiteralInteger;
-
-    impl_literal_integer_not_method!();
-}
-
-impl Not for &LiteralInteger {
-    type Output = LiteralInteger;
-
-    impl_literal_integer_not_method!();
-}
-
-macro_rules! impl_literal_integer_to_primitive {
-    ($($method:ident -> $ty:ty),* $(,)?) => {
-        $(
-            fn $method(&self) -> Option<$ty> {
-                match self {
-                    LiteralInteger::Int(n) => n.$method(),
-                    LiteralInteger::BigInt(n) => n.$method(),
-                }
-            }
-        )*
-    };
-}
-
-impl ToPrimitive for LiteralInteger {
-    impl_literal_integer_to_primitive!(
-        to_isize -> isize,
-        to_i8 -> i8,
-        to_i16 -> i16,
-        to_i32 -> i32,
-        to_i64 -> i64,
-        to_i128 -> i128,
-        to_usize -> usize,
-        to_u8 -> u8,
-        to_u16 -> u16,
-        to_u32 -> u32,
-        to_u64 -> u64,
-        to_u128 -> u128,
-        to_f32 -> f32,
-        to_f64 -> f64,
-    );
 }
 
 impl Display for LiteralInteger {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LiteralInteger::Int(n) => write!(f, "{}", n),
-            LiteralInteger::BigInt(n) => write!(f, "{}", n),
-        }
+        write!(f, "{}", self.value)
     }
 }
 

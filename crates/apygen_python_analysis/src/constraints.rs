@@ -2,28 +2,27 @@ use crate::abstract_environment::{
     BUILTINS_MODULE, LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger,
     LiteralString,
 };
+use crate::analysis::fmt::{fmt_display_sequence, fmt_iterator};
+use crate::analysis::lattice::{Join, OrdJoin};
+use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use crate::cfg::ast::{self, Number};
+use crate::cfg::build_cfg;
+use crate::cfg::graph::Graph;
+use crate::cfg::graph::dot::{DiGraphDot, escape_dot};
+use crate::cfg::parser::parse_module;
 use crate::cfg::source_file::LineIndex;
 use crate::cfg::text_size::Ranged;
 use crate::cfg::{
     Cfg, CfgEdge, CfgEdgeKind, CfgNode as StmtNode, Location as ProgramPointLocation, ProgramPoint,
 };
+use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
+use crate::finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
 use crate::genkill::assignment::AssignmentTarget;
+use crate::primitives::{BigInt, Complex64, Int};
 use apy::OneOrMany;
 use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
-use apygen_analysis::fmt::{fmt_display_sequence, fmt_iterator};
-use apygen_analysis::lattice::{Join, OrdJoin};
-use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
-use apygen_cfg::build_cfg;
-use apygen_cfg::graph::Graph;
-use apygen_cfg::graph::dot::{DiGraphDot, escape_dot};
-use apygen_cfg::parser::parse_module;
-use apygen_finder::filesystem::{Error as FilesystemError, Filesystem};
-use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
+use apygen_primitives::Num;
 use imbl::ordmap::Entry;
-use num_bigint::BigInt;
-use num_complex::Complex64;
-use num_traits::Num;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
@@ -1714,8 +1713,10 @@ impl<'a> ConstraintsBuilder<'a> {
     ) -> Expression {
         match &expr_number_literal.value {
             Number::Int(int) => match int.as_i64() {
-                Some(value) => Expression::LiteralInteger(LiteralInteger::Int(value)),
-                None => Expression::LiteralInteger(LiteralInteger::BigInt({
+                Some(value) => {
+                    Expression::LiteralInteger(LiteralInteger::new(Int::SmallInt(value)))
+                }
+                None => Expression::LiteralInteger(LiteralInteger::new(Int::BigInt({
                     let base = int.to_string();
 
                     if base.starts_with("0x") || base.starts_with("0X") {
@@ -1727,7 +1728,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     } else {
                         BigInt::from_str_radix(&base, 10).unwrap()
                     }
-                })),
+                }))),
             },
             Number::Float(float) => Expression::LiteralFloat(LiteralFloat { value: *float }),
             Number::Complex { real, imag } => Expression::LiteralComplex(LiteralComplex {

@@ -1,7 +1,7 @@
 use crate::abstract_environment::{Exception, LiteralBoolean, LiteralBytes, LiteralInteger, Type};
 use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::PyTypeEval;
-use num_traits::ToPrimitive;
+use crate::primitives::ToPrimitive;
 
 pub fn as_boolean(literal_bytes: &LiteralBytes) -> bool {
     !literal_bytes.value.is_empty()
@@ -47,7 +47,7 @@ pub fn call_binary_op(
 }
 
 pub fn repeat_bytes(bytes: &LiteralBytes, repetitions: &LiteralInteger) -> PyTypeEval {
-    if let Some(repetitions) = repetitions.to_usize() {
+    if let Some(repetitions) = repetitions.value.to_usize() {
         PyTypeEval::with_default_effects(Type::new_bytes_literal(LiteralBytes {
             value: imbl::Vector::from_iter(
                 (0..repetitions).flat_map(|_| bytes.value.iter().cloned()),

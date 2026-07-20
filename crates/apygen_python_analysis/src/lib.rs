@@ -8,6 +8,7 @@ use apygen_analysis::log::LogAnalysisObserver;
 use apygen_analysis::rayon::par_analysis;
 pub use apygen_cfg as cfg;
 pub use apygen_finder as finder;
+pub use apygen_primitives as primitives;
 pub use finder::filesystem::{AbsolutePathBuf, Filesystem, LocalFilesystem};
 pub use finder::pathfinder::PathFinder;
 use log::debug;

@@ -1,7 +1,7 @@
 use crate::abstract_environment::{Exception, LiteralBoolean, LiteralFloat, Type};
 use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::PyTypeEval;
-use num_traits::Pow;
+use crate::primitives::Pow;
 
 pub fn as_boolean(literal_float: &LiteralFloat) -> bool {
     literal_float.value != 0.0

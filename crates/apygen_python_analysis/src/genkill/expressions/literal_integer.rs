@@ -1,16 +1,11 @@
 use crate::abstract_environment::{Exception, LiteralBoolean, LiteralFloat, LiteralInteger, Type};
 use crate::constraints::{BinaryOperator, UnaryOperator};
-use crate::genkill::expressions;
 use crate::genkill::expressions::PyTypeEval;
-use num_bigint::BigInt;
-use num_rational::{BigRational, Rational64};
-use num_traits::{Pow, ToPrimitive};
+use crate::primitives::Zero;
+use apygen_primitives::{Pow, PowOutput};
 
 pub fn as_boolean(literal_integer: &LiteralInteger) -> bool {
-    match literal_integer {
-        LiteralInteger::Int(value) => *value != 0,
-        LiteralInteger::BigInt(value) => value != &BigInt::ZERO,
-    }
+    !literal_integer.value.is_zero()
 }
 
 pub fn call_dunder_float(literal_integer: &LiteralInteger) -> PyTypeEval {
@@ -42,11 +37,11 @@ pub fn call_dunder_pos(literal_integer: &LiteralInteger) -> Type {
 }
 
 pub fn call_dunder_neg(literal_integer: &LiteralInteger) -> Type {
-    Type::new_integer_literal(-literal_integer)
+    Type::new_integer_literal(LiteralInteger::new(-&literal_integer.value))
 }
 
 pub fn call_dunder_invert(literal_integer: &LiteralInteger) -> Type {
-    Type::new_integer_literal(!literal_integer)
+    Type::new_integer_literal(LiteralInteger::new(!&literal_integer.value))
 }
 
 pub fn call_unary_op(literal_integer: &LiteralInteger, operator: UnaryOperator) -> Type {
@@ -63,110 +58,67 @@ pub fn call_binary_op(
     operator: BinaryOperator,
     right: &LiteralInteger,
 ) -> PyTypeEval {
+    let left_int = &left.value;
+    let right_int = &right.value;
     PyTypeEval::with_default_effects(match operator {
-        BinaryOperator::Add => Type::new_integer_literal(left + right),
-        BinaryOperator::Sub => Type::new_integer_literal(left - right),
-        BinaryOperator::Mult => Type::new_integer_literal(left * right),
-        BinaryOperator::Pow => {
-            let big_right = match right {
-                LiteralInteger::Int(small_right) => {
-                    if let Ok(small_right) = usize::try_from(*small_right) {
-                        return PyTypeEval::with_default_effects(Type::new_integer_literal(
-                            left.pow(small_right),
-                        ));
-                    }
-                    &BigInt::from(*small_right)
-                }
-                LiteralInteger::BigInt(big_right) => big_right,
-            };
-
-            if let Some(big_right) = big_right.to_biguint() {
-                Type::new_integer_literal(left.pow(big_right))
-            } else if let (Some(left_float), Some(right_float)) = (left.to_f64(), right.to_f64()) {
-                // Handle negative powers
-                return expressions::literal_float::call_binary_op(
-                    &LiteralFloat { value: left_float },
-                    BinaryOperator::Pow,
-                    &LiteralFloat { value: right_float },
-                );
-            } else {
-                return PyTypeEval::unknown();
-            }
+        BinaryOperator::Add => Type::new_integer_literal(LiteralInteger::new(left_int + right_int)),
+        BinaryOperator::Sub => Type::new_integer_literal(LiteralInteger::new(left_int - right_int)),
+        BinaryOperator::Mult => {
+            Type::new_integer_literal(LiteralInteger::new(left_int * right_int))
         }
+        BinaryOperator::Pow => match left_int.pow(right_int) {
+            Some(PowOutput::Int(value)) => Type::new_integer_literal(LiteralInteger::new(value)),
+            Some(PowOutput::Float(value)) => Type::new_float_literal(LiteralFloat::new(value)),
+            None => return PyTypeEval::unknown(),
+        },
         BinaryOperator::Div => {
-            if right.is_zero() {
+            if right_int.is_zero() {
                 return PyTypeEval::raise(Exception::any()); // TODO: fix
             }
 
-            let (left, right) = match (left, right) {
-                (LiteralInteger::Int(left), LiteralInteger::Int(right)) => {
-                    if let Some(value) = Rational64::new(*left, *right).to_f64() {
-                        return PyTypeEval::with_default_effects(Type::new_float_literal(
-                            LiteralFloat { value },
-                        ));
-                    }
-                    (&BigInt::from(*left), &BigInt::from(*right))
-                }
-                (LiteralInteger::Int(left), LiteralInteger::BigInt(right)) => {
-                    (&BigInt::from(*left), right)
-                }
-                (LiteralInteger::BigInt(left), LiteralInteger::Int(right)) => {
-                    (left, &BigInt::from(*right))
-                }
-                (LiteralInteger::BigInt(left), LiteralInteger::BigInt(right)) => (left, right),
-            };
-
-            let Some(value) = BigRational::new(left.clone(), right.clone()).to_f64() else {
+            let Some(value) = left_int.true_div(&right_int) else {
                 return PyTypeEval::unknown();
             };
 
             Type::new_float_literal(LiteralFloat { value })
         }
         BinaryOperator::FloorDiv => {
-            if right.is_zero() {
+            if right_int.is_zero() {
                 return PyTypeEval::raise(Exception::any()); // TODO: fix
             }
 
-            Type::new_integer_literal(left / right)
+            Type::new_integer_literal(LiteralInteger::new(left_int / right_int))
         }
         BinaryOperator::Mod => {
-            if right.is_zero() {
+            if right_int.is_zero() {
                 return PyTypeEval::raise(Exception::any()); // TODO: fix
             }
 
-            Type::new_integer_literal(left % right)
+            Type::new_integer_literal(LiteralInteger::new(left_int % right_int))
         }
-        BinaryOperator::LShift => match right {
-            LiteralInteger::Int(small_right) => {
-                if let Ok(small_right) = usize::try_from(*small_right) {
-                    Type::new_integer_literal(left << small_right)
-                } else if let Ok(small_right) = isize::try_from(*small_right) {
-                    Type::new_integer_literal(left << small_right)
-                } else {
-                    return PyTypeEval::unknown();
-                }
-            }
-            LiteralInteger::BigInt(_) => {
+        BinaryOperator::LShift => {
+            if let Some(value) = left_int << right_int {
+                Type::new_integer_literal(LiteralInteger::new(value))
+            } else {
                 return PyTypeEval::unknown();
             }
-        },
-        BinaryOperator::RShift => match right {
-            LiteralInteger::Int(small_right) => {
-                if let Ok(small_right) = usize::try_from(*small_right) {
-                    Type::new_integer_literal(left >> small_right)
-                } else if let Ok(small_right) = isize::try_from(*small_right) {
-                    Type::new_integer_literal(left >> small_right)
-                } else {
-                    return PyTypeEval::unknown();
-                }
-            }
-            LiteralInteger::BigInt(_) => {
+        }
+        BinaryOperator::RShift => {
+            if let Some(value) = left_int >> right_int {
+                Type::new_integer_literal(LiteralInteger::new(value))
+            } else {
                 return PyTypeEval::unknown();
             }
-        },
-        BinaryOperator::BitOr => Type::new_integer_literal(left | right),
-        BinaryOperator::BitXor => Type::new_integer_literal(left ^ right),
-        BinaryOperator::BitAnd => Type::new_integer_literal(left & right),
+        }
+        BinaryOperator::BitOr => {
+            Type::new_integer_literal(LiteralInteger::new(left_int | right_int))
+        }
+        BinaryOperator::BitXor => {
+            Type::new_integer_literal(LiteralInteger::new(left_int ^ right_int))
+        }
+        BinaryOperator::BitAnd => {
+            Type::new_integer_literal(LiteralInteger::new(left_int & right_int))
+        }
         BinaryOperator::MatMult => {
             return PyTypeEval::raise(Exception::any()); // TODO: fix
         }

@@ -1,7 +1,7 @@
 use crate::abstract_environment::{Exception, LiteralBoolean, LiteralInteger, LiteralString, Type};
 use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::PyTypeEval;
-use num_traits::ToPrimitive;
+use crate::primitives::ToPrimitive;
 use std::sync::Arc;
 
 pub fn as_boolean(literal_string: &LiteralString) -> bool {
@@ -48,7 +48,7 @@ pub fn call_binary_op(
 }
 
 pub fn repeat_string(string: &LiteralString, repetitions: &LiteralInteger) -> PyTypeEval {
-    if let Some(repetitions) = repetitions.to_usize() {
+    if let Some(repetitions) = repetitions.value.to_usize() {
         PyTypeEval::with_default_effects(Type::new_string_literal(LiteralString {
             value: Arc::new(string.value.repeat(repetitions)),
         }))

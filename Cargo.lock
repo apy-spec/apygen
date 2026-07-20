@@ -158,6 +158,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "apygen_constraints"
+version = "0.1.0"
+
+[[package]]
 name = "apygen_finder"
 version = "0.1.0"
 dependencies = [
@@ -171,6 +175,16 @@ name = "apygen_graph"
 version = "0.1.0"
 
 [[package]]
+name = "apygen_primitives"
+version = "0.1.0"
+dependencies = [
+ "num-bigint",
+ "num-complex",
+ "num-rational",
+ "num-traits",
+]
+
+[[package]]
 name = "apygen_python_analysis"
 version = "0.1.0"
 dependencies = [
@@ -178,15 +192,12 @@ dependencies = [
  "apygen_analysis",
  "apygen_cfg",
  "apygen_finder",
+ "apygen_primitives",
  "criterion",
  "env_logger",
  "imbl",
  "indoc",
  "log",
- "num-bigint",
- "num-complex",
- "num-rational",
- "num-traits",
  "rayon",
  "rstest",
  "thiserror",
