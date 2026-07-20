@@ -2731,37 +2731,6 @@ impl<N: Clone + Ord, S: Clone> DependentGraph<N, S> {
             tos.get_mut().remove(&to);
         }
     }
-
-    pub fn dot(&self, graph_name: &str) -> String
-    where
-        N: Display,
-    {
-        let mut edges: imbl::OrdSet<(N, N)> = imbl::OrdSet::new();
-        for (dependent, dependencies) in &self.dependents {
-            for dependency in dependencies {
-                edges.insert((dependent.clone(), dependency.clone()));
-            }
-        }
-
-        let mut dot_representation = String::from("digraph \"");
-        dot_representation.push_str(graph_name);
-        dot_representation.push_str("\" {\n");
-        for node in self.nodes.keys() {
-            dot_representation.push_str("    \"");
-            dot_representation.push_str(&node.to_string());
-            dot_representation.push_str("\";\n");
-        }
-        for (dependency, dependent) in &edges {
-            dot_representation.push_str("    \"");
-            dot_representation.push_str(&dependency.to_string());
-            dot_representation.push_str("\" -> \"");
-            dot_representation.push_str(&dependent.to_string());
-            dot_representation.push_str("\";\n");
-        }
-        dot_representation.push_str("}\n");
-
-        dot_representation
-    }
 }
 
 impl<N: Debug + Ord, S: Debug> Display for DependentGraph<N, S> {
@@ -2774,7 +2743,7 @@ impl<N: Debug + Ord, S: Debug> Display for DependentGraph<N, S> {
     }
 }
 
-impl<N: Clone + Ord, S: Clone> Graph for DependentGraph<N, S> {
+impl<N: Ord, S> Graph for DependentGraph<N, S> {
     type Node = N;
     type NodeData = S;
     type EdgeData = ();
@@ -2806,19 +2775,16 @@ impl<N: Clone + Ord, S: Clone> Graph for DependentGraph<N, S> {
     }
 }
 
-impl<N: Clone + Ord + Display, S: Clone + Display> DiGraphDot for DependentGraph<N, S> {
+impl DiGraphDot
+    for DependentGraph<ModuleNode, imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>>
+{
     fn fmt_node(
         &self,
         f: &mut Formatter<'_>,
         node: &Self::Node,
-        node_data: &Self::NodeData,
+        _node_data: &Self::NodeData,
     ) -> std::fmt::Result {
-        write!(
-            f,
-            "    \"{}\" [label=\"{}\"];\n",
-            escape_dot(&node.to_string()),
-            escape_dot(&node_data.to_string())
-        )
+        write!(f, "    \"{}\";\n", escape_dot(&node.to_string()))
     }
 
     fn fmt_edge(
