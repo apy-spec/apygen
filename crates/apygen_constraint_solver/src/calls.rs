@@ -1,4 +1,4 @@
-use crate::constraints::expressions::{Identifier, ParameterKind};
+use crate::constraint_graph::expressions::{Identifier, ParameterKind};
 use crate::inference::{LiteralTuple, Parameter, Sourced, Type, TypeLiteral, TypeUnion};
 use crate::primitives::literals::LiteralStr;
 use imbl;

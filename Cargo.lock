@@ -172,7 +172,7 @@ dependencies = [
  "apy",
  "apygen_analysis",
  "apygen_cfg",
- "apygen_constraints",
+ "apygen_constraint_graph",
  "apygen_finder",
  "apygen_primitives",
  "criterion",
@@ -184,6 +184,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "apygen_constraint_graph"
+version = "0.1.0"
+dependencies = [
+ "apy",
+ "apygen_analysis",
+ "apygen_graph",
+ "apygen_primitives",
+ "imbl",
+]
+
+[[package]]
 name = "apygen_constraint_solver"
 version = "0.1.0"
 dependencies = [
@@ -191,7 +202,7 @@ dependencies = [
  "apygen_analysis",
  "apygen_cfg",
  "apygen_constraint_builder",
- "apygen_constraints",
+ "apygen_constraint_graph",
  "apygen_finder",
  "apygen_inference",
  "apygen_primitives",
@@ -203,25 +214,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "apygen_constraints"
-version = "0.1.0"
-dependencies = [
- "apy",
- "apygen_analysis",
- "apygen_graph",
- "apygen_primitives",
- "imbl",
- "thiserror",
-]
-
-[[package]]
 name = "apygen_converter"
 version = "0.1.0"
 dependencies = [
  "apy",
  "apygen_analysis",
+ "apygen_constraint_graph",
  "apygen_constraint_solver",
- "apygen_constraints",
  "apygen_inference",
  "apygen_primitives",
  "imbl",
@@ -248,7 +247,7 @@ version = "0.1.0"
 dependencies = [
  "apy",
  "apygen_analysis",
- "apygen_constraints",
+ "apygen_constraint_graph",
  "apygen_primitives",
  "imbl",
 ]

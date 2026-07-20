@@ -2,7 +2,7 @@ use analysis::abstract_state::AbstractState;
 use analysis::lattice::Join;
 use apy;
 pub use apygen_analysis as analysis;
-pub use apygen_constraints as constraints;
+pub use apygen_constraint_graph as constraints;
 pub use apygen_inference as inference;
 pub use apygen_primitives as primitives;
 pub use apygen_constraint_solver as solver;

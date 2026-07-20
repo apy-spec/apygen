@@ -1,12 +1,12 @@
 use crate::analysis::fmt::fmt_display_wrapped;
 use crate::analysis::lattice::{Join, LatticeOrd, OrdJoin, OrdLatticeOrd};
-use crate::constraints::expressions::{ProgramEntityIdentifier, QualifiedLocation};
+use crate::constraint_graph::expressions::{ProgramEntityIdentifier, QualifiedLocation};
 use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
 pub use apy::v1::{GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName};
 pub use apygen_analysis as analysis;
-pub use apygen_constraints as constraints;
+pub use apygen_constraint_graph as constraint_graph;
 pub use apygen_primitives as primitives;
 pub use imbl;
 use std::fmt::{Display, Formatter};

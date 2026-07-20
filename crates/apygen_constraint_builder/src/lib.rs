@@ -21,14 +21,14 @@ pub use apygen_cfg as cfg;
 use apygen_cfg::ast::{
     Expr, ExprAttribute, ExprList, ExprName, ExprStarred, ExprSubscript, ExprTuple,
 };
-pub use apygen_constraints as constraints;
-use apygen_constraints::expressions::{
+pub use apygen_constraint_graph as constraints;
+use apygen_constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
     ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionImport, ExpressionOverride,
     ExpressionSubscript, ExpressionUnary, ExpressionVariable, Identifier, KeywordArgument,
     Location, ModuleName, ProgramEntityIdentifier, QualifiedName, UnaryOperator, VariableName,
 };
-use apygen_constraints::{
+use apygen_constraint_graph::{
     AbstractEnvironmentSpecification, Constraint, ConstraintGraph, ConstraintNode, Guard,
     IncludeConstraint, ModuleDependentGraph, ModuleNode, ProgramEntityConstraints,
     ReturnConstraint,

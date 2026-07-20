@@ -66,7 +66,7 @@ mod tests {
     use crate::expressions::literal_class::method_resolution_order;
     use crate::inference::{ClassType, LiteralClass};
     use apy::v1::{Identifier, QualifiedName};
-    use apygen_constraints::expressions::{ProgramEntityIdentifier, QualifiedLocation};
+    use apygen_constraint_graph::expressions::{ProgramEntityIdentifier, QualifiedLocation};
     use imbl::OrdMap;
     use std::collections::VecDeque;
     use std::sync::Arc;

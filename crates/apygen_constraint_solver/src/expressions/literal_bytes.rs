@@ -2,7 +2,7 @@ use crate::expressions::PyTypeEval;
 use crate::inference::{Exception, Type};
 use crate::primitives::ToPrimitive;
 use crate::primitives::literals::{LiteralBool, LiteralBytes, LiteralInt};
-use apygen_constraints::expressions::{BinaryOperator, UnaryOperator};
+use apygen_constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use std::sync::Arc;
 
 pub fn as_boolean(literal_bytes: &LiteralBytes) -> bool {

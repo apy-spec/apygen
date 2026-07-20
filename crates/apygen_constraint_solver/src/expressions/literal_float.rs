@@ -2,7 +2,7 @@ use crate::expressions::PyTypeEval;
 use crate::inference::{Exception, Type};
 use crate::primitives::Pow;
 use crate::primitives::literals::{LiteralBool, LiteralFloat};
-use apygen_constraints::expressions::{BinaryOperator, UnaryOperator};
+use apygen_constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(literal_float: &LiteralFloat) -> bool {
     literal_float.value != 0.0

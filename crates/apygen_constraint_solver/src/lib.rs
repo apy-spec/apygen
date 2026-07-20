@@ -1,6 +1,6 @@
 pub use apygen_analysis as analysis;
 pub use apygen_cfg as cfg;
-pub use apygen_constraints as constraints;
+pub use apygen_constraint_graph as constraint_graph;
 pub use apygen_finder as finder;
 pub use apygen_inference as inference;
 pub use apygen_primitives as primitives;
@@ -17,13 +17,13 @@ use crate::analysis::lattice::Join;
 use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use crate::calls::Arguments;
 use crate::cfg::ast::{Expr, ExprAttribute, ExprName};
-use crate::constraints::expressions::{
+use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
     ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionSubscript, ExpressionUnary,
     ExpressionVariable, Identifier, Location, ModuleName, OneOrMany, ParseIdentifierError,
     QualifiedLocation, QualifiedName, VariableName,
 };
-use crate::constraints::{
+use crate::constraint_graph::{
     Constraint, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode, ProgramEntityConstraints,
 };
 use crate::expressions::literal_class::method_resolution_order;

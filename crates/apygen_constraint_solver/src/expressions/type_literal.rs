@@ -1,6 +1,6 @@
 use crate::expressions::{self, PyTypeEval};
 use crate::inference::TypeLiteral;
-use apygen_constraints::expressions::{BinaryOperator, UnaryOperator};
+use apygen_constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
     match type_literal {

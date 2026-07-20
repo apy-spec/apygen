@@ -3,7 +3,7 @@ use crate::inference::{Exception, Type};
 use crate::primitives::Complex64;
 use crate::primitives::Pow;
 use crate::primitives::literals::{LiteralBool, LiteralComplex};
-use apygen_constraints::expressions::{BinaryOperator, UnaryOperator};
+use apygen_constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(literal_complex: &LiteralComplex) -> bool {
     literal_complex.value.re != 0.0 || literal_complex.value.im != 0.0
