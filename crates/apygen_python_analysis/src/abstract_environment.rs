@@ -1,11 +1,12 @@
 use crate::analysis::fmt::fmt_display_wrapped;
 use crate::analysis::lattice::{Join, LatticeOrd, OrdJoin, OrdLatticeOrd};
 use crate::constraints::{ProgramEntityIdentifier, QualifiedLocation};
-use crate::primitives::{BigInt, Complex64, Int, ToPrimitive};
+use crate::primitives::literals::{
+    LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
+};
 pub use apy::OneOrMany;
 pub use apy::v1::{GenericKind, Identifier, ParameterKind, ParseIdentifierError, QualifiedName};
 use imbl;
-use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::sync::Arc;
@@ -406,197 +407,6 @@ pub struct ImportedModuleType {
     pub module: Arc<QualifiedName>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LiteralInteger {
-    pub value: Int,
-}
-
-impl LiteralInteger {
-    pub fn new(value: Int) -> Self {
-        Self { value }
-    }
-
-    pub fn to_literal_float(&self) -> Option<LiteralFloat> {
-        Some(LiteralFloat::new(self.value.to_f64()?))
-    }
-}
-
-impl From<i64> for LiteralInteger {
-    fn from(value: i64) -> Self {
-        Self::new(Int::SmallInt(value))
-    }
-}
-
-impl From<BigInt> for LiteralInteger {
-    fn from(value: BigInt) -> Self {
-        Self::new(Int::BigInt(value))
-    }
-}
-
-impl Display for LiteralInteger {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.value)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LiteralBoolean {
-    pub value: bool,
-}
-
-impl Display for LiteralBoolean {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if self.value {
-            write!(f, "True")
-        } else {
-            write!(f, "False")
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct LiteralFloat {
-    pub value: f64,
-}
-
-impl LiteralFloat {
-    pub fn new(value: f64) -> Self {
-        LiteralFloat { value }
-    }
-
-    pub fn to_literal_complex(&self) -> Option<LiteralComplex> {
-        Some(LiteralComplex {
-            value: Complex64::new(self.value, 0.0),
-        })
-    }
-}
-
-// LiteralFloat is metadata about a float literal so we can implement Eq, Ord and Hash.
-impl PartialEq<Self> for LiteralFloat {
-    fn eq(&self, other: &Self) -> bool {
-        if self.value.is_nan() {
-            other.value.is_nan()
-        } else {
-            self.value == other.value
-        }
-    }
-}
-
-impl Eq for LiteralFloat {}
-
-impl PartialOrd<Self> for LiteralFloat {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for LiteralFloat {
-    fn cmp(&self, other: &Self) -> Ordering {
-        if self.value < other.value {
-            Ordering::Less
-        } else if self.value > other.value {
-            Ordering::Greater
-        } else {
-            Ordering::Equal
-        }
-    }
-}
-
-impl Hash for LiteralFloat {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.value.to_bits().hash(state);
-    }
-}
-
-impl Display for LiteralFloat {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.value)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct LiteralComplex {
-    pub value: Complex64,
-}
-
-// LiteralComplex is metadata about a complex literal so we can implement Eq, Ord and Hash.
-impl PartialEq for LiteralComplex {
-    fn eq(&self, other: &Self) -> bool {
-        LiteralFloat::new(self.value.re) == LiteralFloat::new(other.value.re)
-            && LiteralFloat::new(self.value.im) == LiteralFloat::new(other.value.im)
-    }
-}
-
-impl Eq for LiteralComplex {}
-
-impl PartialOrd for LiteralComplex {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for LiteralComplex {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match LiteralFloat::new(self.value.re).cmp(&LiteralFloat::new(other.value.re)) {
-            Ordering::Equal => {
-                LiteralFloat::new(self.value.im).cmp(&LiteralFloat::new(other.value.im))
-            }
-            ordering => ordering,
-        }
-    }
-}
-
-impl Hash for LiteralComplex {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.value.re.to_bits().hash(state);
-        self.value.im.to_bits().hash(state);
-    }
-}
-
-impl Display for LiteralComplex {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.value)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LiteralString {
-    pub value: Arc<String>,
-}
-
-impl LiteralString {
-    pub fn from_str(value: &str) -> Self {
-        LiteralString {
-            value: Arc::new(value.to_owned()),
-        }
-    }
-}
-
-impl Display for LiteralString {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\"{}\"", self.value)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LiteralBytes {
-    pub value: imbl::Vector<u8>,
-}
-
-impl Display for LiteralBytes {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "b\"")?;
-        for (i, element) in self.value.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "\\x{:02X}", element)?;
-        }
-        write!(f, "\"")?;
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LiteralList {
     pub value: imbl::Vector<Arc<TypeLiteral>>,
@@ -655,11 +465,11 @@ impl StructuralWidth for LiteralTuple {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeLiteralKey {
-    Integer(LiteralInteger),
-    Boolean(LiteralBoolean),
+    Integer(LiteralInt),
+    Boolean(LiteralBool),
     Float(LiteralFloat),
     Complex(LiteralComplex),
-    String(LiteralString),
+    String(LiteralStr),
     Bytes(LiteralBytes),
 
     None,
@@ -956,11 +766,11 @@ impl StructuralWidth for LiteralImportedModule {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TypeLiteral {
-    Integer(LiteralInteger),
-    Boolean(LiteralBoolean),
+    Integer(LiteralInt),
+    Boolean(LiteralBool),
     Float(LiteralFloat),
     Complex(LiteralComplex),
-    String(LiteralString),
+    String(LiteralStr),
     Bytes(LiteralBytes),
 
     None,
@@ -1264,7 +1074,7 @@ impl Type {
         Type::Literal(Arc::new(literal))
     }
 
-    pub fn new_integer_literal(literal_integer: LiteralInteger) -> Self {
+    pub fn new_integer_literal(literal_integer: LiteralInt) -> Self {
         Type::Literal(Arc::new(TypeLiteral::Integer(literal_integer)))
     }
 
@@ -1276,7 +1086,7 @@ impl Type {
         Type::Literal(Arc::new(TypeLiteral::Complex(literal_complex)))
     }
 
-    pub fn new_string_literal(literal_string: LiteralString) -> Self {
+    pub fn new_string_literal(literal_string: LiteralStr) -> Self {
         Type::Literal(Arc::new(TypeLiteral::String(literal_string)))
     }
 
@@ -1284,7 +1094,7 @@ impl Type {
         Type::Literal(Arc::new(TypeLiteral::Bytes(literal_bytes)))
     }
 
-    pub fn new_boolean_literal(literal_boolean: LiteralBoolean) -> Self {
+    pub fn new_boolean_literal(literal_boolean: LiteralBool) -> Self {
         Type::Literal(Arc::new(TypeLiteral::Boolean(literal_boolean)))
     }
 

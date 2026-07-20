@@ -1,7 +1,4 @@
-use crate::abstract_environment::{
-    BUILTINS_MODULE, LiteralBoolean, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInteger,
-    LiteralString,
-};
+use crate::abstract_environment::BUILTINS_MODULE;
 use crate::analysis::fmt::{fmt_display_sequence, fmt_iterator};
 use crate::analysis::lattice::{Join, OrdJoin};
 use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
@@ -18,6 +15,9 @@ use crate::cfg::{
 use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
 use crate::finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
 use crate::genkill::assignment::AssignmentTarget;
+use crate::primitives::literals::{
+    LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
+};
 use crate::primitives::{BigInt, Complex64, Int};
 use apy::OneOrMany;
 use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
@@ -492,12 +492,12 @@ pub enum Expression {
     Call(ExpressionCall),
     Unary(ExpressionUnary),
     Binary(ExpressionBinary),
-    LiteralInteger(LiteralInteger),
+    LiteralInteger(LiteralInt),
     LiteralFloat(LiteralFloat),
     LiteralComplex(LiteralComplex),
-    LiteralString(LiteralString),
+    LiteralString(LiteralStr),
     LiteralBytes(LiteralBytes),
-    LiteralBoolean(LiteralBoolean),
+    LiteralBoolean(LiteralBool),
     LiteralNone,
     LiteralEllipsis,
 }
@@ -1688,7 +1688,7 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         expr_string_literal: &ast::ExprStringLiteral,
     ) -> Expression {
-        Expression::LiteralString(LiteralString {
+        Expression::LiteralString(LiteralStr {
             value: Arc::new(expr_string_literal.value.to_str().to_owned()),
         })
     }
@@ -1698,12 +1698,14 @@ impl<'a> ConstraintsBuilder<'a> {
         expr_bytes_literal: &ast::ExprBytesLiteral,
     ) -> Expression {
         Expression::LiteralBytes(LiteralBytes {
-            value: expr_bytes_literal
-                .value
-                .iter()
-                .flat_map(|part| part.as_slice())
-                .copied()
-                .collect(),
+            value: Arc::new(
+                expr_bytes_literal
+                    .value
+                    .iter()
+                    .flat_map(|part| part.as_slice())
+                    .copied()
+                    .collect(),
+            ),
         })
     }
 
@@ -1713,10 +1715,8 @@ impl<'a> ConstraintsBuilder<'a> {
     ) -> Expression {
         match &expr_number_literal.value {
             Number::Int(int) => match int.as_i64() {
-                Some(value) => {
-                    Expression::LiteralInteger(LiteralInteger::new(Int::SmallInt(value)))
-                }
-                None => Expression::LiteralInteger(LiteralInteger::new(Int::BigInt({
+                Some(value) => Expression::LiteralInteger(LiteralInt::new(Int::SmallInt(value))),
+                None => Expression::LiteralInteger(LiteralInt::new(Int::BigInt({
                     let base = int.to_string();
 
                     if base.starts_with("0x") || base.starts_with("0X") {
@@ -1741,7 +1741,7 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         expr_boolean_literal: &ast::ExprBooleanLiteral,
     ) -> Expression {
-        Expression::LiteralBoolean(LiteralBoolean {
+        Expression::LiteralBoolean(LiteralBool {
             value: expr_boolean_literal.value,
         })
     }

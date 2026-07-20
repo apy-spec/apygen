@@ -1,6 +1,5 @@
-use crate::abstract_environment::{
-    LiteralString, LiteralTuple, Parameter, Sourced, Type, TypeInstance, TypeLiteral, TypeUnion,
-};
+use crate::abstract_environment::{LiteralTuple, Parameter, Sourced, Type, TypeLiteral, TypeUnion};
+use crate::primitives::literals::LiteralStr;
 use apy::v1::{Identifier, ParameterKind};
 use imbl;
 use std::collections::BTreeMap;
@@ -139,7 +138,7 @@ impl Arguments {
                     }
 
                     let str_literal = Arc::new(Type::new_literal(TypeLiteral::String(
-                        LiteralString::from_str("str"),
+                        LiteralStr::from("str"),
                     )));
 
                     let arguments = if var_keyword_arguments.is_empty() {

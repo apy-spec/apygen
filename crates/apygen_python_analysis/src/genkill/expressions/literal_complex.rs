@@ -1,21 +1,22 @@
-use crate::abstract_environment::{Exception, LiteralBoolean, LiteralComplex, Type};
+use crate::abstract_environment::{Exception, Type};
 use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::PyTypeEval;
 use crate::primitives::Complex64;
 use crate::primitives::Pow;
+use crate::primitives::literals::{LiteralBool, LiteralComplex};
 
 pub fn as_boolean(literal_complex: &LiteralComplex) -> bool {
     literal_complex.value.re != 0.0 || literal_complex.value.im != 0.0
 }
 
 pub fn call_dunder_bool(literal_complex: &LiteralComplex) -> Type {
-    Type::new_boolean_literal(LiteralBoolean {
+    Type::new_boolean_literal(LiteralBool {
         value: as_boolean(literal_complex),
     })
 }
 
 pub fn call_not(literal_complex: &LiteralComplex) -> Type {
-    Type::new_boolean_literal(LiteralBoolean {
+    Type::new_boolean_literal(LiteralBool {
         value: !as_boolean(literal_complex),
     })
 }

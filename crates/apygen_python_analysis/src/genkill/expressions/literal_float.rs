@@ -1,20 +1,21 @@
-use crate::abstract_environment::{Exception, LiteralBoolean, LiteralFloat, Type};
+use crate::abstract_environment::{Exception, Type};
 use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::PyTypeEval;
 use crate::primitives::Pow;
+use crate::primitives::literals::{LiteralBool, LiteralFloat};
 
 pub fn as_boolean(literal_float: &LiteralFloat) -> bool {
     literal_float.value != 0.0
 }
 
 pub fn call_dunder_bool(literal_float: &LiteralFloat) -> Type {
-    Type::new_boolean_literal(LiteralBoolean {
+    Type::new_boolean_literal(LiteralBool {
         value: as_boolean(literal_float),
     })
 }
 
 pub fn call_not(literal_float: &LiteralFloat) -> Type {
-    Type::new_boolean_literal(LiteralBoolean {
+    Type::new_boolean_literal(LiteralBool {
         value: !as_boolean(literal_float),
     })
 }

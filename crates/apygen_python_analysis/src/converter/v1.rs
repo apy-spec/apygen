@@ -1,11 +1,13 @@
 use crate::abstract_environment::{
-    BUILTINS_MODULE, Base, LiteralBoolean, LiteralBytes, LiteralClass, LiteralComplex, LiteralDict,
-    LiteralFloat, LiteralFunction, LiteralGeneric, LiteralImportedModule, LiteralInteger,
-    LiteralList, LiteralString, LiteralTuple, LiteralTypeAlias, QualifiedName, RaisedExceptions,
-    TYPES_MODULE, TYPING_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion,
+    BUILTINS_MODULE, Base, LiteralClass, LiteralDict, LiteralFunction, LiteralGeneric,
+    LiteralImportedModule, LiteralList, LiteralTuple, LiteralTypeAlias, QualifiedName,
+    RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion,
 };
 use crate::constraints::{Expression, ExpressionVariable, ModuleName, QualifiedLocation};
 use crate::genkill::visibility::visibility_from_name;
+use crate::primitives::literals::{
+    LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
+};
 use crate::solver::{EvaluationState, ProgramEvaluation};
 use apy;
 use apygen_analysis::abstract_state::AbstractState;
@@ -24,7 +26,7 @@ pub fn new_literal(arguments: Vec<apy::v1::TypeArgument>) -> apy::v1::TypeInstan
     .with_arguments(arguments)
 }
 
-pub fn convert_literal_integer(literal_integer: &LiteralInteger) -> apy::v1::TypeInstance {
+pub fn convert_literal_integer(literal_integer: &LiteralInt) -> apy::v1::TypeInstance {
     new_literal(vec![apy::v1::TypeArgument::Value {
         value: apy::v1::PythonValue::Int {
             int: literal_integer.to_string(),
@@ -32,7 +34,7 @@ pub fn convert_literal_integer(literal_integer: &LiteralInteger) -> apy::v1::Typ
     }])
 }
 
-pub fn convert_literal_boolean(literal_boolean: &LiteralBoolean) -> apy::v1::TypeInstance {
+pub fn convert_literal_boolean(literal_boolean: &LiteralBool) -> apy::v1::TypeInstance {
     new_literal(vec![apy::v1::TypeArgument::Value {
         value: apy::v1::PythonValue::Bool {
             bool: literal_boolean.value,
@@ -57,7 +59,7 @@ pub fn convert_literal_complex(literal_complex: &LiteralComplex) -> apy::v1::Typ
     }])
 }
 
-pub fn convert_literal_string(literal_string: &LiteralString) -> apy::v1::TypeInstance {
+pub fn convert_literal_string(literal_string: &LiteralStr) -> apy::v1::TypeInstance {
     new_literal(vec![apy::v1::TypeArgument::Value {
         value: apy::v1::PythonValue::Str {
             str: literal_string.value.as_ref().clone(),

@@ -1,20 +1,22 @@
-use crate::abstract_environment::{Exception, LiteralBoolean, LiteralBytes, LiteralInteger, Type};
+use crate::abstract_environment::{Exception, Type};
 use crate::constraints::{BinaryOperator, UnaryOperator};
 use crate::genkill::expressions::PyTypeEval;
 use crate::primitives::ToPrimitive;
+use crate::primitives::literals::{LiteralBool, LiteralBytes, LiteralInt};
+use std::sync::Arc;
 
 pub fn as_boolean(literal_bytes: &LiteralBytes) -> bool {
     !literal_bytes.value.is_empty()
 }
 
 pub fn call_dunder_bool(literal_bytes: &LiteralBytes) -> Type {
-    Type::new_boolean_literal(LiteralBoolean {
+    Type::new_boolean_literal(LiteralBool {
         value: as_boolean(literal_bytes),
     })
 }
 
 pub fn call_not(literal_bytes: &LiteralBytes) -> Type {
-    Type::new_boolean_literal(LiteralBoolean {
+    Type::new_boolean_literal(LiteralBool {
         value: !as_boolean(literal_bytes),
     })
 }
@@ -35,23 +37,24 @@ pub fn call_binary_op(
 ) -> PyTypeEval {
     PyTypeEval::with_default_effects(match operator {
         BinaryOperator::Add => Type::new_bytes_literal(LiteralBytes {
-            value: left
-                .value
-                .iter()
-                .chain(right.value.iter())
-                .cloned()
-                .collect(),
+            value: Arc::new(
+                left.value
+                    .iter()
+                    .chain(right.value.iter())
+                    .cloned()
+                    .collect(),
+            ),
         }),
         _ => return PyTypeEval::raise(Exception::any()), // TODO: fix,
     })
 }
 
-pub fn repeat_bytes(bytes: &LiteralBytes, repetitions: &LiteralInteger) -> PyTypeEval {
+pub fn repeat_bytes(bytes: &LiteralBytes, repetitions: &LiteralInt) -> PyTypeEval {
     if let Some(repetitions) = repetitions.value.to_usize() {
         PyTypeEval::with_default_effects(Type::new_bytes_literal(LiteralBytes {
-            value: imbl::Vector::from_iter(
+            value: Arc::new(Vec::from_iter(
                 (0..repetitions).flat_map(|_| bytes.value.iter().cloned()),
-            ),
+            )),
         }))
     } else {
         PyTypeEval::unknown()
