@@ -1,4 +1,3 @@
-use crate::abstract_environment::BUILTINS_MODULE;
 use crate::analysis::lattice::{Join, OrdJoin};
 use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use crate::cfg::ast::{self, Number};
@@ -11,12 +10,17 @@ use crate::cfg::{
 };
 use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
 use crate::finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
-use crate::genkill::assignment::AssignmentTarget;
 use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
-use crate::primitives::{BigInt, Complex64, Int};
+use crate::primitives::{BigInt, Complex64, Int, Num};
 use apy::OneOrMany;
+use apy::v1::ParseIdentifierError;
+pub use apygen_analysis as analysis;
+pub use apygen_cfg as cfg;
+use apygen_cfg::ast::{
+    Expr, ExprAttribute, ExprList, ExprName, ExprStarred, ExprSubscript, ExprTuple,
+};
 pub use apygen_constraints as constraints;
 use apygen_constraints::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
@@ -25,10 +29,12 @@ use apygen_constraints::expressions::{
     Location, ModuleName, ProgramEntityIdentifier, QualifiedName, UnaryOperator, VariableName,
 };
 use apygen_constraints::{
-    AbstractEnvironmentSpecification, Constraint, ConstraintGraph, ConstraintNode, ModuleDependentGraph,
-    Guard, IncludeConstraint, ModuleNode, ProgramEntityConstraints, ReturnConstraint,
+    AbstractEnvironmentSpecification, Constraint, ConstraintGraph, ConstraintNode, Guard,
+    IncludeConstraint, ModuleDependentGraph, ModuleNode, ProgramEntityConstraints,
+    ReturnConstraint,
 };
-use apygen_primitives::Num;
+pub use apygen_finder as finder;
+pub use apygen_primitives as primitives;
 use constraints::expressions::QualifiedLocation;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelBridge;
@@ -37,6 +43,117 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use thiserror::Error;
+
+pub const BUILTINS_MODULE: &str = "builtins";
+
+#[derive(Debug, Error)]
+pub enum FromAssignmentTargetError {
+    #[error("the expression contains an invalid identifier")]
+    InvalidIdentifier(#[from] ParseIdentifierError),
+    #[error("the expression is not a valid assignment target")]
+    InvalidTarget,
+}
+
+pub enum AssignmentTarget<'e> {
+    Name(Identifier),
+    Attribute {
+        target: Box<AssignmentTarget<'e>>,
+        attr: Identifier,
+    },
+    Subscript {
+        target: Box<AssignmentTarget<'e>>,
+        slice: &'e Expr,
+    },
+    Starred(Box<AssignmentTarget<'e>>),
+    Tuple(Vec<AssignmentTarget<'e>>),
+    List(Vec<AssignmentTarget<'e>>),
+}
+
+impl TryFrom<&ExprName> for AssignmentTarget<'_> {
+    type Error = FromAssignmentTargetError;
+
+    fn try_from(value: &ExprName) -> Result<Self, Self::Error> {
+        Ok(AssignmentTarget::Name(Identifier::try_parse(
+            value.id.as_ref(),
+        )?))
+    }
+}
+
+impl<'e> TryFrom<&'e ExprAttribute> for AssignmentTarget<'e> {
+    type Error = FromAssignmentTargetError;
+
+    fn try_from(value: &'e ExprAttribute) -> Result<Self, Self::Error> {
+        Ok(AssignmentTarget::Attribute {
+            attr: Identifier::try_parse(value.attr.id.as_ref())?,
+            target: Box::new(AssignmentTarget::try_from(value.value.as_ref())?),
+        })
+    }
+}
+
+impl<'e> TryFrom<&'e ExprSubscript> for AssignmentTarget<'e> {
+    type Error = FromAssignmentTargetError;
+
+    fn try_from(value: &'e ExprSubscript) -> Result<Self, Self::Error> {
+        Ok(AssignmentTarget::Subscript {
+            slice: &value.slice,
+            target: Box::new(AssignmentTarget::try_from(value.value.as_ref())?),
+        })
+    }
+}
+
+impl<'e> TryFrom<&'e ExprStarred> for AssignmentTarget<'e> {
+    type Error = FromAssignmentTargetError;
+
+    fn try_from(value: &'e ExprStarred) -> Result<Self, Self::Error> {
+        Ok(AssignmentTarget::Starred(Box::new(
+            AssignmentTarget::try_from(value.value.as_ref())?,
+        )))
+    }
+}
+
+impl<'e> TryFrom<&'e ExprTuple> for AssignmentTarget<'e> {
+    type Error = FromAssignmentTargetError;
+
+    fn try_from(value: &'e ExprTuple) -> Result<Self, Self::Error> {
+        Ok(AssignmentTarget::Tuple(
+            value
+                .elts
+                .iter()
+                .map(|element| AssignmentTarget::try_from(element))
+                .collect::<Result<Vec<AssignmentTarget>, Self::Error>>()?,
+        ))
+    }
+}
+
+impl<'e> TryFrom<&'e ExprList> for AssignmentTarget<'e> {
+    type Error = FromAssignmentTargetError;
+
+    fn try_from(value: &'e ExprList) -> Result<Self, Self::Error> {
+        Ok(AssignmentTarget::List(
+            value
+                .elts
+                .iter()
+                .map(|element| AssignmentTarget::try_from(element))
+                .collect::<Result<Vec<AssignmentTarget>, Self::Error>>()?,
+        ))
+    }
+}
+
+impl<'e> TryFrom<&'e Expr> for AssignmentTarget<'e> {
+    type Error = FromAssignmentTargetError;
+
+    fn try_from(value: &'e Expr) -> Result<Self, Self::Error> {
+        match value {
+            Expr::Name(expr_name) => AssignmentTarget::try_from(expr_name),
+            Expr::Attribute(expr_attribute) => AssignmentTarget::try_from(expr_attribute),
+            Expr::Subscript(expr_subscript) => AssignmentTarget::try_from(expr_subscript),
+            Expr::Starred(expr_starred) => AssignmentTarget::try_from(expr_starred),
+            Expr::Tuple(expr_tuple) => AssignmentTarget::try_from(expr_tuple),
+            Expr::List(expr_list) => AssignmentTarget::try_from(expr_list),
+            _ => Err(FromAssignmentTargetError::InvalidTarget),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProgramEntity {

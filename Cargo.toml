@@ -11,6 +11,7 @@ license = "MIT"
 apygen = { path = "crates/apygen" }
 apygen_python_analysis = { path = "crates/apygen_python_analysis" }
 apygen_cfg = { path = "crates/apygen_cfg" }
+apygen_constraint_builder = { path = "crates/apygen_constraint_builder" }
 apygen_constraints = { path = "crates/apygen_constraints" }
 apygen_analysis = { path = "crates/apygen_analysis" }
 apygen_analysis_derive = { path = "crates/apygen_analysis_derive" }

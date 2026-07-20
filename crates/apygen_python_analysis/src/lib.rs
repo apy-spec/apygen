@@ -1,13 +1,14 @@
-use crate::constraints::{SpecModuleLoader, analyse_program};
-use apygen_constraints::ModuleNode;
+use crate::constraint_builder::constraints::ModuleNode;
+use crate::constraint_builder::constraints::expressions::{Identifier, QualifiedName};
+use crate::constraint_builder::{SpecModuleLoader, analyse_program};
 use crate::converter::v1::convert_apy_v1;
 use crate::solver::ModuleConstraintSolver;
 pub use apy;
-use apy::v1::{Identifier, QualifiedName};
 pub use apygen_analysis as analysis;
 use apygen_analysis::log::LogAnalysisObserver;
 use apygen_analysis::rayon::par_analysis;
 pub use apygen_cfg as cfg;
+pub use apygen_constraint_builder as constraint_builder;
 pub use apygen_finder as finder;
 pub use apygen_primitives as primitives;
 pub use finder::filesystem::{AbsolutePathBuf, Filesystem, LocalFilesystem};
@@ -18,7 +19,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub mod abstract_environment;
-pub mod constraints;
 pub mod converter;
 pub mod genkill;
 pub mod solver;

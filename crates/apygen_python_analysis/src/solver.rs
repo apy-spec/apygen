@@ -18,7 +18,7 @@ use apygen_constraints::expressions::{
     ExpressionVariable, Location, ModuleName, QualifiedLocation, VariableName,
 };
 use apygen_constraints::{
-    Constraint, ConstraintNode, ModuleDependentGraph, Guard, ModuleNode, ProgramEntityConstraints,
+    Constraint, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode, ProgramEntityConstraints,
 };
 use imbl::ordmap::Entry;
 use std::convert::Infallible;
@@ -1626,7 +1626,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 mod tests {
     use super::*;
     use crate::abstract_environment::BUILTINS_MODULE;
-    use crate::constraints::{ModuleLoader, analyse_program};
+    use crate::constraint_builder::{ModuleLoader, analyse_program};
     use apy::v1::QualifiedName;
     use apygen_analysis::analysis;
     use apygen_analysis::log::LogAnalysisObserver;
