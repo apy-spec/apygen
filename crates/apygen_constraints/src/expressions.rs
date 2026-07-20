@@ -2,7 +2,11 @@ use crate::analysis::fmt::fmt_display_sequence;
 use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
-pub use apy::v1::{GenericKind, Identifier, ParameterKind, QualifiedName};
+pub use apy::v1::{
+    GenericKind, Identifier, ParameterKind, ParseIdentifierError, ParseQualifiedNameError,
+    QualifiedName,
+};
+pub use apy::{EmptyCollectionError, OneOrMany};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 

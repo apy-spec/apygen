@@ -1,15 +1,13 @@
+use apygen_constraint_builder::constraints::expressions::{Identifier, QualifiedName};
+use apygen_constraint_builder::constraints::{ModuleDependentGraph, ModuleNode};
+use apygen_constraint_builder::{SpecModuleLoader, analyse_program};
 use apygen_converter::v1::convert_apy_v1;
-use apygen_python_analysis::analysis::log::LogAnalysisObserver;
-use apygen_python_analysis::analysis::rayon::par_analysis;
-use apygen_python_analysis::cfg::graph::dot::ToDot;
-use apygen_python_analysis::constraint_builder::constraints::expressions::{
-    Identifier, QualifiedName,
-};
-use apygen_python_analysis::constraint_builder::constraints::{ModuleDependentGraph, ModuleNode};
-use apygen_python_analysis::constraint_builder::{SpecModuleLoader, analyse_program};
-use apygen_python_analysis::finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
-use apygen_python_analysis::finder::pathfinder::PathFinder;
-use apygen_python_analysis::solver::ModuleConstraintSolver;
+use apygen_constraint_solver::ModuleConstraintSolver;
+use apygen_constraint_solver::analysis::log::LogAnalysisObserver;
+use apygen_constraint_solver::analysis::rayon::par_analysis;
+use apygen_constraint_solver::cfg::graph::dot::ToDot;
+use apygen_constraint_solver::finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
+use apygen_constraint_solver::finder::pathfinder::PathFinder;
 use rstest::rstest;
 use std::collections::HashMap;
 use std::fs;

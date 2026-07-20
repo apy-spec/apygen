@@ -1,5 +1,5 @@
+use crate::expressions::{self, PyTypeEval};
 use crate::inference::TypeLiteral;
-use crate::genkill::expressions::{self, PyTypeEval};
 use apygen_constraints::expressions::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {

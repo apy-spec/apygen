@@ -6,7 +6,7 @@ use apygen_constraint_builder::{SpecModuleLoader, analyse_program};
 use apygen_converter::v1::convert_apy_v1;
 use apygen_finder::filesystem::{AbsolutePathBuf, Filesystem};
 use apygen_finder::pathfinder::PathFinder;
-use apygen_python_analysis::solver::ModuleConstraintSolver;
+use apygen_constraint_solver::ModuleConstraintSolver;
 use log::debug;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};

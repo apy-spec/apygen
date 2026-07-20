@@ -9,8 +9,8 @@ pub mod literal_none;
 pub mod literal_string;
 pub mod type_literal;
 
+use crate::analysis::lattice::Join;
 use crate::inference::{Completeness, Exception, Pureness, RaisedExceptions, Type};
-use apygen_analysis::lattice::Join;
 use std::fmt::Display;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]

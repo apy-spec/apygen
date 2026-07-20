@@ -1,6 +1,6 @@
 use crate::inference::Type;
-use crate::genkill::expressions;
-use crate::genkill::expressions::PyTypeEval;
+use crate::expressions;
+use crate::expressions::PyTypeEval;
 use crate::primitives::literals::{LiteralBool, LiteralInt};
 use apygen_constraints::expressions::{BinaryOperator, UnaryOperator};
 

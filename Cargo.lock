@@ -120,9 +120,9 @@ dependencies = [
  "apy",
  "apygen_analysis",
  "apygen_constraint_builder",
+ "apygen_constraint_solver",
  "apygen_converter",
  "apygen_finder",
- "apygen_python_analysis",
  "env_logger",
  "indoc",
  "log",
@@ -184,6 +184,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "apygen_constraint_solver"
+version = "0.1.0"
+dependencies = [
+ "apy",
+ "apygen_analysis",
+ "apygen_cfg",
+ "apygen_constraint_builder",
+ "apygen_constraints",
+ "apygen_finder",
+ "apygen_inference",
+ "apygen_primitives",
+ "env_logger",
+ "imbl",
+ "indoc",
+ "rstest",
+ "thiserror",
+]
+
+[[package]]
 name = "apygen_constraints"
 version = "0.1.0"
 dependencies = [
@@ -201,10 +220,10 @@ version = "0.1.0"
 dependencies = [
  "apy",
  "apygen_analysis",
+ "apygen_constraint_solver",
  "apygen_constraints",
  "apygen_inference",
  "apygen_primitives",
- "apygen_python_analysis",
  "imbl",
  "log",
  "rayon",
@@ -242,25 +261,6 @@ dependencies = [
  "num-complex",
  "num-rational",
  "num-traits",
-]
-
-[[package]]
-name = "apygen_python_analysis"
-version = "0.1.0"
-dependencies = [
- "apy",
- "apygen_analysis",
- "apygen_cfg",
- "apygen_constraint_builder",
- "apygen_constraints",
- "apygen_finder",
- "apygen_inference",
- "apygen_primitives",
- "env_logger",
- "imbl",
- "indoc",
- "rstest",
- "thiserror",
 ]
 
 [[package]]

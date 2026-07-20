@@ -1,5 +1,5 @@
+use crate::expressions::PyTypeEval;
 use crate::inference::{Exception, Type};
-use crate::genkill::expressions::PyTypeEval;
 use crate::primitives::literals::LiteralBool;
 use apygen_constraints::expressions::UnaryOperator;
 

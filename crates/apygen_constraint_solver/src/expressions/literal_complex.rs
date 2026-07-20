@@ -1,5 +1,5 @@
+use crate::expressions::PyTypeEval;
 use crate::inference::{Exception, Type};
-use crate::genkill::expressions::PyTypeEval;
 use crate::primitives::Complex64;
 use crate::primitives::Pow;
 use crate::primitives::literals::{LiteralBool, LiteralComplex};

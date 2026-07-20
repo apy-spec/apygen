@@ -5,7 +5,7 @@ pub use apygen_analysis as analysis;
 pub use apygen_constraints as constraints;
 pub use apygen_inference as inference;
 pub use apygen_primitives as primitives;
-pub use apygen_python_analysis as solver;
+pub use apygen_constraint_solver as solver;
 use constraints::expressions::{Expression, ExpressionVariable, ModuleName, QualifiedLocation};
 use inference::{
     BUILTINS_MODULE, Base, LiteralClass, LiteralDict, LiteralFunction, LiteralGeneric,
@@ -18,8 +18,8 @@ use primitives::literals::{
 };
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
-use solver::genkill::visibility::visibility_from_name;
-use solver::solver::{EvaluationState, ProgramEvaluation};
+use solver::visibility::visibility_from_name;
+use solver::{EvaluationState, ProgramEvaluation};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

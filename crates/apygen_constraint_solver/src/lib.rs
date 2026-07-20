@@ -1,29 +1,83 @@
+pub use apygen_analysis as analysis;
+pub use apygen_cfg as cfg;
+pub use apygen_constraints as constraints;
+pub use apygen_finder as finder;
+pub use apygen_inference as inference;
+pub use apygen_primitives as primitives;
+pub use imbl;
+
+pub mod calls;
+pub mod expressions;
+pub mod literals;
+pub mod visibility;
+
+use crate::analysis::abstract_state::{AbstractState, AbstractStateProxy};
+use crate::analysis::fmt::{fmt_display_set, fmt_set};
+use crate::analysis::lattice::Join;
+use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
+use crate::calls::Arguments;
+use crate::cfg::ast::{Expr, ExprAttribute, ExprName};
+use crate::constraints::expressions::{
+    BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
+    ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionSubscript, ExpressionUnary,
+    ExpressionVariable, Identifier, Location, ModuleName, OneOrMany, ParseIdentifierError,
+    QualifiedLocation, QualifiedName, VariableName,
+};
+use crate::constraints::{
+    Constraint, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode, ProgramEntityConstraints,
+};
+use crate::expressions::literal_class::method_resolution_order;
+use crate::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
 use crate::inference::{
     BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Exception, ExceptionOrigin, FunctionType,
     LiteralClass, LiteralFunction, LiteralMethod, RaisedExceptions, StructuralDepth,
     StructuralWidth, TYPES_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion, WIDTH_LIMIT,
 };
-use crate::genkill::calls::Arguments;
-use crate::genkill::expressions::literal_class::method_resolution_order;
-use crate::genkill::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
-use crate::{is_type_unreachable, pytype_consume_or_return_option};
-use apy::v1::{Identifier, QualifiedName};
-use apygen_analysis::abstract_state::{AbstractState, AbstractStateProxy};
-use apygen_analysis::fmt::{fmt_display_set, fmt_set};
-use apygen_analysis::lattice::Join;
-use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
-use apygen_constraints::expressions::{
-    BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
-    ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionSubscript, ExpressionUnary,
-    ExpressionVariable, Location, ModuleName, QualifiedLocation, VariableName,
-};
-use apygen_constraints::{
-    Constraint, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode, ProgramEntityConstraints,
-};
 use imbl::ordmap::Entry;
 use std::convert::Infallible;
 use std::fmt::{Debug, Display};
 use std::sync::Arc;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum ToQualifiedNameError {
+    #[error("expression contains an invalid identifier")]
+    InvalidIdentifier(#[from] ParseIdentifierError),
+    #[error("expression is not a valid qualified name expression")]
+    InvalidQualifiedName,
+}
+
+pub trait ToQualifiedName {
+    fn to_qualified_name(&self) -> Result<QualifiedName, ToQualifiedNameError>;
+}
+
+impl ToQualifiedName for ExprName {
+    fn to_qualified_name(&self) -> Result<QualifiedName, ToQualifiedNameError> {
+        Ok(QualifiedName::new(OneOrMany::one(Identifier::try_parse(
+            self.id.as_ref(),
+        )?)))
+    }
+}
+
+impl ToQualifiedName for ExprAttribute {
+    fn to_qualified_name(&self) -> Result<QualifiedName, ToQualifiedNameError> {
+        let mut qualified_name = self.value.to_qualified_name()?;
+        qualified_name
+            .identifiers
+            .push(Identifier::try_parse(self.attr.id.as_ref())?);
+        Ok(qualified_name)
+    }
+}
+
+impl ToQualifiedName for Expr {
+    fn to_qualified_name(&self) -> Result<QualifiedName, ToQualifiedNameError> {
+        match self {
+            Expr::Name(expr_name) => expr_name.to_qualified_name(),
+            Expr::Attribute(expr_attribute) => expr_attribute.to_qualified_name(),
+            _ => Err(ToQualifiedNameError::InvalidQualifiedName),
+        }
+    }
+}
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct DefinedVariables {
@@ -1626,10 +1680,10 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 mod tests {
     use super::*;
     use crate::inference::BUILTINS_MODULE;
-    use crate::constraint_builder::{ModuleLoader, analyse_program};
     use apy::v1::QualifiedName;
     use apygen_analysis::analysis;
     use apygen_analysis::log::LogAnalysisObserver;
+    use apygen_constraint_builder::{ModuleLoader, analyse_program};
     use indoc::indoc;
     use rstest::rstest;
     use std::collections::HashMap;

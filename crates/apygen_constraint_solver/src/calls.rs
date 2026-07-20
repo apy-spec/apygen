@@ -1,6 +1,6 @@
+use crate::constraints::expressions::{Identifier, ParameterKind};
 use crate::inference::{LiteralTuple, Parameter, Sourced, Type, TypeLiteral, TypeUnion};
 use crate::primitives::literals::LiteralStr;
-use apy::v1::{Identifier, ParameterKind};
 use imbl;
 use std::collections::BTreeMap;
 use std::sync::Arc;
