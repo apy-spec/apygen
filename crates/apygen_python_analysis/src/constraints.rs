@@ -17,7 +17,7 @@ use apygen_analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use apygen_cfg::build_cfg;
 use apygen_cfg::graph::Graph;
 use apygen_cfg::graph::dot::{DiGraphDot, escape_dot};
-use apygen_cfg::parser::{Mode, parse};
+use apygen_cfg::parser::parse_module;
 use apygen_finder::filesystem::{Error as FilesystemError, Filesystem};
 use apygen_finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
 use imbl::ordmap::Entry;
@@ -3027,10 +3027,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         .load(&builtins_module_name)
         .expect("Should build CFG");
     let builtins_line_index = LineIndex::from_source_text(&builtins_source);
-    let builtins_module = parse(&builtins_source, Mode::Module)
-        .expect("Should parse builtins module")
-        .try_into_module()
-        .expect("Should parse module");
+    let builtins_module = parse_module(&builtins_source).expect("Should parse builtins module");
     let builtins_cfg =
         build_cfg(&builtins_line_index, builtins_module.syntax()).expect("Should build CFG");
 
@@ -3075,7 +3072,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
             .filter_map(|module_name| {
                 let source = module_loader.load(&module_name).ok()?;
                 let line_index = LineIndex::from_source_text(&source);
-                let module = parse(&source, Mode::Module).ok()?.try_into_module()?;
+                let module = parse_module(&source).ok()?;
                 let cfg = build_cfg(&line_index, module.syntax()).ok()?;
 
                 let parent_state = if module_name != builtins_module_name {
