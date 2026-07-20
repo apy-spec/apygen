@@ -4,7 +4,10 @@ use crate::ast::{
 };
 use crate::source_file::LineIndex;
 use crate::text_size::Ranged;
-use crate::{Cfg, CfgEdge, CfgEdgeKind, CfgNode, Location, ProgramPoint, TryFromTextSizeError};
+use crate::{
+    Cfg, CfgEdge, CfgEdgeKind, CfgNode, ConvertTextSizeError, Location, ProgramPoint,
+    convert_text_size_to_location,
+};
 use bitflags::bitflags;
 use ruff_python_ast::ModModule;
 use std::collections::HashSet;
@@ -146,7 +149,7 @@ pub enum StmtDef<'s> {
 #[derive(Debug, Error)]
 pub enum BuildCfgError {
     #[error("{0}")]
-    TryFromTextSize(#[from] TryFromTextSizeError),
+    TryFromTextSize(#[from] ConvertTextSizeError),
     #[error("invalid elif statement at location {0}")]
     InvalidElifStatement(Location),
     #[error("break statement outside of any loop")]
@@ -165,14 +168,14 @@ impl<'i> CfgBuilder<'i> {
         Self { index }
     }
 
-    pub fn create_location(&self, ranged: &impl Ranged) -> Result<Location, TryFromTextSizeError> {
-        Location::try_from_text_size(self.index, ranged.start())
+    pub fn create_location(&self, ranged: &impl Ranged) -> Result<Location, ConvertTextSizeError> {
+        convert_text_size_to_location(self.index, ranged.start())
     }
 
     pub fn create_program_point(
         &self,
         ranged: &impl Ranged,
-    ) -> Result<ProgramPoint, TryFromTextSizeError> {
+    ) -> Result<ProgramPoint, ConvertTextSizeError> {
         Ok(ProgramPoint::Location(self.create_location(ranged)?))
     }
 

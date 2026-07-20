@@ -3,9 +3,9 @@ use analysis::lattice::Join;
 use apy;
 pub use apygen_analysis as analysis;
 pub use apygen_constraint_graph as constraints;
+pub use apygen_constraint_solver as solver;
 pub use apygen_inference as inference;
 pub use apygen_primitives as primitives;
-pub use apygen_constraint_solver as solver;
 use constraints::expressions::{Expression, ExpressionVariable, ModuleName, QualifiedLocation};
 use inference::{
     BUILTINS_MODULE, Base, LiteralClass, LiteralDict, LiteralFunction, LiteralGeneric,
@@ -550,8 +550,7 @@ pub fn convert_module(
     program_evaluation: &ProgramEvaluation,
     module: &ModuleName,
 ) -> Option<apy::v1::Module> {
-    let evaluation_state =
-        program_evaluation.get(&QualifiedLocation::new(module.clone(), imbl::Vector::new()))?;
+    let evaluation_state = program_evaluation.get(&QualifiedLocation::from(module.clone()))?;
 
     Some(
         apy::v1::Module::new(

@@ -1,41 +1,45 @@
 use crate::analysis::lattice::{Join, OrdJoin};
 use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use crate::cfg::ast::{self, Number};
+use crate::cfg::ast::{
+    Expr, ExprAttribute, ExprList, ExprName, ExprStarred, ExprSubscript, ExprTuple,
+};
 use crate::cfg::build_cfg;
+use crate::cfg::convert_text_size_to_location;
 use crate::cfg::parser::parse_module;
 use crate::cfg::source_file::LineIndex;
 use crate::cfg::text_size::Ranged;
 use crate::cfg::{
     Cfg, CfgEdge, CfgEdgeKind, CfgNode as StmtNode, Location as ProgramPointLocation, ProgramPoint,
 };
-use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
-use crate::finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
-use crate::primitives::literals::{
-    LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
-};
-use crate::primitives::{BigInt, Complex64, Int, Num};
-use apy::OneOrMany;
-use apy::v1::ParseIdentifierError;
-pub use apygen_analysis as analysis;
-pub use apygen_cfg as cfg;
-use apygen_cfg::ast::{
-    Expr, ExprAttribute, ExprList, ExprName, ExprStarred, ExprSubscript, ExprTuple,
-};
-pub use apygen_constraint_graph as constraints;
-use apygen_constraint_graph::expressions::{
+use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
     ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionImport, ExpressionOverride,
-    ExpressionSubscript, ExpressionUnary, ExpressionVariable, Identifier, KeywordArgument,
-    Location, ModuleName, ProgramEntityIdentifier, QualifiedName, UnaryOperator, VariableName,
+    ExpressionSubscript, ExpressionUnary, ExpressionVariable, KeywordArgument,
+    ProgramEntityIdentifier, UnaryOperator,
 };
-use apygen_constraint_graph::{
+use crate::constraint_graph::{
     AbstractEnvironmentSpecification, Constraint, ConstraintGraph, ConstraintNode, Guard,
     IncludeConstraint, ModuleDependentGraph, ModuleNode, ProgramEntityConstraints,
     ReturnConstraint,
 };
+use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
+use crate::finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
+use crate::identifiers::{
+    Identifier, Location, ModuleName, OneOrMany, ParseIdentifierError, QualifiedLocation,
+    QualifiedName, VariableName,
+};
+use crate::primitives::literals::{
+    LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
+};
+use crate::primitives::{BigInt, Complex64, Int, Num};
+pub use apygen_analysis as analysis;
+pub use apygen_cfg as cfg;
+pub use apygen_constraint_graph as constraint_graph;
+pub use apygen_constraint_graph as constraints;
 pub use apygen_finder as finder;
+pub use apygen_identifiers as identifiers;
 pub use apygen_primitives as primitives;
-use constraints::expressions::QualifiedLocation;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
@@ -740,7 +744,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn gen_location(&self, ranged: &impl Ranged) -> Location {
         let program_point_location =
-            ProgramPointLocation::try_from_text_size(self.line_index, ranged.start()).unwrap();
+            convert_text_size_to_location(self.line_index, ranged.start()).unwrap();
         Location::new(program_point_location.line, program_point_location.offset)
     }
 

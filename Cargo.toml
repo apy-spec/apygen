@@ -18,6 +18,7 @@ apygen_constraint_solver = { path = "crates/apygen_constraint_solver" }
 apygen_converter = { path = "crates/apygen_converter" }
 apygen_finder = { path = "crates/apygen_finder" }
 apygen_graph = { path = "crates/apygen_graph" }
+apygen_identifiers = { path = "crates/apygen_identifiers" }
 apygen_inference = { path = "crates/apygen_inference" }
 apygen_primitives = { path = "crates/apygen_primitives" }
 

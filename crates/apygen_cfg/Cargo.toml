@@ -10,6 +10,7 @@ bitflags = { workspace = true }
 thiserror = { workspace = true }
 
 apygen_graph = { workspace = true }
+apygen_identifiers = { workspace = true }
 
 ruff_python_parser = { workspace = true }
 ruff_source_file = { workspace = true }

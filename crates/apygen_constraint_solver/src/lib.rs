@@ -282,10 +282,7 @@ impl<'a> ExpressionEvaluator<'a> {
         module_name: &ModuleName,
         name: &VariableName,
     ) -> Option<TypeInstance> {
-        let evaluation_state = abstract_state.get(&QualifiedLocation::new(
-            module_name.clone(),
-            imbl::Vector::new(),
-        ))?;
+        let evaluation_state = abstract_state.get(&QualifiedLocation::from(module_name.clone()))?;
 
         let locations = evaluation_state.defined_variables.names.get(name)?;
 
@@ -1624,7 +1621,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 
         let mut proxy = AbstractStateProxy::new(&new_analysis_state, ProgramEvaluation::default());
 
-        let qualified_location = QualifiedLocation::new(module_name.clone(), imbl::Vector::new());
+        let qualified_location = QualifiedLocation::from(module_name.clone());
 
         analyse_program_entity(
             &mut proxy,

@@ -10,14 +10,13 @@ apygen_analysis = { workspace = true }
 apygen_finder = { workspace = true }
 apygen_cfg = { workspace = true }
 apygen_constraint_graph = { workspace = true }
+apygen_identifiers = { workspace = true }
 apygen_primitives = { workspace = true }
-apy = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }
 imbl = { workspace = true }
 
 [dev-dependencies]
-apy = { workspace = true, features = ["yaml"] }
 rstest = { workspace = true }
 indoc = { workspace = true }
 criterion = { workspace = true }

@@ -1,6 +1,7 @@
 pub mod builder;
 
 pub use apygen_graph as graph;
+pub use apygen_identifiers as identifiers;
 use ast::{
     ElifElseClause, Stmt, StmtAnnAssign, StmtAssert, StmtAssign, StmtAugAssign, StmtBreak,
     StmtClassDef, StmtContinue, StmtDelete, StmtExpr, StmtFor, StmtFunctionDef, StmtGlobal, StmtIf,
@@ -10,6 +11,7 @@ use ast::{
 pub use builder::{BuildCfgError, build_cfg};
 use graph::Graph;
 use graph::dot::DiGraphDot;
+pub use identifiers::Location;
 pub use ruff_python_ast as ast;
 pub use ruff_python_parser as parser;
 pub use ruff_source_file as source_file;
@@ -23,36 +25,18 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 #[error("failed to convert text size {0:?} to a location in the source code")]
-pub struct TryFromTextSizeError(TextSize);
+pub struct ConvertTextSizeError(TextSize);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Location {
-    pub line: usize,
-    pub offset: usize,
-}
-
-impl Location {
-    pub fn new(line: usize, offset: usize) -> Self {
-        Self { line, offset }
-    }
-
-    pub fn try_from_text_size(
-        line_index: &LineIndex,
-        size: TextSize,
-    ) -> Result<Self, TryFromTextSizeError> {
-        let line = line_index.line_index(size).get();
-        let Some(line_size) = line_index.line_starts().get(line - 1) else {
-            return Err(TryFromTextSizeError(size));
-        };
-        let offset_size = size - line_size;
-        Ok(Location::new(line, offset_size.to_usize()))
-    }
-}
-
-impl Display for Location {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.line, self.offset)
-    }
+pub fn convert_text_size_to_location(
+    line_index: &LineIndex,
+    text_size: TextSize,
+) -> Result<Location, ConvertTextSizeError> {
+    let line = line_index.line_index(text_size).get();
+    let Some(line_size) = line_index.line_starts().get(line - 1) else {
+        return Err(ConvertTextSizeError(text_size));
+    };
+    let offset_size = text_size - line_size;
+    Ok(Location::new(line, offset_size.to_usize()))
 }
 
 #[derive(Eq, Hash, PartialEq, Debug, Clone, PartialOrd, Ord, Copy)]

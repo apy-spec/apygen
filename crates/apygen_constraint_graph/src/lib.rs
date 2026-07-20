@@ -2,12 +2,14 @@ pub mod expressions;
 
 use crate::analysis::fmt::fmt_iterator;
 use crate::analysis::lattice::Join;
-use crate::expressions::{Expression, ExpressionVariable, Location, ModuleName, QualifiedLocation};
+use crate::expressions::{Expression, ExpressionVariable};
 use crate::graph::Graph;
 use crate::graph::dot::{DiGraphDot, escape_dot};
 pub use apygen_analysis as analysis;
 pub use apygen_graph as graph;
+pub use apygen_identifiers as identifiers;
 pub use apygen_primitives as primitives;
+use identifiers::{Location, ModuleName, QualifiedLocation};
 use imbl::ordmap::Entry;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;

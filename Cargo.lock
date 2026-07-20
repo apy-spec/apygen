@@ -154,6 +154,7 @@ name = "apygen_cfg"
 version = "0.1.0"
 dependencies = [
  "apygen_graph",
+ "apygen_identifiers",
  "bitflags",
  "criterion",
  "indoc",
@@ -169,11 +170,11 @@ dependencies = [
 name = "apygen_constraint_builder"
 version = "0.1.0"
 dependencies = [
- "apy",
  "apygen_analysis",
  "apygen_cfg",
  "apygen_constraint_graph",
  "apygen_finder",
+ "apygen_identifiers",
  "apygen_primitives",
  "criterion",
  "imbl",
@@ -190,6 +191,7 @@ dependencies = [
  "apy",
  "apygen_analysis",
  "apygen_graph",
+ "apygen_identifiers",
  "apygen_primitives",
  "imbl",
 ]
@@ -242,12 +244,20 @@ name = "apygen_graph"
 version = "0.1.0"
 
 [[package]]
+name = "apygen_identifiers"
+version = "0.1.0"
+dependencies = [
+ "apy",
+]
+
+[[package]]
 name = "apygen_inference"
 version = "0.1.0"
 dependencies = [
  "apy",
  "apygen_analysis",
  "apygen_constraint_graph",
+ "apygen_identifiers",
  "apygen_primitives",
  "imbl",
 ]
