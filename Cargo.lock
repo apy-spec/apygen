@@ -202,10 +202,9 @@ version = "0.1.0"
 dependencies = [
  "apy",
  "apygen_analysis",
- "apygen_cfg",
  "apygen_constraint_builder",
  "apygen_constraint_graph",
- "apygen_finder",
+ "apygen_identifiers",
  "apygen_inference",
  "apygen_primitives",
  "env_logger",
@@ -256,7 +255,6 @@ version = "0.1.0"
 dependencies = [
  "apy",
  "apygen_analysis",
- "apygen_constraint_graph",
  "apygen_identifiers",
  "apygen_primitives",
  "imbl",

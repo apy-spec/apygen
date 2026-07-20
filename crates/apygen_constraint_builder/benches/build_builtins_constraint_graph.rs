@@ -1,7 +1,8 @@
-use apygen_constraint_builder::constraints::expressions::Identifier;
+use apygen_constraint_builder::constraint_graph::expressions::Identifier;
+use apygen_constraint_builder::finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
+use apygen_constraint_builder::finder::pathfinder::PathFinder;
 use apygen_constraint_builder::{SpecModuleLoader, analyse_program};
-use apygen_finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
-use apygen_finder::pathfinder::PathFinder;
+
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::collections::HashMap;
 use std::fs;

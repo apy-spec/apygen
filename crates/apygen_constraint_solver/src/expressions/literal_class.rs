@@ -64,34 +64,37 @@ pub fn method_resolution_order(literal_class: &LiteralClass) -> Option<VecDeque<
 #[cfg(test)]
 mod tests {
     use crate::expressions::literal_class::method_resolution_order;
+    use crate::identifiers::NamedQualifiedLocation;
     use crate::inference::{ClassType, LiteralClass};
     use apy::v1::{Identifier, QualifiedName};
-    use apygen_constraint_graph::expressions::{ProgramEntityIdentifier, QualifiedLocation};
-    use imbl::OrdMap;
+    use apygen_constraint_graph::expressions::{Location, Namespace};
     use std::collections::VecDeque;
     use std::sync::Arc;
 
     fn create_classes(classes: &[(&str, Vec<&str>)]) -> imbl::OrdMap<String, LiteralClass> {
-        let module_name = Arc::new(QualifiedName::parse("test_module"));
+        let namespace = Arc::new(Namespace::Module(Arc::new(QualifiedName::parse(
+            "test_module",
+        ))));
 
         let mut literal_classes: imbl::OrdMap<String, LiteralClass> = imbl::OrdMap::new();
 
-        for (name, bases) in classes {
+        for (line, (name, bases)) in classes.iter().enumerate() {
             let identifier = Arc::new(Identifier::parse(name));
             literal_classes.insert(
                 identifier.as_ref().as_ref().to_owned(),
                 LiteralClass {
                     value: Arc::new(ClassType {
-                        identifier: ProgramEntityIdentifier::new(
-                            QualifiedLocation::new(module_name.clone(), Default::default()),
+                        program_entity: NamedQualifiedLocation::new(
                             identifier,
+                            Location::new(line, 0),
+                            namespace.clone(),
                         ),
-                        generics: OrdMap::new(),
+                        generics: imbl::OrdMap::new(),
                         bases: bases
                             .iter()
                             .filter_map(|base| Some(literal_classes.get(*base)?.clone()))
                             .collect(),
-                        keyword_arguments: OrdMap::new(),
+                        keyword_arguments: imbl::OrdMap::new(),
                         is_abstract: false,
                     }),
                 },
@@ -108,7 +111,7 @@ mod tests {
         assert_eq!(
             actual_mro
                 .iter()
-                .map(|literal_class| literal_class.value.identifier.name.as_ref().as_ref())
+                .map(|literal_class| literal_class.value.program_entity.name.as_ref().as_ref())
                 .collect::<Vec<_>>(),
             expected_mro
         );

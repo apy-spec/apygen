@@ -5,11 +5,11 @@ use crate::analysis::lattice::Join;
 use crate::expressions::{Expression, ExpressionVariable};
 use crate::graph::Graph;
 use crate::graph::dot::{DiGraphDot, escape_dot};
+use crate::identifiers::{Location, ModuleName, Namespace};
 pub use apygen_analysis as analysis;
 pub use apygen_graph as graph;
 pub use apygen_identifiers as identifiers;
 pub use apygen_primitives as primitives;
-use identifiers::{Location, ModuleName, QualifiedLocation};
 use imbl::ordmap::Entry;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
@@ -63,11 +63,11 @@ impl<T: Display> Display for IncludeConstraint<T> {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ReturnConstraint {
     pub expression: Arc<Expression>,
-    pub origin: Option<QualifiedLocation>,
+    pub origin: Option<Namespace>,
 }
 
 impl ReturnConstraint {
-    pub fn new(expression: Arc<Expression>, origin: Option<QualifiedLocation>) -> Self {
+    pub fn new(expression: Arc<Expression>, origin: Option<Namespace>) -> Self {
         Self { expression, origin }
     }
 }
@@ -283,7 +283,7 @@ pub struct ProgramEntityConstraints {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ModuleDependentGraph {
-    pub nodes: imbl::OrdMap<ModuleNode, imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>>,
+    pub nodes: imbl::OrdMap<ModuleNode, imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>>,
     pub dependents: imbl::OrdMap<ModuleNode, imbl::OrdSet<ModuleNode>>,
 }
 
@@ -306,7 +306,7 @@ impl ModuleDependentGraph {
     pub fn insert(
         &mut self,
         node: ModuleNode,
-        state: imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
+        state: imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
     ) {
         self.nodes.insert(node.clone(), state);
     }
@@ -334,7 +334,7 @@ impl Display for ModuleDependentGraph {
 
 impl Graph for ModuleDependentGraph {
     type Node = ModuleNode;
-    type NodeData = imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>;
+    type NodeData = imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>;
     type EdgeData = ();
 
     fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {

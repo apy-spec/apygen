@@ -1,14 +1,13 @@
 use crate::analysis::fmt::fmt_display_wrapped;
 use crate::analysis::lattice::{Join, LatticeOrd, OrdJoin, OrdLatticeOrd};
 pub use crate::identifiers::{
-    Identifier, ProgramEntityIdentifier, QualifiedLocation, QualifiedName,
+    Identifier, Location, NamedQualifiedLocation, Namespace, QualifiedName,
 };
 pub use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
 pub use apy::v1::{GenericKind, ParameterKind};
 pub use apygen_analysis as analysis;
-pub use apygen_constraint_graph as constraint_graph;
 pub use apygen_identifiers as identifiers;
 pub use apygen_primitives as primitives;
 pub use imbl;
@@ -228,19 +227,31 @@ impl StructuralWidth for GenericType {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ExceptionOrigin {
     Unknown,
-    Raised(QualifiedLocation),
+    Raised {
+        location: Location,
+        namespace: Namespace,
+    },
     Specified,
-    Propagated(QualifiedLocation),
+    Propagated {
+        location: Location,
+        namespace: Namespace,
+    },
 }
 
 impl Display for ExceptionOrigin {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ExceptionOrigin::Unknown => write!(f, "Unknown"),
-            ExceptionOrigin::Raised(location) => write!(f, "Raised({location})"),
+            ExceptionOrigin::Raised {
+                location,
+                namespace,
+            } => write!(f, "Raised({location}@{namespace})"),
             ExceptionOrigin::Specified => write!(f, "Specified"),
-            ExceptionOrigin::Propagated(namespace_location) => {
-                write!(f, "Propagated({namespace_location})")
+            ExceptionOrigin::Propagated {
+                location,
+                namespace,
+            } => {
+                write!(f, "Propagated({location}@{namespace})")
             }
         }
     }
@@ -278,7 +289,7 @@ impl Display for Exception {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FunctionType {
-    pub identifier: ProgramEntityIdentifier,
+    pub program_entity: NamedQualifiedLocation,
 
     pub generics: imbl::OrdMap<String, GenericType>,
 
@@ -289,7 +300,7 @@ pub struct FunctionType {
 
 impl Display for FunctionType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "function({})", self.identifier)
+        write!(f, "function({})", self.program_entity)
     }
 }
 
@@ -374,7 +385,7 @@ impl StructuralWidth for TypeAliasType {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ClassType {
-    pub identifier: ProgramEntityIdentifier,
+    pub program_entity: NamedQualifiedLocation,
 
     pub generics: imbl::OrdMap<String, GenericType>,
 
@@ -387,7 +398,7 @@ pub struct ClassType {
 
 impl Display for ClassType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "class({})", self.identifier)
+        write!(f, "class({})", self.program_entity)
     }
 }
 
@@ -627,7 +638,7 @@ pub struct LiteralOverloadedFunction {
 impl Display for LiteralOverloadedFunction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if let Some(target) = &self.value.target {
-            write!(f, "overloaded_function({})", target.value.identifier)
+            write!(f, "overloaded_function({})", target.value.program_entity)
         } else {
             write!(f, "overloaded_function")
         }

@@ -1,25 +1,22 @@
-use analysis::abstract_state::AbstractState;
-use analysis::lattice::Join;
-use apy;
-pub use apygen_analysis as analysis;
-pub use apygen_constraint_graph as constraints;
-pub use apygen_constraint_solver as solver;
-pub use apygen_inference as inference;
-pub use apygen_primitives as primitives;
-use constraints::expressions::{Expression, ExpressionVariable, ModuleName, QualifiedLocation};
-use inference::{
+use crate::analysis::abstract_state::AbstractState;
+use crate::analysis::lattice::Join;
+use crate::apy;
+use crate::constraint_graph::expressions::{
+    Expression, ExpressionVariable, ModuleName, NamedQualifiedLocation, Namespace,
+};
+use crate::inference::{
     BUILTINS_MODULE, Base, LiteralClass, LiteralDict, LiteralFunction, LiteralGeneric,
     LiteralImportedModule, LiteralList, LiteralTuple, LiteralTypeAlias, QualifiedName,
     RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion,
 };
-use log::debug;
-use primitives::literals::{
+use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
+use crate::solver::visibility::visibility_from_name;
+use crate::solver::{EvaluationState, ProgramEvaluation};
+use log::debug;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
-use solver::visibility::visibility_from_name;
-use solver::{EvaluationState, ProgramEvaluation};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -110,8 +107,9 @@ pub fn convert_literal_function(
     program_evaluation: &ProgramEvaluation,
     literal_function: &LiteralFunction,
 ) -> Option<apy::v1::Function> {
-    let evaluation_state =
-        program_evaluation.get(&literal_function.value.identifier.qualified_location)?;
+    let evaluation_state = program_evaluation.get(&Namespace::NamedProgramEntity(
+        literal_function.value.program_entity.clone(),
+    ))?;
 
     let return_type = convert_type(
         program_evaluation,
@@ -152,8 +150,9 @@ pub fn convert_literal_class(
     program_evaluation: &ProgramEvaluation,
     literal_class: &LiteralClass,
 ) -> Option<apy::v1::Class> {
-    let evaluation_state =
-        program_evaluation.get(&literal_class.value.identifier.qualified_location)?;
+    let evaluation_state = program_evaluation.get(&Namespace::NamedProgramEntity(
+        literal_class.value.program_entity.clone(),
+    ))?;
 
     let return_type = convert_type(
         program_evaluation,
@@ -176,13 +175,13 @@ pub fn convert_literal_class(
                     .map(|base| {
                         apy::v1::Type::Reference(
                             apy::v1::TypeReference::new(QualifiedName::from(
-                                base.value.identifier.name.as_ref().clone(),
+                                base.value.program_entity.name.as_ref().clone(),
                             ))
                             .with_module(Some(
                                 base.value
-                                    .identifier
-                                    .qualified_location
-                                    .module_name
+                                    .program_entity
+                                    .namespace
+                                    .module_name()
                                     .as_ref()
                                     .clone(),
                             )),
@@ -324,22 +323,17 @@ pub fn convert_type_instance(
     program_evaluation: &ProgramEvaluation,
     type_instance: &TypeInstance,
 ) -> Option<apy::v1::TypeInstance> {
-    let program_entity_identifier = match &type_instance.base {
-        Base::Class(literal_class) => &literal_class.value.identifier,
+    let program_entity = match &type_instance.base {
+        Base::Class(literal_class) => &literal_class.value.program_entity,
         Base::TypeAlias(_) => return None,
         Base::Generic(_) => return None,
     };
 
-    let type_reference = apy::v1::TypeReference::new(QualifiedName::from(
-        program_entity_identifier.name.as_ref().clone(),
-    ))
-    .with_module(Some(
-        program_entity_identifier
-            .qualified_location
-            .module_name
-            .as_ref()
-            .clone(),
-    ));
+    let type_reference =
+        apy::v1::TypeReference::new(QualifiedName::from(program_entity.name.as_ref().clone()))
+            .with_module(Some(
+                program_entity.namespace.module_name().as_ref().clone(),
+            ));
 
     Some(
         apy::v1::TypeInstance::new(type_reference).with_arguments(
@@ -517,12 +511,13 @@ pub fn convert_abstract_environment(
 
     for (attribute_name, locations) in &evaluation_state.defined_variables.names {
         let mut ty = Type::Never;
-        for (program_entity, location) in locations {
-            let expression = Expression::Variable(ExpressionVariable::new(
-                attribute_name.clone(),
-                location.clone(),
-                program_entity.clone(),
-            ));
+        for (namespace, location) in locations {
+            let expression =
+                Expression::Variable(ExpressionVariable::new(NamedQualifiedLocation::new(
+                    attribute_name.clone(),
+                    location.clone(),
+                    namespace.clone(),
+                )));
             ty = ty.join(
                 &evaluation_state
                     .types
@@ -550,7 +545,7 @@ pub fn convert_module(
     program_evaluation: &ProgramEvaluation,
     module: &ModuleName,
 ) -> Option<apy::v1::Module> {
-    let evaluation_state = program_evaluation.get(&QualifiedLocation::from(module.clone()))?;
+    let evaluation_state = program_evaluation.get(&Namespace::Module(module.clone()))?;
 
     Some(
         apy::v1::Module::new(

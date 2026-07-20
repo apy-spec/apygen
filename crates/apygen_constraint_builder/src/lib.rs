@@ -1,3 +1,10 @@
+pub use apygen_analysis as analysis;
+pub use apygen_cfg as cfg;
+pub use apygen_constraint_graph as constraint_graph;
+pub use apygen_finder as finder;
+pub use apygen_identifiers as identifiers;
+pub use apygen_primitives as primitives;
+
 use crate::analysis::lattice::{Join, OrdJoin};
 use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use crate::cfg::ast::{self, Number};
@@ -9,14 +16,11 @@ use crate::cfg::convert_text_size_to_location;
 use crate::cfg::parser::parse_module;
 use crate::cfg::source_file::LineIndex;
 use crate::cfg::text_size::Ranged;
-use crate::cfg::{
-    Cfg, CfgEdge, CfgEdgeKind, CfgNode as StmtNode, Location as ProgramPointLocation, ProgramPoint,
-};
+use crate::cfg::{Cfg, CfgEdge, CfgEdgeKind, CfgNode as StmtNode, ProgramPoint};
 use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
     ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionImport, ExpressionOverride,
-    ExpressionSubscript, ExpressionUnary, ExpressionVariable, KeywordArgument,
-    ProgramEntityIdentifier, UnaryOperator,
+    ExpressionSubscript, ExpressionUnary, ExpressionVariable, KeywordArgument, UnaryOperator,
 };
 use crate::constraint_graph::{
     AbstractEnvironmentSpecification, Constraint, ConstraintGraph, ConstraintNode, Guard,
@@ -26,20 +30,14 @@ use crate::constraint_graph::{
 use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
 use crate::finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
 use crate::identifiers::{
-    Identifier, Location, ModuleName, OneOrMany, ParseIdentifierError, QualifiedLocation,
-    QualifiedName, VariableName,
+    Identifier, Location, ModuleName, NamedQualifiedLocation, Namespace, OneOrMany,
+    ParseIdentifierError, QualifiedName, VariableName,
 };
 use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
 use crate::primitives::{BigInt, Complex64, Int, Num};
-pub use apygen_analysis as analysis;
-pub use apygen_cfg as cfg;
-pub use apygen_constraint_graph as constraint_graph;
-pub use apygen_constraint_graph as constraints;
-pub use apygen_finder as finder;
-pub use apygen_identifiers as identifiers;
-pub use apygen_primitives as primitives;
+
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
@@ -161,14 +159,20 @@ impl<'e> TryFrom<&'e Expr> for AssignmentTarget<'e> {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProgramEntity {
-    pub qualified_location: QualifiedLocation,
+    pub namespace: Arc<Namespace>,
+    pub cfg_location: Option<Location>,
     pub kind: ProgramEntityKind,
 }
 
 impl ProgramEntity {
-    pub fn new(qualified_location: QualifiedLocation, kind: ProgramEntityKind) -> Self {
+    pub fn new(
+        namespace: Arc<Namespace>,
+        cfg_location: Option<Location>,
+        kind: ProgramEntityKind,
+    ) -> Self {
         Self {
-            qualified_location,
+            namespace,
+            cfg_location,
             kind,
         }
     }
@@ -176,7 +180,7 @@ impl ProgramEntity {
 
 impl Display for ProgramEntity {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}Entity({})", self.kind, self.qualified_location)
+        write!(f, "{}Entity({})", self.kind, self.namespace)
     }
 }
 
@@ -353,14 +357,13 @@ impl<'a> ProgramEntityAbstractParentState<'a> {
         &'l self,
         entity: &'l ProgramEntity,
         variable_name: &VariableName,
-    ) -> Option<(&'l QualifiedLocation, &'l imbl::OrdSet<Location>)> {
+    ) -> Option<(&'l Arc<Namespace>, &'l imbl::OrdSet<Location>)> {
         let (qualified_location, variable_locations) = match self.entity.kind {
-            ProgramEntityKind::Module | ProgramEntityKind::Function => (
-                &self.entity.qualified_location,
-                &self.state.variable_locations,
-            ),
+            ProgramEntityKind::Module | ProgramEntityKind::Function => {
+                (&self.entity.namespace, &self.state.variable_locations)
+            }
             ProgramEntityKind::Class => (
-                &entity.qualified_location,
+                &entity.namespace,
                 &self
                     .state
                     .sub_program_entities
@@ -472,9 +475,9 @@ impl<'a> ConstraintsBuilder<'a> {
         &'l self,
         variable_locations: &'l imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
         variable_name: &VariableName,
-    ) -> Option<(&'l QualifiedLocation, &'l imbl::OrdSet<Location>)> {
+    ) -> Option<(&'l Arc<Namespace>, &'l imbl::OrdSet<Location>)> {
         if let Some(previous_locations) = variable_locations.get(variable_name) {
-            return Some((&self.program_entity.qualified_location, previous_locations));
+            return Some((&self.program_entity.namespace, previous_locations));
         }
 
         if let Some(parent) = &self.abstract_parent_state {
@@ -502,18 +505,21 @@ impl<'a> ConstraintsBuilder<'a> {
             {
                 for previous_location in previous_locations {
                     for used_location in used_locations {
-                        let previous_expression_variable =
-                            Arc::new(Expression::Variable(ExpressionVariable::new(
+                        let previous_expression_variable = Arc::new(Expression::Variable(
+                            ExpressionVariable::new(NamedQualifiedLocation::new(
                                 used_variable_name.clone(),
                                 previous_location.clone(),
                                 previous_program_entity.clone(),
-                            )));
+                            )),
+                        ));
                         constraints.insert(Constraint::Type(IncludeConstraint::new(
                             previous_expression_variable.clone(),
                             Arc::new(Expression::Variable(ExpressionVariable::new(
-                                used_variable_name.clone(),
-                                used_location.clone(),
-                                self.program_entity.qualified_location.clone(),
+                                NamedQualifiedLocation::new(
+                                    used_variable_name.clone(),
+                                    used_location.clone(),
+                                    self.program_entity.namespace.clone(),
+                                ),
                             ))),
                         )));
                         previous_expression_variables.insert(previous_expression_variable);
@@ -657,11 +663,11 @@ impl<'a> ConstraintsBuilder<'a> {
         variable: VariableName,
         type_expression: Arc<Expression>,
     ) {
-        let expression_variable = ExpressionVariable::new(
+        let expression_variable = ExpressionVariable::new(NamedQualifiedLocation::new(
             variable.clone(),
             location.clone(),
-            self.program_entity.qualified_location.clone(),
-        );
+            self.program_entity.namespace.clone(),
+        ));
 
         self.create_include_constraint(
             abstract_environment,
@@ -772,11 +778,11 @@ impl<'a> ConstraintsBuilder<'a> {
         };
 
         Ok((
-            ExpressionVariable::new(
+            ExpressionVariable::new(NamedQualifiedLocation::new(
                 parameter_name,
                 self.gen_location(parameter),
-                self.program_entity.qualified_location.clone(),
-            ),
+                self.program_entity.namespace.clone(),
+            )),
             annotation,
         ))
     }
@@ -1164,11 +1170,11 @@ impl<'a> ConstraintsBuilder<'a> {
         let location = self.gen_location(expr_name);
 
         Ok(ExpressionEval::new(
-            Expression::Variable(ExpressionVariable::new(
+            Expression::Variable(ExpressionVariable::new(NamedQualifiedLocation::new(
                 variable_name.clone(),
                 location.clone(),
-                self.program_entity.qualified_location.clone(),
-            )),
+                self.program_entity.namespace.clone(),
+            ))),
             UsedVariables::new(imbl::OrdMap::unit(
                 variable_name,
                 imbl::OrdSet::unit(location),
@@ -1301,23 +1307,28 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let variable_name = self.gen_variable_name(program_point, &stmt_function_def.name)?;
 
-        let function_qualified_location = self
-            .program_entity
-            .qualified_location
-            .at_sublocation(self.gen_location(&stmt_function_def));
+        let function_qualified_location = NamedQualifiedLocation::new(
+            variable_name.clone(),
+            location.clone(),
+            self.program_entity.namespace.clone(),
+        );
 
         self.assign_variable(
             &mut target_abstract_environment,
             location,
             variable_name.clone(),
             Arc::new(Expression::Function(ExpressionFunction::new(
-                ProgramEntityIdentifier::new(function_qualified_location.clone(), variable_name),
+                function_qualified_location.clone(),
                 stmt_function_def.is_async,
             ))),
         );
 
         target_abstract_environment.sub_program_entities.insert(
-            ProgramEntity::new(function_qualified_location, ProgramEntityKind::Function),
+            ProgramEntity::new(
+                Arc::new(Namespace::NamedProgramEntity(function_qualified_location)),
+                Some(self.gen_location(&stmt_function_def)),
+                ProgramEntityKind::Function,
+            ),
             SubProgramEntityContext::new(
                 AbstractEnvironmentSpecification {
                     arguments: parameters.value,
@@ -1344,22 +1355,27 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let variable_name = self.gen_variable_name(program_point, &stmt_class_def.name)?;
 
-        let class_qualified_location = self
-            .program_entity
-            .qualified_location
-            .at_sublocation(self.gen_location(stmt_class_def));
+        let class_qualified_location = NamedQualifiedLocation::new(
+            variable_name.clone(),
+            location.clone(),
+            self.program_entity.namespace.clone(),
+        );
 
         self.assign_variable(
             &mut target_abstract_environment,
             location.clone(),
             variable_name.clone(),
             Arc::new(Expression::Class(ExpressionClass::new(
-                ProgramEntityIdentifier::new(class_qualified_location.clone(), variable_name),
+                class_qualified_location.clone(),
             ))),
         );
 
         target_abstract_environment.sub_program_entities.insert(
-            ProgramEntity::new(class_qualified_location, ProgramEntityKind::Class),
+            ProgramEntity::new(
+                Arc::new(Namespace::NamedProgramEntity(class_qualified_location)),
+                Some(self.gen_location(stmt_class_def)),
+                ProgramEntityKind::Class,
+            ),
             SubProgramEntityContext::new(
                 AbstractEnvironmentSpecification {
                     arguments: imbl::OrdMap::default(),
@@ -1459,12 +1475,13 @@ impl<'a> ConstraintsBuilder<'a> {
                     .variable_locations
                     .insert(identifier.clone(), imbl::OrdSet::unit(location.clone()));
 
-                let mut expression_option =
-                    Some(Arc::new(Expression::Variable(ExpressionVariable::new(
+                let mut expression_option = Some(Arc::new(Expression::Variable(
+                    ExpressionVariable::new(NamedQualifiedLocation::new(
                         identifier,
                         location.clone(),
-                        self.program_entity.qualified_location.clone(),
-                    ))));
+                        self.program_entity.namespace.clone(),
+                    )),
+                )));
 
                 let mut i = 1;
                 while let Some(expression) = expression_option {
@@ -1477,9 +1494,11 @@ impl<'a> ConstraintsBuilder<'a> {
                         &mut target_abstract_environment,
                         location.clone(),
                         imbl::OrdSet::unit(Constraint::DefinedVariable(ExpressionVariable::new(
-                            identifier.clone(),
-                            location.clone(),
-                            self.program_entity.qualified_location.clone(),
+                            NamedQualifiedLocation::new(
+                                identifier.clone(),
+                                location.clone(),
+                                self.program_entity.namespace.clone(),
+                            ),
                         ))),
                         Arc::new(Expression::Import(ExpressionImport::new(Arc::new(
                             QualifiedName::new(OneOrMany::many(Vec::from(module_identifiers))),
@@ -1863,8 +1882,8 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
             {
                 for argument in context.specification.arguments.keys() {
                     entry_state.variable_locations.insert(
-                        argument.name.clone(),
-                        imbl::OrdSet::unit(argument.location.clone()),
+                        argument.named_qualified_location.name.clone(),
+                        imbl::OrdSet::unit(argument.named_qualified_location.location.clone()),
                     );
                 }
             }
@@ -2148,14 +2167,9 @@ pub fn analyse_cfg<'a>(
         .keys()
         .par_bridge()
         .flat_map(|sub_program_entity| {
-            let location = sub_program_entity
-                .qualified_location
-                .locations
-                .last()
-                .unwrap();
             analyse_cfg(
                 cfg.cfgs()
-                    .get(&ProgramPointLocation::new(location.line, location.offset))
+                    .get(&sub_program_entity.cfg_location.unwrap())
                     .unwrap(),
                 line_index,
                 sub_program_entity.clone(),
@@ -2180,7 +2194,7 @@ pub fn analyse_cfg<'a>(
 pub fn create_constraints(
     program_entity_analyses: BTreeMap<ProgramEntity, CfgAnalysis>,
 ) -> (
-    imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
+    imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
     BTreeSet<ModuleName>,
 ) {
     let mut imports = BTreeSet::new();
@@ -2189,7 +2203,7 @@ pub fn create_constraints(
         .map(|(program_entity, cfg_analysis)| {
             imports.extend(cfg_analysis.environment.imports);
             (
-                program_entity.qualified_location,
+                program_entity.namespace,
                 ProgramEntityConstraints {
                     specification: cfg_analysis.specification.clone(),
                     constraint_graph: ConstraintGraph::new(
@@ -2224,7 +2238,8 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         build_cfg(&builtins_line_index, builtins_module.syntax()).expect("Should build CFG");
 
     let builtins_entity = ProgramEntity::new(
-        QualifiedLocation::from(builtins_module_name.clone()),
+        Arc::new(Namespace::Module(builtins_module_name.clone())),
+        None,
         ProgramEntityKind::Module,
     );
 
@@ -2277,7 +2292,8 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
                     &cfg,
                     &line_index,
                     ProgramEntity::new(
-                        QualifiedLocation::from(module_name.clone()),
+                        Arc::new(Namespace::Module(module_name.clone())),
+                        None,
                         ProgramEntityKind::Module,
                     ),
                     parent_state,
@@ -3266,11 +3282,11 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:4)" [label="#function(identifier=add_two@module[1:0], async=false) ⊑ add_two@{module[1:4]} ∧ #defined(add_two@{module[1:4]})"];
+            "Constraint(location=1:4)" [label="#function(identifier=module[add_two@{1:4}], async=false) ⊑ add_two@{module[1:4]} ∧ #defined(add_two@{module[1:4]})"];
             "Constraint(location=4:0)" [label="(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]} ∧ #defined(result@{module[4:0]})"];
             "Constraint(location=4:9)" [label="add_two@{module[1:4]} ⊑ add_two@{module[4:9]}"];
-            "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=add_two@module[1:0], async=false))"];
-            "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=add_two@module[1:0], async=false))"];
+            "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=module[add_two@{1:4}], async=false))"];
+            "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=module[add_two@{1:4}], async=false))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:4)" -> "Constraint(location=4:9)" [label="#succeed(add_two@{module[1:4]})"];
             "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise(add_two@{module[1:4]})"];
@@ -3280,13 +3296,13 @@ mod tests {
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "TypeExit";
         }
-        digraph "module[1:0]" {
-            "Constraint(location=2:4)" [label="#return((a@{module[1:0][2:11]}) + (b@{module[1:0][2:15]}))"];
-            "Constraint(location=2:11)" [label="a@{module[1:0][1:12]} ⊑ a@{module[1:0][2:11]} ∧ b@{module[1:0][1:15]} ⊑ b@{module[1:0][2:15]}"];
-            "Entry" -> "Constraint(location=2:11)" [label="#succeed(a@{module[1:0][1:12]})"];
-            "Entry" -> "Constraint(location=2:11)" [label="#succeed(b@{module[1:0][1:15]})"];
-            "Entry" -> "ExceptionExit" [label="#raise(a@{module[1:0][1:12]})"];
-            "Entry" -> "ExceptionExit" [label="#raise(b@{module[1:0][1:15]})"];
+        digraph "module[add_two@{1:4}]" {
+            "Constraint(location=2:4)" [label="#return((a@{module[add_two@{1:4}][2:11]}) + (b@{module[add_two@{1:4}][2:15]}))"];
+            "Constraint(location=2:11)" [label="a@{module[add_two@{1:4}][1:12]} ⊑ a@{module[add_two@{1:4}][2:11]} ∧ b@{module[add_two@{1:4}][1:15]} ⊑ b@{module[add_two@{1:4}][2:15]}"];
+            "Entry" -> "Constraint(location=2:11)" [label="#succeed(a@{module[add_two@{1:4}][1:12]})"];
+            "Entry" -> "Constraint(location=2:11)" [label="#succeed(b@{module[add_two@{1:4}][1:15]})"];
+            "Entry" -> "ExceptionExit" [label="#raise(a@{module[add_two@{1:4}][1:12]})"];
+            "Entry" -> "ExceptionExit" [label="#raise(b@{module[add_two@{1:4}][1:15]})"];
             "Constraint(location=2:4)" -> "TypeExit";
             "Constraint(location=2:11)" -> "Constraint(location=2:4)";
             "TypeExit" -> "Exit";
@@ -3314,12 +3330,12 @@ mod tests {
         }
         digraph "module" {
             "Constraint()" [label="#return(None)"];
-            "Constraint(location=1:4)" [label="#function(identifier=foo@module[1:0], async=false) ⊑ foo@{module[1:4]} ∧ #defined(foo@{module[1:4]})"];
+            "Constraint(location=1:4)" [label="#function(identifier=module[foo@{1:4}], async=false) ⊑ foo@{module[1:4]} ∧ #defined(foo@{module[1:4]})"];
             "Constraint(location=4:0)" [label="5 ⊑ CONST@{module[4:0]} ∧ #defined(CONST@{module[4:0]})"];
             "Constraint(location=6:0)" [label="(foo@{module[6:9]})() ⊑ result@{module[6:0]} ∧ #defined(result@{module[6:0]})"];
             "Constraint(location=6:9)" [label="foo@{module[1:4]} ⊑ foo@{module[6:9]}"];
-            "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=foo@module[1:0], async=false))"];
-            "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=foo@module[1:0], async=false))"];
+            "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=module[foo@{1:4}], async=false))"];
+            "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=module[foo@{1:4}], async=false))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:4)" -> "Constraint(location=4:0)";
             "Constraint(location=4:0)" -> "Constraint(location=6:9)" [label="#succeed(foo@{module[1:4]})"];
@@ -3330,9 +3346,9 @@ mod tests {
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "TypeExit";
         }
-        digraph "module[1:0]" {
-            "Constraint(location=2:4)" [label="#return(CONST@{module[1:0][2:11]})"];
-            "Constraint(location=2:11)" [label="CONST@{module[4:0]} ⊑ CONST@{module[1:0][2:11]}"];
+        digraph "module[foo@{1:4}]" {
+            "Constraint(location=2:4)" [label="#return(CONST@{module[foo@{1:4}][2:11]})"];
+            "Constraint(location=2:11)" [label="CONST@{module[4:0]} ⊑ CONST@{module[foo@{1:4}][2:11]}"];
             "Entry" -> "Constraint(location=2:11)" [label="#succeed(CONST@{module[4:0]})"];
             "Entry" -> "ExceptionExit" [label="#raise(CONST@{module[4:0]})"];
             "Constraint(location=2:4)" -> "TypeExit";
@@ -3368,15 +3384,11 @@ mod tests {
         let mut actual_dot = dependent_graph.dot("DependentGraph");
 
         for program_entities in dependent_graph.nodes.values() {
-            for (qualified_location, constraints) in program_entities {
-                if qualified_location.module_name != module_name {
+            for (namespace, constraints) in program_entities {
+                if *namespace.module_name() != module_name {
                     continue;
                 }
-                actual_dot.push_str(
-                    &constraints
-                        .constraint_graph
-                        .dot(&qualified_location.to_string()),
-                );
+                actual_dot.push_str(&constraints.constraint_graph.dot(&namespace.to_string()));
             }
         }
 

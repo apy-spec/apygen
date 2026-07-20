@@ -1,29 +1,26 @@
 use crate::analysis::fmt::fmt_display_sequence;
 pub use crate::identifiers::{
-    EmptyCollectionError, Identifier, Location, ModuleName, OneOrMany, ParseIdentifierError,
-    ParseQualifiedNameError, ProgramEntityIdentifier, QualifiedLocation, QualifiedName,
-    VariableName,
+    EmptyCollectionError, Identifier, Location, ModuleName, NamedQualifiedLocation, Namespace,
+    OneOrMany, ParseIdentifierError, ParseQualifiedNameError, QualifiedName, VariableName,
 };
 pub use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
+
 pub use apy::v1::{GenericKind, ParameterKind};
+
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionVariable {
-    pub name: VariableName,
-    pub location: Location,
-    pub program_entity: QualifiedLocation,
+    pub named_qualified_location: NamedQualifiedLocation,
 }
 
 impl ExpressionVariable {
-    pub fn new(name: VariableName, location: Location, program_entity: QualifiedLocation) -> Self {
+    pub fn new(named_qualified_location: NamedQualifiedLocation) -> Self {
         Self {
-            name,
-            location,
-            program_entity,
+            named_qualified_location,
         }
     }
 }
@@ -33,7 +30,9 @@ impl Display for ExpressionVariable {
         write!(
             f,
             "{}@{{{}[{}]}}",
-            self.name, self.program_entity, self.location
+            self.named_qualified_location.name,
+            self.named_qualified_location.namespace,
+            self.named_qualified_location.location
         )
     }
 }
@@ -75,15 +74,15 @@ impl Display for ExpressionOverride {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionFunction {
-    pub identifier: ProgramEntityIdentifier,
+    pub program_entity: NamedQualifiedLocation,
 
     pub is_async: bool,
 }
 
 impl ExpressionFunction {
-    pub fn new(identifier: ProgramEntityIdentifier, is_async: bool) -> Self {
+    pub fn new(program_entity: NamedQualifiedLocation, is_async: bool) -> Self {
         Self {
-            identifier,
+            program_entity,
             is_async,
         }
     }
@@ -94,25 +93,25 @@ impl Display for ExpressionFunction {
         write!(
             f,
             "#function(identifier={}, async={})",
-            self.identifier, self.is_async
+            self.program_entity, self.is_async
         )
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionClass {
-    pub identifier: ProgramEntityIdentifier,
+    pub program_entity: NamedQualifiedLocation,
 }
 
 impl ExpressionClass {
-    pub fn new(identifier: ProgramEntityIdentifier) -> Self {
-        Self { identifier }
+    pub fn new(program_entity: NamedQualifiedLocation) -> Self {
+        Self { program_entity }
     }
 }
 
 impl Display for ExpressionClass {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#class(identifier={})", self.identifier)
+        write!(f, "#class(identifier={})", self.program_entity)
     }
 }
 

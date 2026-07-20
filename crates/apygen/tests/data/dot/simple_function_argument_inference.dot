@@ -31,13 +31,13 @@ digraph "DependentGraph" {
 }
 digraph "simple_function_argument_inference" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=1:4)" [label="#function(identifier=add_two@simple_function_argument_inference[1:0], async=false) ⊑ add_two@{simple_function_argument_inference[1:4]} ∧ #defined(add_two@{simple_function_argument_inference[1:4]})"];
+    "Constraint(location=1:4)" [label="#function(identifier=simple_function_argument_inference[add_two@{1:4}], async=false) ⊑ add_two@{simple_function_argument_inference[1:4]} ∧ #defined(add_two@{simple_function_argument_inference[1:4]})"];
     "Constraint(location=4:0)" [label="3 ⊑ a@{simple_function_argument_inference[4:0]} ∧ #defined(a@{simple_function_argument_inference[4:0]})"];
     "Constraint(location=5:0)" [label="4 ⊑ b@{simple_function_argument_inference[5:0]} ∧ #defined(b@{simple_function_argument_inference[5:0]})"];
     "Constraint(location=6:0)" [label="(add_two@{simple_function_argument_inference[6:9]})(a@{simple_function_argument_inference[6:17]}, b@{simple_function_argument_inference[6:20]}) ⊑ result@{simple_function_argument_inference[6:0]} ∧ #defined(result@{simple_function_argument_inference[6:0]})"];
     "Constraint(location=6:9)" [label="a@{simple_function_argument_inference[4:0]} ⊑ a@{simple_function_argument_inference[6:17]} ∧ add_two@{simple_function_argument_inference[1:4]} ⊑ add_two@{simple_function_argument_inference[6:9]} ∧ b@{simple_function_argument_inference[5:0]} ⊑ b@{simple_function_argument_inference[6:20]}"];
-    "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=add_two@simple_function_argument_inference[1:0], async=false))"];
-    "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=add_two@simple_function_argument_inference[1:0], async=false))"];
+    "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=simple_function_argument_inference[add_two@{1:4}], async=false))"];
+    "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=simple_function_argument_inference[add_two@{1:4}], async=false))"];
     "Constraint()" -> "TypeExit";
     "Constraint(location=1:4)" -> "Constraint(location=4:0)";
     "Constraint(location=4:0)" -> "Constraint(location=5:0)";
@@ -53,13 +53,13 @@ digraph "simple_function_argument_inference" {
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "TypeExit";
 }
-digraph "simple_function_argument_inference[1:0]" {
-    "Constraint(location=2:4)" [label="#return((x@{simple_function_argument_inference[1:0][2:11]}) + (y@{simple_function_argument_inference[1:0][2:15]}))"];
-    "Constraint(location=2:11)" [label="x@{simple_function_argument_inference[1:0][1:12]} ⊑ x@{simple_function_argument_inference[1:0][2:11]} ∧ y@{simple_function_argument_inference[1:0][1:15]} ⊑ y@{simple_function_argument_inference[1:0][2:15]}"];
-    "Entry" -> "Constraint(location=2:11)" [label="#succeed(x@{simple_function_argument_inference[1:0][1:12]})"];
-    "Entry" -> "Constraint(location=2:11)" [label="#succeed(y@{simple_function_argument_inference[1:0][1:15]})"];
-    "Entry" -> "ExceptionExit" [label="#raise(x@{simple_function_argument_inference[1:0][1:12]})"];
-    "Entry" -> "ExceptionExit" [label="#raise(y@{simple_function_argument_inference[1:0][1:15]})"];
+digraph "simple_function_argument_inference[add_two@{1:4}]" {
+    "Constraint(location=2:4)" [label="#return((x@{simple_function_argument_inference[add_two@{1:4}][2:11]}) + (y@{simple_function_argument_inference[add_two@{1:4}][2:15]}))"];
+    "Constraint(location=2:11)" [label="x@{simple_function_argument_inference[add_two@{1:4}][1:12]} ⊑ x@{simple_function_argument_inference[add_two@{1:4}][2:11]} ∧ y@{simple_function_argument_inference[add_two@{1:4}][1:15]} ⊑ y@{simple_function_argument_inference[add_two@{1:4}][2:15]}"];
+    "Entry" -> "Constraint(location=2:11)" [label="#succeed(x@{simple_function_argument_inference[add_two@{1:4}][1:12]})"];
+    "Entry" -> "Constraint(location=2:11)" [label="#succeed(y@{simple_function_argument_inference[add_two@{1:4}][1:15]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(x@{simple_function_argument_inference[add_two@{1:4}][1:12]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(y@{simple_function_argument_inference[add_two@{1:4}][1:15]})"];
     "Constraint(location=2:4)" -> "TypeExit";
     "Constraint(location=2:11)" -> "Constraint(location=2:4)";
     "TypeExit" -> "Exit";

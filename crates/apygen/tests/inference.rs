@@ -1,13 +1,14 @@
-use apygen_constraint_builder::constraints::expressions::{Identifier, QualifiedName};
-use apygen_constraint_builder::constraints::{ModuleDependentGraph, ModuleNode};
-use apygen_constraint_builder::{SpecModuleLoader, analyse_program};
-use apygen_converter::v1::convert_apy_v1;
-use apygen_constraint_solver::ModuleConstraintSolver;
-use apygen_constraint_solver::analysis::log::LogAnalysisObserver;
-use apygen_constraint_solver::analysis::rayon::par_analysis;
-use apygen_constraint_solver::cfg::graph::dot::ToDot;
-use apygen_constraint_solver::finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
-use apygen_constraint_solver::finder::pathfinder::PathFinder;
+use apygen::constraint_builder::constraint_graph::expressions::{Identifier, QualifiedName};
+use apygen::constraint_builder::constraint_graph::graph::dot::ToDot;
+use apygen::constraint_builder::constraint_graph::{ModuleDependentGraph, ModuleNode};
+use apygen::constraint_builder::{SpecModuleLoader, analyse_program};
+use apygen::constraint_solver::ModuleConstraintSolver;
+use apygen::constraint_solver::analysis::log::LogAnalysisObserver;
+use apygen::constraint_solver::analysis::rayon::par_analysis;
+use apygen::converter::v1::convert_apy_v1;
+use apygen::finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
+use apygen::finder::pathfinder::PathFinder;
+
 use rstest::rstest;
 use std::collections::HashMap;
 use std::fs;
@@ -96,7 +97,7 @@ fn test_inference(#[case] module_name: String) {
     let mut actual_dot = actual_dependent_graph.dot("DependentGraph");
     for program_entities in actual_dependent_graph.nodes.values() {
         for (qualified_location, abstract_environment) in program_entities {
-            if qualified_location.module_name != module_qualified_name {
+            if *qualified_location.module_name() != module_qualified_name {
                 continue;
             }
             actual_dot.push_str(

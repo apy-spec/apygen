@@ -31,8 +31,8 @@ digraph "DependentGraph" {
 }
 digraph "simple_class_inheritance" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=1:6)" [label="#class(identifier=Point2D@simple_class_inheritance[1:0]) ⊑ Point2D@{simple_class_inheritance[1:6]} ∧ #defined(Point2D@{simple_class_inheritance[1:6]})"];
-    "Constraint(location=10:6)" [label="#class(identifier=Point3D@simple_class_inheritance[10:0]) ⊑ Point3D@{simple_class_inheritance[10:6]} ∧ #defined(Point3D@{simple_class_inheritance[10:6]})"];
+    "Constraint(location=1:6)" [label="#class(identifier=simple_class_inheritance[Point2D@{1:6}]) ⊑ Point2D@{simple_class_inheritance[1:6]} ∧ #defined(Point2D@{simple_class_inheritance[1:6]})"];
+    "Constraint(location=10:6)" [label="#class(identifier=simple_class_inheritance[Point3D@{10:6}]) ⊑ Point3D@{simple_class_inheritance[10:6]} ∧ #defined(Point3D@{simple_class_inheritance[10:6]})"];
     "Constraint(location=18:0)" [label="3 ⊑ a@{simple_class_inheritance[18:0]} ∧ #defined(a@{simple_class_inheritance[18:0]})"];
     "Constraint(location=19:0)" [label="4 ⊑ b@{simple_class_inheritance[19:0]} ∧ #defined(b@{simple_class_inheritance[19:0]})"];
     "Constraint(location=20:0)" [label="5 ⊑ c@{simple_class_inheritance[20:0]} ∧ #defined(c@{simple_class_inheritance[20:0]})"];
@@ -44,11 +44,11 @@ digraph "simple_class_inheritance" {
     "Constraint(location=25:10)" [label="point@{simple_class_inheritance[22:0]} ⊑ point@{simple_class_inheritance[25:10]}"];
     "Constraint(location=26:0)" [label="(point@{simple_class_inheritance[26:10]}).z ⊑ point_z@{simple_class_inheritance[26:0]} ∧ #defined(point_z@{simple_class_inheritance[26:0]})"];
     "Constraint(location=26:10)" [label="point@{simple_class_inheritance[22:0]} ⊑ point@{simple_class_inheritance[26:10]}"];
-    "Entry" -> "Constraint(location=1:6)" [label="#succeed(#class(identifier=Point2D@simple_class_inheritance[1:0]))"];
-    "Entry" -> "ExceptionExit" [label="#raise(#class(identifier=Point2D@simple_class_inheritance[1:0]))"];
+    "Entry" -> "Constraint(location=1:6)" [label="#succeed(#class(identifier=simple_class_inheritance[Point2D@{1:6}]))"];
+    "Entry" -> "ExceptionExit" [label="#raise(#class(identifier=simple_class_inheritance[Point2D@{1:6}]))"];
     "Constraint()" -> "TypeExit";
-    "Constraint(location=1:6)" -> "Constraint(location=10:6)" [label="#succeed(#class(identifier=Point3D@simple_class_inheritance[10:0]))"];
-    "Constraint(location=1:6)" -> "ExceptionExit" [label="#raise(#class(identifier=Point3D@simple_class_inheritance[10:0]))"];
+    "Constraint(location=1:6)" -> "Constraint(location=10:6)" [label="#succeed(#class(identifier=simple_class_inheritance[Point3D@{10:6}]))"];
+    "Constraint(location=1:6)" -> "ExceptionExit" [label="#raise(#class(identifier=simple_class_inheritance[Point3D@{10:6}]))"];
     "Constraint(location=10:6)" -> "Constraint(location=18:0)";
     "Constraint(location=18:0)" -> "Constraint(location=19:0)";
     "Constraint(location=19:0)" -> "Constraint(location=20:0)";
@@ -78,50 +78,50 @@ digraph "simple_class_inheritance" {
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "TypeExit";
 }
-digraph "simple_class_inheritance[1:0]" {
+digraph "simple_class_inheritance[Point2D@{1:6}]" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=5:8)" [label="#function(identifier=__init__@simple_class_inheritance[1:0][5:4], async=false) ⊑ __init__@{simple_class_inheritance[1:0][5:8]} ∧ #defined(__init__@{simple_class_inheritance[1:0][5:8]})"];
-    "Constraint(location=5:16)" [label="int@{builtins[255:6]} ⊑ int@{simple_class_inheritance[1:0][5:26]} ∧ int@{builtins[255:6]} ⊑ int@{simple_class_inheritance[1:0][5:34]}"];
+    "Constraint(location=5:8)" [label="#function(identifier=simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}], async=false) ⊑ __init__@{simple_class_inheritance[Point2D@{1:6}][5:8]} ∧ #defined(__init__@{simple_class_inheritance[Point2D@{1:6}][5:8]})"];
+    "Constraint(location=5:16)" [label="int@{builtins[255:6]} ⊑ int@{simple_class_inheritance[Point2D@{1:6}][5:26]} ∧ int@{builtins[255:6]} ⊑ int@{simple_class_inheritance[Point2D@{1:6}][5:34]}"];
     "Entry" -> "Constraint(location=5:16)" [label="#succeed(int@{builtins[255:6]})"];
     "Entry" -> "ExceptionExit" [label="#raise(int@{builtins[255:6]})"];
     "Constraint()" -> "TypeExit";
     "Constraint(location=5:8)" -> "Constraint()";
-    "Constraint(location=5:16)" -> "Constraint(location=5:8)" [label="#succeed(#function(identifier=__init__@simple_class_inheritance[1:0][5:4], async=false))"];
-    "Constraint(location=5:16)" -> "ExceptionExit" [label="#raise(#function(identifier=__init__@simple_class_inheritance[1:0][5:4], async=false))"];
+    "Constraint(location=5:16)" -> "Constraint(location=5:8)" [label="#succeed(#function(identifier=simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}], async=false))"];
+    "Constraint(location=5:16)" -> "ExceptionExit" [label="#raise(#function(identifier=simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}], async=false))"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "TypeExit";
 }
-digraph "simple_class_inheritance[1:0][5:4]" {
+digraph "simple_class_inheritance[Point3D@{10:6}]" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=6:17)" [label="x@{simple_class_inheritance[1:0][5:4][5:23]} ⊑ x@{simple_class_inheritance[1:0][5:4][6:17]}"];
-    "Constraint(location=7:17)" [label="y@{simple_class_inheritance[1:0][5:4][5:31]} ⊑ y@{simple_class_inheritance[1:0][5:4][7:17]}"];
-    "Entry" -> "Constraint(location=6:17)" [label="#succeed(x@{simple_class_inheritance[1:0][5:4][5:23]})"];
-    "Entry" -> "ExceptionExit" [label="#raise(x@{simple_class_inheritance[1:0][5:4][5:23]})"];
-    "Constraint()" -> "TypeExit";
-    "Constraint(location=6:17)" -> "Constraint(location=7:17)" [label="#succeed(y@{simple_class_inheritance[1:0][5:4][5:31]})"];
-    "Constraint(location=6:17)" -> "ExceptionExit" [label="#raise(y@{simple_class_inheritance[1:0][5:4][5:31]})"];
-    "Constraint(location=7:17)" -> "Constraint()";
-    "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
-}
-digraph "simple_class_inheritance[10:0]" {
-    "Constraint()" [label="#return(None)"];
-    "Constraint(location=13:8)" [label="#function(identifier=__init__@simple_class_inheritance[10:0][13:4], async=false) ⊑ __init__@{simple_class_inheritance[10:0][13:8]} ∧ #defined(__init__@{simple_class_inheritance[10:0][13:8]})"];
-    "Constraint(location=13:16)" [label="int@{builtins[255:6]} ⊑ int@{simple_class_inheritance[10:0][13:26]} ∧ int@{builtins[255:6]} ⊑ int@{simple_class_inheritance[10:0][13:34]} ∧ int@{builtins[255:6]} ⊑ int@{simple_class_inheritance[10:0][13:42]}"];
+    "Constraint(location=13:8)" [label="#function(identifier=simple_class_inheritance[Point3D@{10:6}][__init__@{13:8}], async=false) ⊑ __init__@{simple_class_inheritance[Point3D@{10:6}][13:8]} ∧ #defined(__init__@{simple_class_inheritance[Point3D@{10:6}][13:8]})"];
+    "Constraint(location=13:16)" [label="int@{builtins[255:6]} ⊑ int@{simple_class_inheritance[Point3D@{10:6}][13:26]} ∧ int@{builtins[255:6]} ⊑ int@{simple_class_inheritance[Point3D@{10:6}][13:34]} ∧ int@{builtins[255:6]} ⊑ int@{simple_class_inheritance[Point3D@{10:6}][13:42]}"];
     "Entry" -> "Constraint(location=13:16)" [label="#succeed(int@{builtins[255:6]})"];
     "Entry" -> "ExceptionExit" [label="#raise(int@{builtins[255:6]})"];
     "Constraint()" -> "TypeExit";
     "Constraint(location=13:8)" -> "Constraint()";
-    "Constraint(location=13:16)" -> "Constraint(location=13:8)" [label="#succeed(#function(identifier=__init__@simple_class_inheritance[10:0][13:4], async=false))"];
-    "Constraint(location=13:16)" -> "ExceptionExit" [label="#raise(#function(identifier=__init__@simple_class_inheritance[10:0][13:4], async=false))"];
+    "Constraint(location=13:16)" -> "Constraint(location=13:8)" [label="#succeed(#function(identifier=simple_class_inheritance[Point3D@{10:6}][__init__@{13:8}], async=false))"];
+    "Constraint(location=13:16)" -> "ExceptionExit" [label="#raise(#function(identifier=simple_class_inheritance[Point3D@{10:6}][__init__@{13:8}], async=false))"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "TypeExit";
 }
-digraph "simple_class_inheritance[10:0][13:4]" {
+digraph "simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}]" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=15:17)" [label="z@{simple_class_inheritance[10:0][13:4][13:39]} ⊑ z@{simple_class_inheritance[10:0][13:4][15:17]}"];
-    "Entry" -> "Constraint(location=15:17)" [label="#succeed(z@{simple_class_inheritance[10:0][13:4][13:39]})"];
-    "Entry" -> "ExceptionExit" [label="#raise(z@{simple_class_inheritance[10:0][13:4][13:39]})"];
+    "Constraint(location=6:17)" [label="x@{simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}][5:23]} ⊑ x@{simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}][6:17]}"];
+    "Constraint(location=7:17)" [label="y@{simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}][5:31]} ⊑ y@{simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}][7:17]}"];
+    "Entry" -> "Constraint(location=6:17)" [label="#succeed(x@{simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}][5:23]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(x@{simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}][5:23]})"];
+    "Constraint()" -> "TypeExit";
+    "Constraint(location=6:17)" -> "Constraint(location=7:17)" [label="#succeed(y@{simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}][5:31]})"];
+    "Constraint(location=6:17)" -> "ExceptionExit" [label="#raise(y@{simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}][5:31]})"];
+    "Constraint(location=7:17)" -> "Constraint()";
+    "TypeExit" -> "Exit";
+    "ExceptionExit" -> "TypeExit";
+}
+digraph "simple_class_inheritance[Point3D@{10:6}][__init__@{13:8}]" {
+    "Constraint()" [label="#return(None)"];
+    "Constraint(location=15:17)" [label="z@{simple_class_inheritance[Point3D@{10:6}][__init__@{13:8}][13:39]} ⊑ z@{simple_class_inheritance[Point3D@{10:6}][__init__@{13:8}][15:17]}"];
+    "Entry" -> "Constraint(location=15:17)" [label="#succeed(z@{simple_class_inheritance[Point3D@{10:6}][__init__@{13:8}][13:39]})"];
+    "Entry" -> "ExceptionExit" [label="#raise(z@{simple_class_inheritance[Point3D@{10:6}][__init__@{13:8}][13:39]})"];
     "Constraint()" -> "TypeExit";
     "Constraint(location=15:17)" -> "Constraint()";
     "TypeExit" -> "Exit";

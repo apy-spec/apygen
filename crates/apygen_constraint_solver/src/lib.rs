@@ -1,14 +1,12 @@
 pub use apygen_analysis as analysis;
-pub use apygen_cfg as cfg;
 pub use apygen_constraint_graph as constraint_graph;
-pub use apygen_finder as finder;
+pub use apygen_identifiers as identifiers;
 pub use apygen_inference as inference;
 pub use apygen_primitives as primitives;
 pub use imbl;
 
 pub mod calls;
 pub mod expressions;
-pub mod literals;
 pub mod visibility;
 
 use crate::analysis::abstract_state::{AbstractState, AbstractStateProxy};
@@ -16,18 +14,17 @@ use crate::analysis::fmt::{fmt_display_set, fmt_set};
 use crate::analysis::lattice::Join;
 use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use crate::calls::Arguments;
-use crate::cfg::ast::{Expr, ExprAttribute, ExprName};
 use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
     ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionSubscript, ExpressionUnary,
-    ExpressionVariable, Identifier, Location, ModuleName, OneOrMany, ParseIdentifierError,
-    QualifiedLocation, QualifiedName, VariableName,
+    ExpressionVariable, Identifier, Location, ModuleName, Namespace, QualifiedName, VariableName,
 };
 use crate::constraint_graph::{
     Constraint, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode, ProgramEntityConstraints,
 };
 use crate::expressions::literal_class::method_resolution_order;
 use crate::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
+use crate::identifiers::NamedQualifiedLocation;
 use crate::inference::{
     BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Exception, ExceptionOrigin, FunctionType,
     LiteralClass, LiteralFunction, LiteralMethod, RaisedExceptions, StructuralDepth,
@@ -37,51 +34,10 @@ use imbl::ordmap::Entry;
 use std::convert::Infallible;
 use std::fmt::{Debug, Display};
 use std::sync::Arc;
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum ToQualifiedNameError {
-    #[error("expression contains an invalid identifier")]
-    InvalidIdentifier(#[from] ParseIdentifierError),
-    #[error("expression is not a valid qualified name expression")]
-    InvalidQualifiedName,
-}
-
-pub trait ToQualifiedName {
-    fn to_qualified_name(&self) -> Result<QualifiedName, ToQualifiedNameError>;
-}
-
-impl ToQualifiedName for ExprName {
-    fn to_qualified_name(&self) -> Result<QualifiedName, ToQualifiedNameError> {
-        Ok(QualifiedName::new(OneOrMany::one(Identifier::try_parse(
-            self.id.as_ref(),
-        )?)))
-    }
-}
-
-impl ToQualifiedName for ExprAttribute {
-    fn to_qualified_name(&self) -> Result<QualifiedName, ToQualifiedNameError> {
-        let mut qualified_name = self.value.to_qualified_name()?;
-        qualified_name
-            .identifiers
-            .push(Identifier::try_parse(self.attr.id.as_ref())?);
-        Ok(qualified_name)
-    }
-}
-
-impl ToQualifiedName for Expr {
-    fn to_qualified_name(&self) -> Result<QualifiedName, ToQualifiedNameError> {
-        match self {
-            Expr::Name(expr_name) => expr_name.to_qualified_name(),
-            Expr::Attribute(expr_attribute) => expr_attribute.to_qualified_name(),
-            _ => Err(ToQualifiedNameError::InvalidQualifiedName),
-        }
-    }
-}
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct DefinedVariables {
-    pub names: imbl::OrdMap<VariableName, imbl::OrdSet<(QualifiedLocation, Location)>>,
+    pub names: imbl::OrdMap<VariableName, imbl::OrdSet<(Arc<Namespace>, Location)>>,
 }
 
 impl DefinedVariables {
@@ -179,12 +135,12 @@ impl EvaluationState {
             .names
             .iter()
             .flat_map(|(variable, locations)| {
-                locations.iter().map(|(program_entity, location)| {
-                    let expression_variable = ExpressionVariable::new(
+                locations.iter().map(|(namespace, location)| {
+                    let expression_variable = ExpressionVariable::new(NamedQualifiedLocation::new(
                         variable.clone(),
                         location.clone(),
-                        program_entity.clone(),
-                    );
+                        namespace.clone(),
+                    ));
 
                     (
                         expression_variable.clone(),
@@ -217,10 +173,8 @@ impl<N: Ord, S> Default for SolverState<N, S> {
     }
 }
 
-impl<
-    N: Clone + Ord,
-    S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Clone,
-> AbstractState for SolverState<N, S>
+impl<N: Clone + Ord, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone>
+    AbstractState for SolverState<N, S>
 {
     type Key = N;
     type AbstractValue = S;
@@ -258,14 +212,14 @@ impl<
 }
 
 pub struct ExpressionEvaluator<'a> {
-    pub qualified_location: &'a QualifiedLocation,
-    pub program_entity_constraints: &'a imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
+    pub qualified_location: &'a Namespace,
+    pub program_entity_constraints: &'a imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
     pub fn new(
-        qualified_location: &'a QualifiedLocation,
-        program_entity_constraints: &'a imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
+        qualified_location: &'a Namespace,
+        program_entity_constraints: &'a imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
     ) -> Self {
         Self {
             qualified_location,
@@ -273,27 +227,25 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    pub fn with_qualified_location(&self, qualified_location: &'a QualifiedLocation) -> Self {
+    pub fn with_qualified_location(&self, qualified_location: &'a Namespace) -> Self {
         Self::new(qualified_location, self.program_entity_constraints)
     }
 
     pub fn get_variable_type(
-        abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+        abstract_state: &impl AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         module_name: &ModuleName,
         name: &VariableName,
     ) -> Option<TypeInstance> {
-        let evaluation_state = abstract_state.get(&QualifiedLocation::from(module_name.clone()))?;
+        let evaluation_state = abstract_state.get(&Namespace::Module(module_name.clone()))?;
 
         let locations = evaluation_state.defined_variables.names.get(name)?;
 
-        let (program_entity, location) = locations.get_min()?;
+        let (namespace, location) = locations.get_min()?;
 
         let ty = evaluation_state
             .types
             .get(&Expression::Variable(ExpressionVariable::new(
-                name.clone(),
-                location.clone(),
-                program_entity.clone(),
+                NamedQualifiedLocation::new(name.clone(), location.clone(), namespace.clone()),
             )))?
             .as_value()?;
 
@@ -317,7 +269,7 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     pub fn type_instance(
-        abstract_state: &impl AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
+        abstract_state: &impl AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         ty: &TypeLiteral,
     ) -> Option<TypeInstance> {
         match ty {
@@ -406,10 +358,7 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    pub fn simplify<
-        's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
-    >(
+    pub fn simplify<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq>(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
     ) -> Option<()> {
@@ -459,13 +408,14 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_variable<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression_variable: &ExpressionVariable,
     ) -> Option<PyTypeEval> {
-        let evaluation_state = abstract_state.get(&expression_variable.program_entity)?;
+        let evaluation_state =
+            abstract_state.get(&expression_variable.named_qualified_location.namespace)?;
 
         let Some(ty) = evaluation_state
             .types
@@ -474,7 +424,7 @@ impl<'a> ExpressionEvaluator<'a> {
             return if evaluation_state
                 .defined_variables
                 .names
-                .contains_key(&expression_variable.name)
+                .contains_key(&expression_variable.named_qualified_location.name)
             {
                 Some(PyTypeEval::with_default_effects(Type::Never))
             } else {
@@ -497,7 +447,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_annotated<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -529,7 +479,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_function<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -539,14 +489,14 @@ impl<'a> ExpressionEvaluator<'a> {
             analyse_program_entity(
                 abstract_state,
                 self.program_entity_constraints,
-                &expression_function.identifier.qualified_location,
+                &Namespace::NamedProgramEntity(expression_function.program_entity.clone()),
             )
             .unwrap();
         }
         Some(PyTypeEval::with_default_effects(Type::new_literal(
             TypeLiteral::Function(LiteralFunction {
                 value: Arc::new(FunctionType {
-                    identifier: expression_function.identifier.clone(),
+                    program_entity: expression_function.program_entity.clone(),
                     generics: Default::default(),
                     parameters: Default::default(),
                     is_async: expression_function.is_async,
@@ -557,7 +507,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_class<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -566,13 +516,13 @@ impl<'a> ExpressionEvaluator<'a> {
         analyse_program_entity(
             abstract_state,
             self.program_entity_constraints,
-            &expression_class.identifier.qualified_location,
+            &Namespace::NamedProgramEntity(expression_class.program_entity.clone()),
         )
         .unwrap();
         Some(PyTypeEval::with_default_effects(Type::new_literal(
             TypeLiteral::Class(LiteralClass {
                 value: Arc::new(ClassType {
-                    identifier: expression_class.identifier.clone(),
+                    program_entity: expression_class.program_entity.clone(),
                     generics: Default::default(),
                     bases: Default::default(),
                     keyword_arguments: Default::default(),
@@ -585,7 +535,7 @@ impl<'a> ExpressionEvaluator<'a> {
     /// References: https://docs.python.org/3/howto/descriptor.html
     fn evaluate_attributes<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -618,18 +568,20 @@ impl<'a> ExpressionEvaluator<'a> {
                 TypeLiteral::Class(literal_class) => {
                     // TODO: add support for descriptors
                     for class in method_resolution_order(literal_class)? {
-                        let evaluation_state = if let Some(evaluation_state) =
-                            abstract_state.get(&class.value.identifier.qualified_location)
-                        {
-                            evaluation_state
-                        } else {
-                            analyse_program_entity(
-                                abstract_state,
-                                self.program_entity_constraints,
-                                &class.value.identifier.qualified_location,
-                            )
-                            .unwrap()
-                        };
+                        let class_namespace =
+                            Namespace::NamedProgramEntity(class.value.program_entity.clone());
+
+                        let evaluation_state =
+                            if let Some(evaluation_state) = abstract_state.get(&class_namespace) {
+                                evaluation_state
+                            } else {
+                                analyse_program_entity(
+                                    abstract_state,
+                                    self.program_entity_constraints,
+                                    &class_namespace,
+                                )
+                                .unwrap()
+                            };
 
                         let Some(locations) = evaluation_state.defined_variables.names.get(name)
                         else {
@@ -641,9 +593,11 @@ impl<'a> ExpressionEvaluator<'a> {
                             let mut ty = evaluation_state
                                 .types
                                 .get(&Expression::Variable(ExpressionVariable::new(
-                                    name.clone(),
-                                    location.clone(),
-                                    program_entity.clone(),
+                                    NamedQualifiedLocation::new(
+                                        name.clone(),
+                                        location.clone(),
+                                        program_entity.clone(),
+                                    ),
                                 )))?
                                 .as_value()?
                                 .clone();
@@ -683,7 +637,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_attribute<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -706,7 +660,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_subscript<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -743,7 +697,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_call<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -756,18 +710,20 @@ impl<'a> ExpressionEvaluator<'a> {
 
         match literal.as_ref() {
             TypeLiteral::Function(literal_function) => {
-                let evaluation_state = if let Some(evaluation_state) =
-                    abstract_state.get(&literal_function.value.identifier.qualified_location)
-                {
-                    evaluation_state
-                } else {
-                    analyse_program_entity(
-                        abstract_state,
-                        self.program_entity_constraints,
-                        &literal_function.value.identifier.qualified_location,
-                    )
-                    .unwrap()
-                };
+                let function_namespace =
+                    Namespace::NamedProgramEntity(literal_function.value.program_entity.clone());
+
+                let evaluation_state =
+                    if let Some(evaluation_state) = abstract_state.get(&function_namespace) {
+                        evaluation_state
+                    } else {
+                        analyse_program_entity(
+                            abstract_state,
+                            self.program_entity_constraints,
+                            &function_namespace,
+                        )
+                        .unwrap()
+                    };
 
                 Some(PyTypeEval::new(
                     evaluation_state.return_value.as_value()?.clone(),
@@ -787,7 +743,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_call<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -828,7 +784,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_unary<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -857,7 +813,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_binary_operation<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -925,7 +881,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_binary<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -957,7 +913,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression<
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -1032,7 +988,7 @@ impl<'a> ExpressionEvaluator<'a> {
     pub fn evaluate_expressions<
         'e,
         's,
-        S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
@@ -1048,37 +1004,34 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 }
 
-pub struct ConstraintSolver<
-    's,
-    S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>,
-> {
-    pub qualified_location: &'s QualifiedLocation,
-    pub program_entity_constraints: &'s imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
+pub struct ConstraintSolver<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>
+{
+    pub namespace: &'s Namespace,
+    pub program_entity_constraints: &'s imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
     pub program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation>,
 }
 
-impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState>>
+impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>
     ConstraintSolver<'s, S>
 {
     pub fn new(
-        qualified_location: &'s QualifiedLocation,
-        program_entity_constraints: &'s imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
+        qualified_location: &'s Namespace,
+        program_entity_constraints: &'s imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
         program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation>,
     ) -> Self {
         Self {
-            qualified_location,
+            namespace: qualified_location,
             program_entity_constraints,
             program_evaluation,
         }
     }
 
     pub fn constraints(&self) -> Option<&ProgramEntityConstraints> {
-        self.program_entity_constraints
-            .get(&self.qualified_location)
+        self.program_entity_constraints.get(self.namespace)
     }
 
     pub fn evaluator(&self) -> ExpressionEvaluator<'_> {
-        ExpressionEvaluator::new(self.qualified_location, self.program_entity_constraints)
+        ExpressionEvaluator::new(self.namespace, self.program_entity_constraints)
     }
 
     pub fn evaluate_constraints(
@@ -1106,7 +1059,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                     };
 
                     let evaluation_state =
-                        program_evaluation.get_or_insert_default(self.qualified_location.clone());
+                        program_evaluation.get_or_insert_default(self.namespace.clone());
 
                     evaluation_state
                         .types
@@ -1136,20 +1089,20 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                     };
 
                     let evaluation_state =
-                        program_evaluation.get_or_insert_default(self.qualified_location.clone());
+                        program_evaluation.get_or_insert_default(self.namespace.clone());
 
                     evaluation_state.return_value = ty;
                     evaluation_state.raised_exceptions = raised_exceptions.join(&raised_exceptions);
                 }
                 Constraint::DefinedVariable(expression) => {
                     let evaluation_state =
-                        program_evaluation.get_or_insert_default(self.qualified_location.clone());
+                        program_evaluation.get_or_insert_default(self.namespace.clone());
 
                     evaluation_state.defined_variables.names.insert(
-                        expression.name.clone(),
+                        expression.named_qualified_location.name.clone(),
                         imbl::OrdSet::unit((
-                            expression.program_entity.clone(),
-                            expression.location.clone(),
+                            expression.named_qualified_location.namespace.clone(),
+                            expression.named_qualified_location.location.clone(),
                         )),
                     );
                 }
@@ -1158,8 +1111,8 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
     }
 }
 
-impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq>
-    GraphAnalyser for ConstraintSolver<'s, S>
+impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq> GraphAnalyser
+    for ConstraintSolver<'s, S>
 {
     type Node = ConstraintNode;
     type AbstractState = AbstractStateProxy<'s, S, ProgramEvaluation>;
@@ -1225,13 +1178,13 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                     }
 
                     let evaluation_state =
-                        program_evaluation.get_or_insert_default(self.qualified_location.clone());
+                        program_evaluation.get_or_insert_default(self.namespace.clone());
 
                     evaluation_state.defined_variables.names.insert(
-                        variable.name.clone(),
+                        variable.named_qualified_location.name.clone(),
                         imbl::OrdSet::unit((
-                            variable.program_entity.clone(),
-                            variable.location.clone(),
+                            variable.named_qualified_location.namespace.clone(),
+                            variable.named_qualified_location.location.clone(),
                         )),
                     );
 
@@ -1324,7 +1277,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                         .evaluate_expression(&mut new_abstract_state, expression);
 
                     let evaluation_state =
-                        new_abstract_state.get_or_insert_default(self.qualified_location.clone());
+                        new_abstract_state.get_or_insert_default(self.namespace.clone());
 
                     if let Some(type_eval) = eval {
                         evaluation_state
@@ -1338,9 +1291,9 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
             }
         }
 
-        if matches!(to, ConstraintNode::Exit) && self.qualified_location.locations.is_empty() {
+        if matches!(to, ConstraintNode::Exit) && matches!(self.namespace, Namespace::Module(_)) {
             for other_qualified_location in self.program_entity_constraints.keys() {
-                if self.qualified_location != other_qualified_location {
+                if *self.namespace != **other_qualified_location {
                     analyse_program_entity(
                         &mut new_abstract_state,
                         self.program_entity_constraints,
@@ -1401,7 +1354,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
 
         self.evaluator().simplify(&mut new_abstract_state);
 
-        if let Some(evaluation_state) = new_abstract_state.get(&self.qualified_location) {
+        if let Some(evaluation_state) = new_abstract_state.get(&self.namespace) {
             let new_evaluations = evaluation_state
                 .types
                 .clone()
@@ -1442,7 +1395,7 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
                 .collect();
 
             new_abstract_state
-                .get_mut(&self.qualified_location)
+                .get_mut(&self.namespace)
                 .expect("evaluation_state should exists")
                 .types = new_evaluations;
         }
@@ -1453,23 +1406,19 @@ impl<'s, S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationSta
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
 pub struct ProgramEvaluation {
-    pub states: imbl::OrdMap<QualifiedLocation, EvaluationState>,
+    pub states: imbl::OrdMap<Namespace, EvaluationState>,
 }
 
 impl ProgramEvaluation {
-    pub fn new(states: imbl::OrdMap<QualifiedLocation, EvaluationState>) -> Self {
+    pub fn new(states: imbl::OrdMap<Namespace, EvaluationState>) -> Self {
         Self { states }
     }
 
-    pub fn unit(qualified_location: QualifiedLocation, evaluation_state: EvaluationState) -> Self {
+    pub fn unit(qualified_location: Namespace, evaluation_state: EvaluationState) -> Self {
         Self::new(imbl::OrdMap::unit(qualified_location, evaluation_state))
     }
 
-    pub fn update(
-        &self,
-        qualified_location: QualifiedLocation,
-        evaluation_state: EvaluationState,
-    ) -> Self {
+    pub fn update(&self, qualified_location: Namespace, evaluation_state: EvaluationState) -> Self {
         Self::new(self.states.update(qualified_location, evaluation_state))
     }
 }
@@ -1483,7 +1432,7 @@ impl Display for ProgramEvaluation {
 }
 
 impl AbstractState for ProgramEvaluation {
-    type Key = QualifiedLocation;
+    type Key = Namespace;
     type AbstractValue = EvaluationState;
 
     fn get(&self, key: &Self::Key) -> Option<&Self::AbstractValue> {
@@ -1521,28 +1470,24 @@ impl AbstractState for ProgramEvaluation {
 pub fn analyse_program_entity<
     'e,
     's: 'e,
-    S: AbstractState<Key = QualifiedLocation, AbstractValue = EvaluationState> + Eq,
+    S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
 >(
     abstract_state: &'e mut AbstractStateProxy<'s, S, ProgramEvaluation>,
-    program_entity_constraints: &imbl::OrdMap<QualifiedLocation, ProgramEntityConstraints>,
-    qualified_location: &'e QualifiedLocation,
+    program_entity_constraints: &imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
+    namespace: &'e Namespace,
 ) -> Result<&'e mut EvaluationState, Infallible> {
     let solver_state = analysis(
-        &ConstraintSolver::new(
-            qualified_location,
-            program_entity_constraints,
-            abstract_state,
-        ),
+        &ConstraintSolver::new(namespace, program_entity_constraints, abstract_state),
         &mut DummyAnalysisObserver::default(),
     )?;
 
     let evaluation_state =
         if let Some(program_evaluation) = solver_state.get(&ConstraintNode::TypeExit) {
-            let mut evaluation_state = program_evaluation.get_clone_or_default(qualified_location);
+            let mut evaluation_state = program_evaluation.get_clone_or_default(namespace);
 
             if let Some(exception_evaluation_state) = solver_state
                 .get(&ConstraintNode::ExceptionExit)
-                .and_then(|program_evaluation| program_evaluation.get(qualified_location))
+                .and_then(|program_evaluation| program_evaluation.get(namespace))
             {
                 evaluation_state.types = evaluation_state
                     .types
@@ -1556,7 +1501,7 @@ pub fn analyse_program_entity<
         } else {
             solver_state
                 .get(&ConstraintNode::ExceptionExit)
-                .and_then(|program_evaluation| program_evaluation.get(qualified_location).cloned())
+                .and_then(|program_evaluation| program_evaluation.get(namespace).cloned())
                 .unwrap_or_default()
         };
 
@@ -1568,7 +1513,7 @@ pub fn analyse_program_entity<
         abstract_state.proxy = new_abstract_state.proxy;
     }
 
-    Ok(abstract_state.insert(qualified_location.clone(), evaluation_state))
+    Ok(abstract_state.insert(namespace.clone(), evaluation_state))
 }
 
 pub struct ModuleConstraintSolver<'a> {
@@ -1621,7 +1566,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 
         let mut proxy = AbstractStateProxy::new(&new_analysis_state, ProgramEvaluation::default());
 
-        let qualified_location = QualifiedLocation::from(module_name.clone());
+        let qualified_location = Namespace::Module(module_name.clone());
 
         analyse_program_entity(
             &mut proxy,
@@ -1756,11 +1701,11 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            add_two@{module[1:4]} = function(add_two@module[1:0])
+            add_two@{module[1:4]} = function(module[add_two@{1:4}])
             #raise = {}
             #return = Never
-        module[1:0]:
-            a@{module[1:12]} = @class(int@builtins[1:0])
+        module[add_two@{1:4}]:
+            a@{module[1:12]} = @class(builtins[int@{1:6}])
             b@{module[1:20]} = Never
             #raise = {}
             #return = Never
@@ -1775,12 +1720,12 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = class(A@module[1:0])
+            A@{module[1:6]} = class(module[A@{1:6}])
             result@{module[4:0]} = 5
             #raise = {}
             #return = None
-        module[1:0]:
-            b@{module[1:0][2:4]} = 5
+        module[A@{1:6}]:
+            b@{module[A@{1:6}][2:4]} = 5
             #raise = {}
             #return = None
         "##},
@@ -1795,13 +1740,13 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = class(A@module[1:0])
-            a@{module[4:0]} = @class(A@module[1:0])
+            A@{module[1:6]} = class(module[A@{1:6}])
+            a@{module[4:0]} = @class(module[A@{1:6}])
             result@{module[5:0]} = 5
             #raise = {}
             #return = None
-        module[1:0]:
-            b@{module[1:0][2:4]} = 5
+        module[A@{1:6}]:
+            b@{module[A@{1:6}][2:4]} = 5
             #raise = {}
             #return = None
         "##},
@@ -1816,15 +1761,15 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = class(A@module[1:0])
-            result@{module[5:0]} = function(foo@module[1:0][2:4])
+            A@{module[1:6]} = class(module[A@{1:6}])
+            result@{module[5:0]} = function(module[A@{1:6}][foo@{2:8}])
             #raise = {}
             #return = None
-        module[1:0]:
-            foo@{module[1:0][2:8]} = function(foo@module[1:0][2:4])
+        module[A@{1:6}]:
+            foo@{module[A@{1:6}][2:8]} = function(module[A@{1:6}][foo@{2:8}])
             #raise = {}
             #return = None
-        module[1:0][2:4]:
+        module[A@{1:6}][foo@{2:8}]:
             #raise = {}
             #return = 5
         "##},
@@ -1840,16 +1785,16 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A@{module[1:6]} = class(A@module[1:0])
-            a@{module[5:0]} = @class(A@module[1:0])
-            result@{module[6:0]} = method(class(A@module[1:0])[], function(foo@module[1:0][2:4]))
+            A@{module[1:6]} = class(module[A@{1:6}])
+            a@{module[5:0]} = @class(module[A@{1:6}])
+            result@{module[6:0]} = method(class(module[A@{1:6}])[], function(module[A@{1:6}][foo@{2:8}]))
             #raise = {}
             #return = None
-        module[1:0]:
-            foo@{module[1:0][2:8]} = function(foo@module[1:0][2:4])
+        module[A@{1:6}]:
+            foo@{module[A@{1:6}][2:8]} = function(module[A@{1:6}][foo@{2:8}])
             #raise = {}
             #return = None
-        module[1:0][2:4]:
+        module[A@{1:6}][foo@{2:8}]:
             #raise = {}
             #return = 5
         "##},
@@ -1865,11 +1810,11 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            foo@{module[1:4]} = function(foo@module[1:0])
-            #raise = {Exception(type=@class(NameError@builtins[4:0]), origin=Specified)}
+            foo@{module[1:4]} = function(module[foo@{1:4}])
+            #raise = {Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)}
             #return = Never
-        module[1:0]:
-            #raise = {Exception(type=@class(NameError@builtins[4:0]), origin=Specified)}
+        module[foo@{1:4}]:
+            #raise = {Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)}
             #return = Never
         "##},
     )]
@@ -1885,11 +1830,11 @@ mod tests {
         indoc! {r##"
         module:
             CONST@{module[4:0]} = 5
-            foo@{module[1:4]} = function(foo@module[1:0])
+            foo@{module[1:4]} = function(module[foo@{1:4}])
             result@{module[6:0]} = 5
             #raise = {}
             #return = None
-        module[1:0]:
+        module[foo@{1:4}]:
             #raise = {}
             #return = 5
         "##},
@@ -1919,7 +1864,7 @@ mod tests {
 
         let mut actual_types = String::new();
         for (qualified_location, abstract_state) in &program_evaluation.states {
-            if qualified_location.module_name != module_name {
+            if *qualified_location.module_name() != module_name {
                 continue;
             }
             actual_types.push_str(&format!("{}:\n", qualified_location));

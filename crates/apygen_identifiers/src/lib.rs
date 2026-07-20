@@ -27,61 +27,79 @@ impl Display for Location {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct QualifiedLocation {
-    pub module_name: ModuleName,
-    pub locations: Arc<Vec<Location>>,
+    pub location: Location,
+    pub namespace: Arc<Namespace>,
 }
 
 impl QualifiedLocation {
-    pub fn new(module_name: ModuleName, locations: Arc<Vec<Location>>) -> Self {
+    pub fn new(location: Location, namespace: Arc<Namespace>) -> Self {
         Self {
-            module_name,
-            locations,
+            location,
+            namespace,
         }
-    }
-
-    pub fn at_sublocation(&self, location: Location) -> Self {
-        let mut locations = self.locations.as_ref().clone();
-        locations.push(location);
-        Self::new(self.module_name.clone(), Arc::new(locations))
     }
 }
 
 impl Display for QualifiedLocation {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.module_name)?;
-        if !self.locations.is_empty() {
-            for location in self.locations.as_ref() {
-                write!(f, "[{}]", location)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-impl From<ModuleName> for QualifiedLocation {
-    fn from(module_name: ModuleName) -> Self {
-        Self::new(module_name, Arc::new(Vec::new()))
+        write!(f, "{}[{}]", self.namespace, self.location)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProgramEntityIdentifier {
-    pub qualified_location: QualifiedLocation,
-
+pub struct NamedQualifiedLocation {
     pub name: VariableName,
+    pub location: Location,
+    pub namespace: Arc<Namespace>,
 }
 
-impl ProgramEntityIdentifier {
-    pub fn new(qualified_location: QualifiedLocation, name: VariableName) -> Self {
+impl NamedQualifiedLocation {
+    pub fn new(name: VariableName, location: Location, namespace: Arc<Namespace>) -> Self {
         Self {
-            qualified_location,
             name,
+            location,
+            namespace,
         }
     }
 }
 
-impl Display for ProgramEntityIdentifier {
+impl Display for NamedQualifiedLocation {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}@{}", self.name, self.qualified_location)
+        write!(f, "{}[{}@{{{}}}]", self.namespace, self.name, self.location)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Namespace {
+    Module(ModuleName),
+    ProgramEntity(QualifiedLocation),
+    NamedProgramEntity(NamedQualifiedLocation),
+}
+
+impl Namespace {
+    pub fn module_name(&self) -> &ModuleName {
+        match self {
+            Namespace::Module(module_name) => module_name,
+            Namespace::ProgramEntity(qualified_location) => {
+                qualified_location.namespace.module_name()
+            }
+            Namespace::NamedProgramEntity(named_qualified_location) => {
+                named_qualified_location.namespace.module_name()
+            }
+        }
+    }
+}
+
+impl Display for Namespace {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Namespace::Module(module_name) => write!(f, "{}", module_name),
+            Namespace::ProgramEntity(program_entity_location) => {
+                write!(f, "{}", program_entity_location)
+            }
+            Namespace::NamedProgramEntity(named_program_entity_location) => {
+                write!(f, "{}", named_program_entity_location)
+            }
+        }
     }
 }
