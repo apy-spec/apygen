@@ -1558,22 +1558,26 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
             return Ok(new_analysis_state);
         };
 
-        let mut proxy = AbstractStateProxy::new(&new_analysis_state, ProgramEvaluation::default());
-
         let program_entity_constraints = self.graph.nodes.get(&node).unwrap();
 
         let namespace = Namespace::Module(module_name.clone());
 
+        let mut proxy = AbstractStateProxy::with_default_proxy(&new_analysis_state);
+
         analyse_program_entity(&mut proxy, program_entity_constraints, &namespace)?;
+
+        new_analysis_state.extend(proxy.proxy.states);
 
         for other_namespace in program_entity_constraints.keys() {
             if **other_namespace != namespace {
+                let mut proxy = AbstractStateProxy::with_default_proxy(&new_analysis_state);
+
                 analyse_program_entity(&mut proxy, program_entity_constraints, other_namespace)
                     .unwrap();
+
+                new_analysis_state.extend(proxy.proxy.states);
             }
         }
-
-        new_analysis_state.extend(proxy.proxy.states);
 
         Ok(new_analysis_state)
     }
