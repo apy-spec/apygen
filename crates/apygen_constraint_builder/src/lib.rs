@@ -2255,6 +2255,12 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
     );
 
     let builtins_module_analysis = &builtins_cfg_analyses[&builtins_entity];
+    let builtin_parent_state = &ProgramEntityAbstractParentState::new(
+        &builtins_module_analysis.environment,
+        &builtins_entity,
+        None,
+    );
+
     let imports = builtins_cfg_analyses
         .values()
         .flat_map(|cfg_analysis| cfg_analysis.environment.imports.iter().cloned())
@@ -2275,12 +2281,6 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         .collect::<BTreeSet<_>>();
 
     while !worklist.is_empty() {
-        let builtin_parent_state = &ProgramEntityAbstractParentState::new(
-            &builtins_module_analysis.environment,
-            &builtins_entity,
-            None,
-        );
-
         let analysed_modules = worklist
             .into_par_iter()
             .filter_map(|module_name| {
@@ -2288,12 +2288,6 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
                 let line_index = LineIndex::from_source_text(&source);
                 let module = parse_module(&source).ok()?;
                 let cfg = build_cfg(&line_index, module.syntax()).ok()?;
-
-                let parent_state = if module_name != builtins_module_name {
-                    Some(builtin_parent_state)
-                } else {
-                    None
-                };
 
                 let (constraints, imports) = create_constraints(analyse_cfg(
                     &cfg,
@@ -2303,7 +2297,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
                         None,
                         ProgramEntityKind::Module,
                     ),
-                    parent_state,
+                    Some(builtin_parent_state),
                 ));
 
                 Some((ModuleNode::Module(module_name), constraints, imports))
