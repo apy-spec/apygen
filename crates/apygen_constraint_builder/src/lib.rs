@@ -743,6 +743,7 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_parameter(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        function_namespace: &Arc<Namespace>,
         parameter: &ast::Parameter,
     ) -> Result<(ExpressionVariable, Option<ExpressionEval<Expression>>), ConstraintsBuilderError>
     {
@@ -763,7 +764,7 @@ impl<'a> ConstraintsBuilder<'a> {
             ExpressionVariable::new(NamedQualifiedLocation::new(
                 parameter_name,
                 self.gen_location(parameter),
-                self.program_entity.namespace.clone(),
+                function_namespace.clone(),
             )),
             annotation,
         ))
@@ -772,11 +773,15 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_parameter_with_default(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        function_namespace: &Arc<Namespace>,
         parameter_with_default: &ast::ParameterWithDefault,
     ) -> Result<(ExpressionVariable, Option<ExpressionEval<Expression>>), ConstraintsBuilderError>
     {
-        let (parameter_name, annotation_eval_option) =
-            self.evaluate_parameter(namespace, &parameter_with_default.parameter)?;
+        let (parameter_name, annotation_eval_option) = self.evaluate_parameter(
+            namespace,
+            function_namespace,
+            &parameter_with_default.parameter,
+        )?;
 
         let parameter_eval_option = if let Some(default) = &parameter_with_default.default {
             let default_eval = self.evaluate_expr(&namespace, &default)?;
@@ -801,31 +806,29 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn gen_parameters(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        function_namespace: &Arc<Namespace>,
         parameters: &ast::Parameters,
     ) -> Result<
         ExpressionEval<imbl::OrdMap<ExpressionVariable, imbl::OrdSet<Expression>>>,
         ConstraintsBuilderError,
     > {
-        let positional_only_parameters = parameters
-            .posonlyargs
-            .iter()
-            .map(|parameter| self.evaluate_parameter_with_default(namespace, &parameter));
-        let positional_or_keyword_parameters = parameters
-            .args
-            .iter()
-            .map(|parameter| self.evaluate_parameter(namespace, &parameter.parameter));
+        let positional_only_parameters = parameters.posonlyargs.iter().map(|parameter| {
+            self.evaluate_parameter_with_default(namespace, function_namespace, &parameter)
+        });
+        let positional_or_keyword_parameters = parameters.args.iter().map(|parameter| {
+            self.evaluate_parameter(namespace, function_namespace, &parameter.parameter)
+        });
         let var_positional_parameters = parameters
             .vararg
             .iter()
-            .map(|parameter| self.evaluate_parameter(namespace, &parameter));
-        let keyword_only_parameters = parameters
-            .kwonlyargs
-            .iter()
-            .map(|parameter| self.evaluate_parameter_with_default(namespace, &parameter));
+            .map(|parameter| self.evaluate_parameter(namespace, function_namespace, &parameter));
+        let keyword_only_parameters = parameters.kwonlyargs.iter().map(|parameter| {
+            self.evaluate_parameter_with_default(namespace, function_namespace, &parameter)
+        });
         let var_keyword_parameters = parameters
             .kwarg
             .iter()
-            .map(|parameter| self.evaluate_parameter(namespace, &parameter));
+            .map(|parameter| self.evaluate_parameter(namespace, function_namespace, &parameter));
 
         let parameter_evals = positional_only_parameters
             .chain(positional_or_keyword_parameters)
@@ -1259,14 +1262,6 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let parameters = self.gen_parameters(namespace, &stmt_function_def.parameters)?;
-
-        self.create_used_variables_constraints(
-            &mut target_abstract_environment,
-            self.gen_location(stmt_function_def.parameters.as_ref()),
-            parameters.variables,
-        );
-
         let location = self.gen_location(&stmt_function_def.name);
 
         let variable_name = self.gen_variable_name(&stmt_function_def.name)?;
@@ -1277,19 +1272,34 @@ impl<'a> ConstraintsBuilder<'a> {
             self.program_entity.namespace.clone(),
         );
 
+        let function_namespace = Arc::new(Namespace::NamedProgramEntity(
+            function_qualified_location.clone(),
+        ));
+
+        let parameters = self.gen_parameters(
+            namespace,
+            &function_namespace,
+            &stmt_function_def.parameters,
+        )?;
+        self.create_used_variables_constraints(
+            &mut target_abstract_environment,
+            self.gen_location(stmt_function_def.parameters.as_ref()),
+            parameters.variables,
+        );
+
         self.assign_variable(
             &mut target_abstract_environment,
             location,
             variable_name.clone(),
             Arc::new(Expression::Function(ExpressionFunction::new(
-                function_qualified_location.clone(),
+                function_qualified_location,
                 stmt_function_def.is_async,
             ))),
         );
 
         target_abstract_environment.sub_program_entities.insert(
             ProgramEntity::new(
-                Arc::new(Namespace::NamedProgramEntity(function_qualified_location)),
+                function_namespace,
                 Some(self.gen_location(&stmt_function_def)),
                 ProgramEntityKind::Function,
             ),
@@ -3326,7 +3336,7 @@ mod tests {
             "ExceptionExit" -> "Exit";
         }
         specification "module[add_two@{1:4}]":
-            {arguments: {a@{module[1:12]}: #annotated(int@{module[1:15]}), b@{module[1:20]}: #annotated(int@{module[1:23]})}, return_type: {}, exceptions: {}}
+            {arguments: {a@{module[add_two@{1:4}][1:12]}: #annotated(int@{module[1:15]}), b@{module[add_two@{1:4}][1:20]}: #annotated(int@{module[1:23]})}, return_type: {}, exceptions: {}}
         digraph "module[add_two@{1:4}]" {
             "Constraint(location=2:4)" [label="#return((a@{module[add_two@{1:4}][2:11]}) + (b@{module[add_two@{1:4}][2:15]}))"];
             "Constraint(location=2:11)" [label="a@{module[add_two@{1:4}][1:12]} ⊑ a@{module[add_two@{1:4}][2:11]} ∧ b@{module[add_two@{1:4}][1:20]} ⊑ b@{module[add_two@{1:4}][2:15]}"];

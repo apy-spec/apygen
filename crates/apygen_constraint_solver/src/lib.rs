@@ -1704,12 +1704,16 @@ mod tests {
         "##},
         indoc! {r##"
         module:
+            add_two@{module[1:4]} = function(module[add_two@{1:4}])
+            result@{module[4:0]} = Never ⊔ #deferred{(add_two@{module[4:9]})(42, 67)}
             #raise = {}
-            #return = Never
+            #return = None
         module[add_two@{1:4}]:
-            #raise = {} ⊔ #deferred{#annotated(int@{module[1:15]}), #annotated(int@{module[1:23]})}
-            #return = Never
-        "##}, // TODO: fix because it never reach TypeExit
+            a@{module[add_two@{1:4}][1:12]} = @class(builtins[int@{1:6}])
+            b@{module[add_two@{1:4}][1:20]} = @class(builtins[int@{1:6}])
+            #raise = {} ⊔ #deferred{(a@{module[add_two@{1:4}][2:11]}) + (b@{module[add_two@{1:4}][2:15]})}
+            #return = Never ⊔ #deferred{(a@{module[add_two@{1:4}][2:11]}) + (b@{module[add_two@{1:4}][2:15]})}
+        "##},
     )]
     #[case::simple_class_attribute_access(
         indoc! {r##"

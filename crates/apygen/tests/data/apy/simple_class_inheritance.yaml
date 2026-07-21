@@ -24,13 +24,7 @@ modules:
           __init__:
             kind: FUNCTION
             signature:
-              return_type:
-                reference:
-                  id: Never
-                  module: typing
-                  history_index: 0
-                arguments:
-                  []
+              return_type: None
               summary: ""
               description: ""
               generics: {}
@@ -63,13 +57,7 @@ modules:
           __init__:
             kind: FUNCTION
             signature:
-              return_type:
-                reference:
-                  id: Never
-                  module: typing
-                  history_index: 0
-                arguments:
-                  []
+              return_type: None
               summary: ""
               description: ""
               generics: {}
