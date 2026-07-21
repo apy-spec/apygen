@@ -2195,17 +2195,17 @@ pub fn analyse_module<'a>(
     module_loader: &impl ModuleLoader<Error: Debug>,
     parent_state: Option<&ProgramEntityAbstractParentState>,
     module_name: &ModuleName,
-) -> BTreeMap<ProgramEntity, CfgAnalysis> {
-    let source = module_loader.load(&module_name).expect("Should build CFG");
-    let module = parse_module(&source).expect("Should parse module");
+) -> Option<BTreeMap<ProgramEntity, CfgAnalysis>> {
+    let source = module_loader.load(&module_name).ok()?;
+    let module = parse_module(&source).ok()?;
     let line_index = LineIndex::from_source_text(&source);
-    let cfg = build_cfg(&line_index, module.syntax()).expect("Should build CFG");
+    let cfg = build_cfg(&line_index, module.syntax()).ok()?;
     let program_entity = ProgramEntity::new(
         Arc::new(Namespace::Module(module_name.clone())),
         None,
         ProgramEntityKind::Module,
     );
-    analyse_cfg(&cfg, &line_index, program_entity, parent_state)
+    Some(analyse_cfg(&cfg, &line_index, program_entity, parent_state))
 }
 
 pub fn create_constraints(
@@ -2236,7 +2236,8 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
 ) -> ModuleDependentGraph {
     let builtins_module_name = Arc::new(QualifiedName::parse(BUILTINS_MODULE));
 
-    let builtins_cfg_analyses = analyse_module(module_loader, None, &builtins_module_name);
+    let builtins_cfg_analyses = analyse_module(module_loader, None, &builtins_module_name)
+        .expect("builtins module should be analysable");
 
     let builtins_module_node = ModuleNode::Module(builtins_module_name.clone());
     let builtins_entity = ProgramEntity::new(
@@ -2278,7 +2279,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
             .filter_map(|module_name| {
                 let mut imports = BTreeSet::new();
                 let constraints =
-                    analyse_module(module_loader, Some(builtin_parent_state), &module_name)
+                    analyse_module(module_loader, Some(builtin_parent_state), &module_name)?
                         .into_iter()
                         .map(|(program_entity, cfg_analysis)| {
                             imports.extend(cfg_analysis.environment.imports.clone());
