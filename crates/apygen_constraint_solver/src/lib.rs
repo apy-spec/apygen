@@ -1293,6 +1293,13 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq
 
         if should_ignore {
             Ok(None)
+        } else if matches!(to, ConstraintNode::ExceptionExit) {
+            if let Some(program_evaluation) = new_abstract_state.get_mut(self.namespace) {
+                program_evaluation.types.clear();
+                program_evaluation.return_value = Deferred::default();
+                program_evaluation.defined_variables.names.clear();
+            }
+            Ok(Some(new_abstract_state))
         } else {
             Ok(Some(new_abstract_state))
         }
