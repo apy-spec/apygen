@@ -56,6 +56,8 @@ pub trait GraphAnalyser {
 pub trait AnalysisObserver<N, S> {
     fn before_analysis(&mut self, _state: &S, _worklist: &BTreeSet<N>) {}
     fn before_iteration(&mut self, _state: &S, _worklist: &BTreeSet<N>) {}
+    fn before_node_analysis(&mut self, _state: &S, _worklist: &BTreeSet<N>, _node: &N) {}
+    fn after_node_analysis(&mut self, _state: &S, _worklist: &BTreeSet<N>, _node: &N) {}
     fn after_iteration(&mut self, _state: &S, _worklist: &BTreeSet<N>) {}
     fn after_analysis(&mut self, _state: &S, _worklist: &BTreeSet<N>) {}
 }
@@ -88,6 +90,8 @@ pub fn analysis<
         let Some(node) = worklist.pop_first() else {
             break;
         };
+
+        observer.before_node_analysis(&analysis_state, &worklist, &node);
 
         let abstract_state = analyser.analyse_node(&analysis_state, &node)?;
 
@@ -124,6 +128,8 @@ pub fn analysis<
                 worklist.insert(next_node.clone());
             }
         }
+
+        observer.after_node_analysis(&analysis_state, &worklist, &node);
 
         observer.after_iteration(&analysis_state, &worklist);
     }

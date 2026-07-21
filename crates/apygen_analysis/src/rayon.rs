@@ -23,7 +23,7 @@ fn update_merge<N: Clone + Ord, S, A, E>(
 }
 
 pub fn par_analysis<
-    N: Clone + Ord + Send,
+    N: Clone + Ord + Send + Sync,
     S: Eq + Clone + Send,
     A: Sync,
     E: Send,
@@ -46,13 +46,17 @@ pub fn par_analysis<
             break;
         }
 
+        for node in &worklist {
+            observer.before_node_analysis(&analysis_state, &worklist, node);
+        }
+
         let new_states = worklist
-            .into_par_iter()
+            .par_iter()
             .map(|node| {
-                let abstract_state = analyser.analyse_node(&analysis_state, &node)?;
+                let abstract_state = analyser.analyse_node(&analysis_state, node)?;
 
                 Ok(analyser
-                    .next_nodes(&node)?
+                    .next_nodes(node)?
                     .map(|next_node| (node.clone(), next_node.clone(), abstract_state.clone()))
                     .collect::<Vec<_>>())
             })
@@ -113,11 +117,17 @@ pub fn par_analysis<
                 },
             )?;
 
-        worklist = BTreeSet::new();
+        let mut new_worklist = BTreeSet::new();
         for (next_node, new_abstract_state) in new_states {
             analyser.set_abstract_state(&mut analysis_state, &next_node, new_abstract_state)?;
-            worklist.insert(next_node.clone());
+            new_worklist.insert(next_node.clone());
         }
+
+        for node in &worklist {
+            observer.after_node_analysis(&analysis_state, &new_worklist, node);
+        }
+
+        worklist = new_worklist;
 
         observer.after_iteration(&analysis_state, &worklist);
     }
