@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::fmt::{self, Display, Formatter};
 
 pub fn escape_dot(string: &str) -> String {
-    string.replace('"', r#"\""#)
+    string.replace('"', "&quot;").replace("\\", "\\\\")
 }
 
 pub trait Dot {
