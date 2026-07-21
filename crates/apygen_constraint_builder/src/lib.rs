@@ -3250,7 +3250,7 @@ mod tests {
     )]
     #[case::simple_function_definition(
         indoc! {r##"
-        def add_two(a, b):
+        def add_two(a: int, b: int):
             return a + b
 
         result = add_two(42, 67)
@@ -3281,11 +3281,11 @@ mod tests {
         }
         digraph "module[add_two@{1:4}]" {
             "Constraint(location=2:4)" [label="#return((a@{module[add_two@{1:4}][2:11]}) + (b@{module[add_two@{1:4}][2:15]}))"];
-            "Constraint(location=2:11)" [label="a@{module[add_two@{1:4}][1:12]} ⊑ a@{module[add_two@{1:4}][2:11]} ∧ b@{module[add_two@{1:4}][1:15]} ⊑ b@{module[add_two@{1:4}][2:15]}"];
+            "Constraint(location=2:11)" [label="a@{module[add_two@{1:4}][1:12]} ⊑ a@{module[add_two@{1:4}][2:11]} ∧ b@{module[add_two@{1:4}][1:20]} ⊑ b@{module[add_two@{1:4}][2:15]}"];
             "Entry" -> "Constraint(location=2:11)" [label="#succeed(a@{module[add_two@{1:4}][1:12]})"];
-            "Entry" -> "Constraint(location=2:11)" [label="#succeed(b@{module[add_two@{1:4}][1:15]})"];
+            "Entry" -> "Constraint(location=2:11)" [label="#succeed(b@{module[add_two@{1:4}][1:20]})"];
             "Entry" -> "ExceptionExit" [label="#raise(a@{module[add_two@{1:4}][1:12]})"];
-            "Entry" -> "ExceptionExit" [label="#raise(b@{module[add_two@{1:4}][1:15]})"];
+            "Entry" -> "ExceptionExit" [label="#raise(b@{module[add_two@{1:4}][1:20]})"];
             "Constraint(location=2:4)" -> "TypeExit";
             "Constraint(location=2:11)" -> "Constraint(location=2:4)";
             "TypeExit" -> "Exit";

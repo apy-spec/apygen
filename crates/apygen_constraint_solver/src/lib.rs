@@ -1697,7 +1697,7 @@ mod tests {
     )]
     #[case::simple_function_definition(
         indoc! {r##"
-        def add_two(a: int, b):
+        def add_two(a: int, b: int):
             return a + b
 
         result = add_two(42, 67)
@@ -1707,7 +1707,7 @@ mod tests {
             #raise = {}
             #return = Never
         module[add_two@{1:4}]:
-            #raise = {} ⊔ #deferred{#annotated(int@{module[1:15]})}
+            #raise = {} ⊔ #deferred{#annotated(int@{module[1:15]}), #annotated(int@{module[1:23]})}
             #return = Never
         "##}, // TODO: fix because it never reach TypeExit
     )]
