@@ -2191,36 +2191,43 @@ pub fn analyse_cfg<'a>(
     program_entities
 }
 
+pub fn analyse_module<'a>(
+    module_loader: &impl ModuleLoader<Error: Debug>,
+    parent_state: Option<&ProgramEntityAbstractParentState>,
+    module_name: &ModuleName,
+) -> BTreeMap<ProgramEntity, CfgAnalysis> {
+    let source = module_loader.load(&module_name).expect("Should build CFG");
+    let module = parse_module(&source).expect("Should parse module");
+    let line_index = LineIndex::from_source_text(&source);
+    let cfg = build_cfg(&line_index, module.syntax()).expect("Should build CFG");
+    let program_entity = ProgramEntity::new(
+        Arc::new(Namespace::Module(module_name.clone())),
+        None,
+        ProgramEntityKind::Module,
+    );
+    analyse_cfg(&cfg, &line_index, program_entity, parent_state)
+}
+
 pub fn create_constraints(
-    program_entity_analyses: BTreeMap<ProgramEntity, CfgAnalysis>,
-) -> (
-    imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
-    BTreeSet<ModuleName>,
-) {
-    let mut imports = BTreeSet::new();
-    let constraints = program_entity_analyses
-        .into_iter()
-        .map(|(program_entity, cfg_analysis)| {
-            imports.extend(cfg_analysis.environment.imports);
-            (
-                program_entity.namespace,
-                ProgramEntityConstraints {
-                    specification: cfg_analysis.specification.clone(),
-                    constraint_graph: ConstraintGraph::new(
-                        cfg_analysis.environment.nodes.clone(),
-                        cfg_analysis.environment.edges.into_iter().fold(
-                            imbl::OrdMap::default(),
-                            |mut acc, ((from, to), guards)| {
-                                acc.entry(from).or_default().insert(to, guards);
-                                acc
-                            },
-                        ),
-                    ),
-                },
-            )
-        })
-        .collect();
-    (constraints, imports)
+    program_entity: ProgramEntity,
+    cfg_analysis: CfgAnalysis,
+) -> (Arc<Namespace>, ProgramEntityConstraints) {
+    (
+        program_entity.namespace,
+        ProgramEntityConstraints {
+            specification: cfg_analysis.specification.clone(),
+            constraint_graph: ConstraintGraph::new(
+                cfg_analysis.environment.nodes.clone(),
+                cfg_analysis.environment.edges.into_iter().fold(
+                    imbl::OrdMap::default(),
+                    |mut acc, ((from, to), guards)| {
+                        acc.entry(from).or_default().insert(to, guards);
+                        acc
+                    },
+                ),
+            ),
+        },
+    )
 }
 
 pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
@@ -2229,29 +2236,13 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
 ) -> ModuleDependentGraph {
     let builtins_module_name = Arc::new(QualifiedName::parse(BUILTINS_MODULE));
 
-    let builtins_source = module_loader
-        .load(&builtins_module_name)
-        .expect("Should build CFG");
-    let builtins_line_index = LineIndex::from_source_text(&builtins_source);
-    let builtins_module = parse_module(&builtins_source).expect("Should parse builtins module");
-    let builtins_cfg =
-        build_cfg(&builtins_line_index, builtins_module.syntax()).expect("Should build CFG");
+    let builtins_cfg_analyses = analyse_module(module_loader, None, &builtins_module_name);
 
+    let builtins_module_node = ModuleNode::Module(builtins_module_name.clone());
     let builtins_entity = ProgramEntity::new(
         Arc::new(Namespace::Module(builtins_module_name.clone())),
         None,
         ProgramEntityKind::Module,
-    );
-
-    let builtins_module_node = ModuleNode::Module(builtins_module_name.clone());
-
-    let mut dependent_graph = ModuleDependentGraph::default();
-
-    let builtins_cfg_analyses = analyse_cfg(
-        &builtins_cfg,
-        &builtins_line_index,
-        builtins_entity.clone(),
-        None,
     );
 
     let builtins_module_analysis = &builtins_cfg_analyses[&builtins_entity];
@@ -2266,6 +2257,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         .flat_map(|cfg_analysis| cfg_analysis.environment.imports.iter().cloned())
         .collect::<BTreeSet<_>>();
 
+    let mut dependent_graph = ModuleDependentGraph::default();
     dependent_graph.add_dependent(ModuleNode::Entry, builtins_module_node.clone());
     dependent_graph.add_dependent(builtins_module_node.clone(), ModuleNode::Exit);
     for import in &imports {
@@ -2284,22 +2276,15 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         let analysed_modules = worklist
             .into_par_iter()
             .filter_map(|module_name| {
-                let source = module_loader.load(&module_name).ok()?;
-                let line_index = LineIndex::from_source_text(&source);
-                let module = parse_module(&source).ok()?;
-                let cfg = build_cfg(&line_index, module.syntax()).ok()?;
-
-                let (constraints, imports) = create_constraints(analyse_cfg(
-                    &cfg,
-                    &line_index,
-                    ProgramEntity::new(
-                        Arc::new(Namespace::Module(module_name.clone())),
-                        None,
-                        ProgramEntityKind::Module,
-                    ),
-                    Some(builtin_parent_state),
-                ));
-
+                let mut imports = BTreeSet::new();
+                let constraints =
+                    analyse_module(module_loader, Some(builtin_parent_state), &module_name)
+                        .into_iter()
+                        .map(|(program_entity, cfg_analysis)| {
+                            imports.extend(cfg_analysis.environment.imports.clone());
+                            create_constraints(program_entity, cfg_analysis)
+                        })
+                        .collect();
                 Some((ModuleNode::Module(module_name), constraints, imports))
             })
             .collect::<Vec<_>>();
@@ -2330,9 +2315,13 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         }
     }
 
-    let (constraints, _) = create_constraints(builtins_cfg_analyses);
-
-    dependent_graph.insert(builtins_module_node, constraints);
+    dependent_graph.insert(
+        builtins_module_node,
+        builtins_cfg_analyses
+            .into_iter()
+            .map(|(program_entity, cfg_analysis)| create_constraints(program_entity, cfg_analysis))
+            .collect(),
+    );
 
     dependent_graph
 }
