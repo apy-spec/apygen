@@ -26,8 +26,8 @@ use crate::constraint_graph::primitives::literals::{
 };
 use crate::constraint_graph::primitives::{BigInt, Complex64, Int, Num};
 use crate::constraint_graph::{
-    Constraint, ConstraintGraph, ConstraintNode, Guard, IncludeConstraint, ModuleDependentGraph,
-    ModuleNode, ProgramEntityConstraints, ProgramEntitySpecification, ReturnConstraint,
+    Constraint, ConstraintGraph, ConstraintGraphSpecification, ConstraintNode, Guard,
+    IncludeConstraint, ModuleDependentGraph, ModuleNode, ReturnConstraint,
 };
 use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
 use crate::finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
@@ -180,13 +180,13 @@ impl Display for ProgramEntity {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct SubProgramEntityContext {
-    pub specification: ProgramEntitySpecification,
+    pub specification: ConstraintGraphSpecification,
     pub variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
 }
 
 impl SubProgramEntityContext {
     pub fn new(
-        specification: ProgramEntitySpecification,
+        specification: ConstraintGraphSpecification,
         variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
     ) -> Self {
         Self {
@@ -1304,7 +1304,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 ProgramEntityKind::Function,
             ),
             SubProgramEntityContext::new(
-                ProgramEntitySpecification {
+                ConstraintGraphSpecification {
                     arguments: parameters.value,
                     return_type: imbl::OrdSet::default(),
                     exceptions: imbl::OrdSet::default(),
@@ -1351,7 +1351,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 ProgramEntityKind::Class,
             ),
             SubProgramEntityContext::new(
-                ProgramEntitySpecification {
+                ConstraintGraphSpecification {
                     arguments: imbl::OrdMap::default(),
                     return_type: imbl::OrdSet::default(),
                     exceptions: imbl::OrdSet::default(),
@@ -2105,8 +2105,24 @@ pub enum ConstraintsError {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct CfgAnalysis {
-    pub specification: ProgramEntitySpecification,
+    pub specification: ConstraintGraphSpecification,
     pub environment: ProgramEntityAbstractEnvironment,
+}
+
+impl From<CfgAnalysis> for ConstraintGraph {
+    fn from(cfg_analysis: CfgAnalysis) -> Self {
+        ConstraintGraph::new(
+            cfg_analysis.specification.clone(),
+            cfg_analysis.environment.nodes.clone(),
+            cfg_analysis.environment.edges.into_iter().fold(
+                imbl::OrdMap::default(),
+                |mut acc, ((from, to), guards)| {
+                    acc.entry(from).or_default().insert(to, guards);
+                    acc
+                },
+            ),
+        )
+    }
 }
 
 pub fn analyse_cfg<'a>(
@@ -2182,28 +2198,6 @@ pub fn analyse_module<'a>(
     Some(analyse_cfg(&cfg, &line_index, program_entity, parent_state))
 }
 
-pub fn create_constraints(
-    program_entity: ProgramEntity,
-    cfg_analysis: CfgAnalysis,
-) -> (Arc<Namespace>, ProgramEntityConstraints) {
-    (
-        program_entity.namespace,
-        ProgramEntityConstraints {
-            specification: cfg_analysis.specification.clone(),
-            constraint_graph: ConstraintGraph::new(
-                cfg_analysis.environment.nodes.clone(),
-                cfg_analysis.environment.edges.into_iter().fold(
-                    imbl::OrdMap::default(),
-                    |mut acc, ((from, to), guards)| {
-                        acc.entry(from).or_default().insert(to, guards);
-                        acc
-                    },
-                ),
-            ),
-        },
-    )
-}
-
 pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
     module_loader: &C,
     initial_modules: impl Iterator<Item = ModuleName>,
@@ -2252,20 +2246,23 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
             .into_par_iter()
             .filter_map(|module_name| {
                 let mut imports = BTreeSet::new();
-                let constraints =
+                let constraint_graphs =
                     analyse_module(module_loader, Some(builtin_parent_state), &module_name)?
                         .into_iter()
                         .map(|(program_entity, cfg_analysis)| {
                             imports.extend(cfg_analysis.environment.imports.clone());
-                            create_constraints(program_entity, cfg_analysis)
+                            (
+                                program_entity.namespace,
+                                ConstraintGraph::from(cfg_analysis),
+                            )
                         })
                         .collect();
-                Some((ModuleNode::Module(module_name), constraints, imports))
+                Some((ModuleNode::Module(module_name), constraint_graphs, imports))
             })
             .collect::<Vec<_>>();
 
         worklist = BTreeSet::new();
-        for (module_node, constraints, imports) in analysed_modules {
+        for (module_node, constraint_graphs, imports) in analysed_modules {
             dependent_graph.add_dependent(builtins_module_node.clone(), module_node.clone());
             dependent_graph.remove_dependent(builtins_module_node.clone(), ModuleNode::Exit);
             if !dependent_graph.dependents.contains_key(&module_node) {
@@ -2286,7 +2283,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
                 }
             }
 
-            dependent_graph.nodes.insert(module_node, constraints);
+            dependent_graph.nodes.insert(module_node, constraint_graphs);
         }
     }
 
@@ -2294,7 +2291,12 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         builtins_module_node,
         builtins_cfg_analyses
             .into_iter()
-            .map(|(program_entity, cfg_analysis)| create_constraints(program_entity, cfg_analysis))
+            .map(|(program_entity, cfg_analysis)| {
+                (
+                    program_entity.namespace,
+                    ConstraintGraph::from(cfg_analysis),
+                )
+            })
             .collect(),
     );
 
@@ -3437,8 +3439,7 @@ mod tests {
                     "specification \"{}\":\n    {}\n",
                     namespace, constraints.specification
                 ));
-                actual_constraints
-                    .push_str(&constraints.constraint_graph.dot(&namespace.to_string()));
+                actual_constraints.push_str(&constraints.dot(&namespace.to_string()));
             }
         }
 

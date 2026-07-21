@@ -20,7 +20,7 @@ use crate::constraint_graph::expressions::{
     ExpressionVariable, Identifier, Location, ModuleName, Namespace, QualifiedName, VariableName,
 };
 use crate::constraint_graph::{
-    Constraint, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode, ProgramEntityConstraints,
+    Constraint, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode,
 };
 use crate::expressions::literal_class::method_resolution_order;
 use crate::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
@@ -30,6 +30,7 @@ use crate::inference::{
     LiteralClass, LiteralFunction, LiteralMethod, RaisedExceptions, StructuralDepth,
     StructuralWidth, TYPES_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion, WIDTH_LIMIT,
 };
+use apygen_constraint_graph::ConstraintGraph;
 use imbl::ordmap::Entry;
 use std::convert::Infallible;
 use std::fmt::{Debug, Display};
@@ -213,22 +214,22 @@ impl<N: Clone + Ord, S: AbstractState<Key = Namespace, AbstractValue = Evaluatio
 
 pub struct ExpressionEvaluator<'a> {
     pub qualified_location: &'a Namespace,
-    pub program_entity_constraints: &'a imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
+    pub constraint_graphs: &'a imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
     pub fn new(
         qualified_location: &'a Namespace,
-        program_entity_constraints: &'a imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
+        constraint_graphs: &'a imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     ) -> Self {
         Self {
             qualified_location,
-            program_entity_constraints,
+            constraint_graphs,
         }
     }
 
     pub fn with_qualified_location(&self, qualified_location: &'a Namespace) -> Self {
-        Self::new(qualified_location, self.program_entity_constraints)
+        Self::new(qualified_location, self.constraint_graphs)
     }
 
     pub fn get_variable_type(
@@ -488,7 +489,7 @@ impl<'a> ExpressionEvaluator<'a> {
         if abstract_state.contains(&self.qualified_location) {
             analyse_program_entity(
                 abstract_state,
-                self.program_entity_constraints,
+                self.constraint_graphs,
                 &Namespace::NamedProgramEntity(expression_function.program_entity.clone()),
             )
             .unwrap();
@@ -515,7 +516,7 @@ impl<'a> ExpressionEvaluator<'a> {
     ) -> Option<PyTypeEval> {
         analyse_program_entity(
             abstract_state,
-            self.program_entity_constraints,
+            self.constraint_graphs,
             &Namespace::NamedProgramEntity(expression_class.program_entity.clone()),
         )
         .unwrap();
@@ -577,7 +578,7 @@ impl<'a> ExpressionEvaluator<'a> {
                             } else {
                                 analyse_program_entity(
                                     abstract_state,
-                                    self.program_entity_constraints,
+                                    self.constraint_graphs,
                                     &class_namespace,
                                 )
                                 .unwrap()
@@ -719,7 +720,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     } else {
                         analyse_program_entity(
                             abstract_state,
-                            self.program_entity_constraints,
+                            self.constraint_graphs,
                             &function_namespace,
                         )
                         .unwrap()
@@ -1007,7 +1008,7 @@ impl<'a> ExpressionEvaluator<'a> {
 pub struct ConstraintSolver<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>
 {
     pub namespace: &'s Namespace,
-    pub program_entity_constraints: &'s imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
+    pub constraint_graphs: &'s imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     pub program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation>,
 }
 
@@ -1015,23 +1016,23 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>
     ConstraintSolver<'s, S>
 {
     pub fn new(
-        qualified_location: &'s Namespace,
-        program_entity_constraints: &'s imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
+        namespace: &'s Namespace,
+        constraint_graphs: &'s imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
         program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation>,
     ) -> Self {
         Self {
-            namespace: qualified_location,
-            program_entity_constraints,
+            namespace,
+            constraint_graphs,
             program_evaluation,
         }
     }
 
-    pub fn constraints(&self) -> Option<&ProgramEntityConstraints> {
-        self.program_entity_constraints.get(self.namespace)
+    pub fn constraint_graph(&self) -> Option<&ConstraintGraph> {
+        self.constraint_graphs.get(self.namespace)
     }
 
     pub fn evaluator(&self) -> ExpressionEvaluator<'_> {
-        ExpressionEvaluator::new(self.namespace, self.program_entity_constraints)
+        ExpressionEvaluator::new(self.namespace, self.constraint_graphs)
     }
 
     pub fn evaluate_constraints(
@@ -1128,9 +1129,8 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq
         node: &Self::Node,
     ) -> Result<impl Iterator<Item = &Self::Node>, Self::Error> {
         Ok(self
-            .constraints()
+            .constraint_graph()
             .unwrap()
-            .constraint_graph
             .edges
             .get(node)
             .into_iter()
@@ -1151,8 +1151,12 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq
 
         match &node {
             ConstraintNode::Entry => {
-                for (variable, expressions) in
-                    self.constraints().unwrap().specification.arguments.as_ref()
+                for (variable, expressions) in self
+                    .constraint_graph()
+                    .unwrap()
+                    .specification
+                    .arguments
+                    .as_ref()
                 {
                     let mut ty: Deferred<Type> = Deferred::default();
                     let mut raised_exceptions: Deferred<RaisedExceptions> = Deferred::default();
@@ -1196,9 +1200,7 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq
                 }
             }
             ConstraintNode::Constraint { .. } => {
-                if let Some(constraints) =
-                    self.constraints().unwrap().constraint_graph.nodes.get(node)
-                {
+                if let Some(constraints) = self.constraint_graph().unwrap().nodes.get(node) {
                     self.evaluate_constraints(&mut program_evaluation, constraints);
                 }
             }
@@ -1218,9 +1220,8 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq
         let mut new_abstract_state = abstract_state.clone();
 
         let guards = self
-            .constraints()
+            .constraint_graph()
             .unwrap()
-            .constraint_graph
             .edges
             .get(from)
             .unwrap()
@@ -1467,11 +1468,11 @@ pub fn analyse_program_entity<
     S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
 >(
     abstract_state: &'e mut AbstractStateProxy<'s, S, ProgramEvaluation>,
-    program_entity_constraints: &imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
+    constraint_graphs: &imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     namespace: &'e Namespace,
 ) -> Result<&'e mut EvaluationState, Infallible> {
     let solver_state = analysis(
-        &ConstraintSolver::new(namespace, program_entity_constraints, abstract_state),
+        &ConstraintSolver::new(namespace, constraint_graphs, abstract_state),
         &mut DummyAnalysisObserver::default(),
     )?;
 

@@ -136,17 +136,45 @@ impl Display for ConstraintNode {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
+pub struct ConstraintGraphSpecification {
+    pub arguments: imbl::OrdMap<ExpressionVariable, imbl::OrdSet<Expression>>,
+    pub return_type: imbl::OrdSet<Expression>,
+    pub exceptions: imbl::OrdSet<Expression>,
+}
+
+impl Display for ConstraintGraphSpecification {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("{arguments: ")?;
+        fmt_set(f, self.arguments.iter(), |f, (variable, types)| {
+            write!(f, "{}: ", variable)?;
+            fmt_display_iterator(f, types.iter(), " ⊔ ")
+        })?;
+        f.write_str(", return_type: ")?;
+        fmt_display_set(f, self.return_type.iter())?;
+        f.write_str(", exceptions: ")?;
+        fmt_display_set(f, self.exceptions.iter())?;
+        f.write_str("}")
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ConstraintGraph {
+    pub specification: ConstraintGraphSpecification,
     pub nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
     pub edges: imbl::OrdMap<ConstraintNode, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>>,
 }
 
 impl ConstraintGraph {
     pub fn new(
+        specification: ConstraintGraphSpecification,
         nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
         edges: imbl::OrdMap<ConstraintNode, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>>,
     ) -> Self {
-        Self { nodes, edges }
+        Self {
+            specification,
+            nodes,
+            edges,
+        }
     }
 
     pub fn add_edge(
@@ -269,37 +297,9 @@ impl Display for ModuleNode {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
-pub struct ProgramEntitySpecification {
-    pub arguments: imbl::OrdMap<ExpressionVariable, imbl::OrdSet<Expression>>,
-    pub return_type: imbl::OrdSet<Expression>,
-    pub exceptions: imbl::OrdSet<Expression>,
-}
-
-impl Display for ProgramEntitySpecification {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str("{arguments: ")?;
-        fmt_set(f, self.arguments.iter(), |f, (variable, types)| {
-            write!(f, "{}: ", variable)?;
-            fmt_display_iterator(f, types.iter(), " ⊔ ")
-        })?;
-        f.write_str(", return_type: ")?;
-        fmt_display_set(f, self.return_type.iter())?;
-        f.write_str(", exceptions: ")?;
-        fmt_display_set(f, self.exceptions.iter())?;
-        f.write_str("}")
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
-pub struct ProgramEntityConstraints {
-    pub specification: ProgramEntitySpecification,
-    pub constraint_graph: ConstraintGraph,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ModuleDependentGraph {
-    pub nodes: imbl::OrdMap<ModuleNode, imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>>,
+    pub nodes: imbl::OrdMap<ModuleNode, imbl::OrdMap<Arc<Namespace>, ConstraintGraph>>,
     pub dependents: imbl::OrdMap<ModuleNode, imbl::OrdSet<ModuleNode>>,
 }
 
@@ -322,7 +322,7 @@ impl ModuleDependentGraph {
     pub fn insert(
         &mut self,
         node: ModuleNode,
-        state: imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>,
+        state: imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     ) {
         self.nodes.insert(node.clone(), state);
     }
@@ -350,7 +350,7 @@ impl Display for ModuleDependentGraph {
 
 impl Graph for ModuleDependentGraph {
     type Node = ModuleNode;
-    type NodeData = imbl::OrdMap<Arc<Namespace>, ProgramEntityConstraints>;
+    type NodeData = imbl::OrdMap<Arc<Namespace>, ConstraintGraph>;
     type EdgeData = ();
 
     fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {

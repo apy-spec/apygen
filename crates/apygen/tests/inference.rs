@@ -95,16 +95,12 @@ fn test_inference(#[case] module_name: String) {
         analyse_directory(modules_dir, module_qualified_name.clone());
 
     let mut actual_dot = actual_dependent_graph.dot("DependentGraph");
-    for program_entities in actual_dependent_graph.nodes.values() {
-        for (qualified_location, abstract_environment) in program_entities {
-            if *qualified_location.module_name() != module_qualified_name {
+    for constraint_graphs in actual_dependent_graph.nodes.values() {
+        for (namespace, constraint_graph) in constraint_graphs {
+            if *namespace.module_name() != module_qualified_name {
                 continue;
             }
-            actual_dot.push_str(
-                &abstract_environment
-                    .constraint_graph
-                    .dot(&qualified_location.to_string()),
-            );
+            actual_dot.push_str(&constraint_graph.dot(&namespace.to_string()));
         }
     }
 
