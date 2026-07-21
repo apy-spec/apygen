@@ -1573,8 +1573,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
             if **other_namespace != namespace {
                 let mut proxy = AbstractStateProxy::with_default_proxy(&new_analysis_state);
 
-                analyse_program_entity(&mut proxy, program_entity_constraints, other_namespace)
-                    .unwrap();
+                analyse_program_entity(&mut proxy, program_entity_constraints, other_namespace)?;
 
                 new_analysis_state.extend(proxy.proxy.states);
             }
