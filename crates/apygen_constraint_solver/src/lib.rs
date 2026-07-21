@@ -1291,19 +1291,6 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq
             }
         }
 
-        if matches!(to, ConstraintNode::Exit) && matches!(self.namespace, Namespace::Module(_)) {
-            for other_qualified_location in self.program_entity_constraints.keys() {
-                if *self.namespace != **other_qualified_location {
-                    analyse_program_entity(
-                        &mut new_abstract_state,
-                        self.program_entity_constraints,
-                        other_qualified_location,
-                    )
-                    .unwrap();
-                }
-            }
-        }
-
         if should_ignore {
             Ok(None)
         } else {
@@ -1566,13 +1553,18 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 
         let mut proxy = AbstractStateProxy::new(&new_analysis_state, ProgramEvaluation::default());
 
-        let qualified_location = Namespace::Module(module_name.clone());
+        let program_entity_constraints = self.graph.nodes.get(&node).unwrap();
 
-        analyse_program_entity(
-            &mut proxy,
-            self.graph.nodes.get(&node).unwrap(),
-            &qualified_location,
-        )?;
+        let namespace = Namespace::Module(module_name.clone());
+
+        analyse_program_entity(&mut proxy, program_entity_constraints, &namespace)?;
+
+        for other_namespace in program_entity_constraints.keys() {
+            if **other_namespace != namespace {
+                analyse_program_entity(&mut proxy, program_entity_constraints, other_namespace)
+                    .unwrap();
+            }
+        }
 
         new_analysis_state.extend(proxy.proxy.states);
 
