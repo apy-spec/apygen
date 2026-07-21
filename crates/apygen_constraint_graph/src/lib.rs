@@ -1,6 +1,7 @@
 pub mod expressions;
 
 use crate::analysis::fmt::fmt_iterator;
+use crate::analysis::fmt::{fmt_display_iterator, fmt_display_set, fmt_set};
 use crate::analysis::lattice::Join;
 use crate::expressions::{Expression, ExpressionVariable};
 use crate::graph::Graph;
@@ -273,6 +274,21 @@ pub struct ProgramEntitySpecification {
     pub arguments: imbl::OrdMap<ExpressionVariable, imbl::OrdSet<Expression>>,
     pub return_type: imbl::OrdSet<Expression>,
     pub exceptions: imbl::OrdSet<Expression>,
+}
+
+impl Display for ProgramEntitySpecification {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("{arguments: ")?;
+        fmt_set(f, self.arguments.iter(), |f, (variable, types)| {
+            write!(f, "{}: ", variable)?;
+            fmt_display_iterator(f, types.iter(), " ⊔ ")
+        })?;
+        f.write_str(", return_type: ")?;
+        fmt_display_set(f, self.return_type.iter())?;
+        f.write_str(", exceptions: ")?;
+        fmt_display_set(f, self.exceptions.iter())?;
+        f.write_str("}")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]

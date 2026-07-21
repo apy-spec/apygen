@@ -742,6 +742,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_parameter(
         &self,
+        namespace: &ProgramEntityAnalysisState,
         parameter: &ast::Parameter,
     ) -> Result<(ExpressionVariable, Option<ExpressionEval<Expression>>), ConstraintsBuilderError>
     {
@@ -749,7 +750,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let annotation = if let Some(annotation) = &parameter.annotation {
             Some(
-                self.evaluate_expr(&ProgramEntityAnalysisState::default(), &annotation)?
+                self.evaluate_expr(&namespace, &annotation)?
                     .map(|expression| {
                         Expression::Annotated(ExpressionAnnotated::new(Arc::new(expression)))
                     }),
@@ -770,15 +771,15 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_parameter_with_default(
         &self,
+        namespace: &ProgramEntityAnalysisState,
         parameter_with_default: &ast::ParameterWithDefault,
     ) -> Result<(ExpressionVariable, Option<ExpressionEval<Expression>>), ConstraintsBuilderError>
     {
         let (parameter_name, annotation_eval_option) =
-            self.evaluate_parameter(&parameter_with_default.parameter)?;
+            self.evaluate_parameter(namespace, &parameter_with_default.parameter)?;
 
         let parameter_eval_option = if let Some(default) = &parameter_with_default.default {
-            let default_eval =
-                self.evaluate_expr(&ProgramEntityAnalysisState::default(), &default)?;
+            let default_eval = self.evaluate_expr(&namespace, &default)?;
 
             if let Some(annotation_eval) = annotation_eval_option {
                 Some(annotation_eval.merge(default_eval, |annotation, default| {
@@ -799,6 +800,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn gen_parameters(
         &self,
+        namespace: &ProgramEntityAnalysisState,
         parameters: &ast::Parameters,
     ) -> Result<
         ExpressionEval<imbl::OrdMap<ExpressionVariable, imbl::OrdSet<Expression>>>,
@@ -807,23 +809,23 @@ impl<'a> ConstraintsBuilder<'a> {
         let positional_only_parameters = parameters
             .posonlyargs
             .iter()
-            .map(|parameter| self.evaluate_parameter_with_default(&parameter));
+            .map(|parameter| self.evaluate_parameter_with_default(namespace, &parameter));
         let positional_or_keyword_parameters = parameters
             .args
             .iter()
-            .map(|parameter| self.evaluate_parameter(&parameter.parameter));
+            .map(|parameter| self.evaluate_parameter(namespace, &parameter.parameter));
         let var_positional_parameters = parameters
             .vararg
             .iter()
-            .map(|parameter| self.evaluate_parameter(&parameter));
+            .map(|parameter| self.evaluate_parameter(namespace, &parameter));
         let keyword_only_parameters = parameters
             .kwonlyargs
             .iter()
-            .map(|parameter| self.evaluate_parameter_with_default(&parameter));
+            .map(|parameter| self.evaluate_parameter_with_default(namespace, &parameter));
         let var_keyword_parameters = parameters
             .kwarg
             .iter()
-            .map(|parameter| self.evaluate_parameter(&parameter));
+            .map(|parameter| self.evaluate_parameter(namespace, &parameter));
 
         let parameter_evals = positional_only_parameters
             .chain(positional_or_keyword_parameters)
@@ -1257,8 +1259,8 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let parameters = self.gen_parameters(&stmt_function_def.parameters)?;
-
+        let parameters = self.gen_parameters(namespace, &stmt_function_def.parameters)?;
+        println!("{parameters:?}");
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
             self.gen_location(stmt_function_def.parameters.as_ref()),
@@ -2322,6 +2324,8 @@ mod tests {
             "Module(module)" -> "Exit";
             "Module(some_module)" -> "Module(module)";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:7)" [label="#import(some_module) ⊑ some_module@{module[1:7]} ∧ #defined(some_module@{module[1:7]})"];
@@ -2347,6 +2351,8 @@ mod tests {
             "Module(module)" -> "Exit";
             "Module(some_module)" -> "Module(module)";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:22)" [label="#import(some_module) ⊑ mod@{module[1:22]} ∧ #defined(mod@{module[1:22]})"];
@@ -2372,6 +2378,8 @@ mod tests {
             "Module(module)" -> "Exit";
             "Module(some_module.submodule)" -> "Module(module)";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:7)" [label="#import(some_module) ⊑ some_module@{module[1:7]} ∧ #defined(some_module@{module[1:7]})"];
@@ -2403,6 +2411,8 @@ mod tests {
             "Module(some_module)" -> "Module(module)";
             "Module(some_module.submodule)" -> "Module(module)";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:7)" [label="#import(some_module) ⊑ some_module@{module[1:7]} ∧ #defined(some_module@{module[1:7]})"];
@@ -2437,6 +2447,8 @@ mod tests {
             "Module(module)" -> "Exit";
             "Module(some_module)" -> "Module(module)";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:7)" [label="#import(some_module) ⊑ some_module@{module[1:7]} ∧ #defined(some_module@{module[1:7]})"];
@@ -2468,6 +2480,8 @@ mod tests {
             "Module(module)" -> "Exit";
             "Module(some_module)" -> "Module(module)";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:22)" [label="#import(some_module) ⊑ mod@{module[1:22]} ∧ #defined(mod@{module[1:22]})"];
@@ -2493,6 +2507,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="42 ⊑ a@{module[1:0]} ∧ #defined(a@{module[1:0]})"];
@@ -2513,6 +2529,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="4200000000000000000000000000 ⊑ a@{module[1:0]} ∧ #defined(a@{module[1:0]})"];
@@ -2533,6 +2551,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) + (67) ⊑ add@{module[1:0]} ∧ #defined(add@{module[1:0]})"];
@@ -2555,6 +2575,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) - (67) ⊑ sub@{module[1:0]} ∧ #defined(sub@{module[1:0]})"];
@@ -2577,6 +2599,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) * (67) ⊑ mult@{module[1:0]} ∧ #defined(mult@{module[1:0]})"];
@@ -2599,6 +2623,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) @ (67) ⊑ mat_mult@{module[1:0]} ∧ #defined(mat_mult@{module[1:0]})"];
@@ -2621,6 +2647,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) / (67) ⊑ div@{module[1:0]} ∧ #defined(div@{module[1:0]})"];
@@ -2643,6 +2671,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) // (67) ⊑ floor_div@{module[1:0]} ∧ #defined(floor_div@{module[1:0]})"];
@@ -2665,6 +2695,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) % (67) ⊑ mod@{module[1:0]} ∧ #defined(mod@{module[1:0]})"];
@@ -2687,6 +2719,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) ** (67) ⊑ pow@{module[1:0]} ∧ #defined(pow@{module[1:0]})"];
@@ -2709,6 +2743,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) << (67) ⊑ shl@{module[1:0]} ∧ #defined(shl@{module[1:0]})"];
@@ -2731,6 +2767,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) >> (67) ⊑ shr@{module[1:0]} ∧ #defined(shr@{module[1:0]})"];
@@ -2753,6 +2791,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) | (67) ⊑ bit_or@{module[1:0]} ∧ #defined(bit_or@{module[1:0]})"];
@@ -2775,6 +2815,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) ^ (67) ⊑ bit_xor@{module[1:0]} ∧ #defined(bit_xor@{module[1:0]})"];
@@ -2797,6 +2839,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) & (67) ⊑ bit_and@{module[1:0]} ∧ #defined(bit_and@{module[1:0]})"];
@@ -2819,6 +2863,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) and (67) ⊑ and_@{module[1:0]} ∧ #defined(and_@{module[1:0]})"];
@@ -2841,6 +2887,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) or (67) ⊑ or_@{module[1:0]} ∧ #defined(or_@{module[1:0]})"];
@@ -2863,6 +2911,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) == (67) ⊑ eq@{module[1:0]} ∧ #defined(eq@{module[1:0]})"];
@@ -2885,6 +2935,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) != (67) ⊑ not_eq@{module[1:0]} ∧ #defined(not_eq@{module[1:0]})"];
@@ -2907,6 +2959,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) < (67) ⊑ lt@{module[1:0]} ∧ #defined(lt@{module[1:0]})"];
@@ -2929,6 +2983,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) > (67) ⊑ gt@{module[1:0]} ∧ #defined(gt@{module[1:0]})"];
@@ -2951,6 +3007,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) <= (67) ⊑ lte@{module[1:0]} ∧ #defined(lte@{module[1:0]})"];
@@ -2973,6 +3031,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) >= (67) ⊑ gte@{module[1:0]} ∧ #defined(gte@{module[1:0]})"];
@@ -2995,6 +3055,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) is (67) ⊑ is_@{module[1:0]} ∧ #defined(is_@{module[1:0]})"];
@@ -3017,6 +3079,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) is not (67) ⊑ is_not@{module[1:0]} ∧ #defined(is_not@{module[1:0]})"];
@@ -3039,6 +3103,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) in (67) ⊑ in_@{module[1:0]} ∧ #defined(in_@{module[1:0]})"];
@@ -3061,6 +3127,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="(42) not in (67) ⊑ not_in@{module[1:0]} ∧ #defined(not_in@{module[1:0]})"];
@@ -3087,6 +3155,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="4 ⊑ a@{module[1:0]} ∧ #defined(a@{module[1:0]})"];
@@ -3123,6 +3193,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="True ⊑ x@{module[1:0]} ∧ #defined(x@{module[1:0]})"];
@@ -3171,6 +3243,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="0 ⊑ a@{module[1:0]} ∧ #defined(a@{module[1:0]})"];
@@ -3225,6 +3299,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:4)" [label="#function(identifier=module[add_two@{1:4}], async=false) ⊑ add_two@{module[1:4]} ∧ #defined(add_two@{module[1:4]})"];
@@ -3241,6 +3317,8 @@ mod tests {
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
+        specification "module[add_two@{1:4}]":
+            {arguments: {a@{module[1:12]}: #annotated(int@{module[1:15]}), b@{module[1:20]}: #annotated(int@{module[1:23]})}, return_type: {}, exceptions: {}}
         digraph "module[add_two@{1:4}]" {
             "Constraint(location=2:4)" [label="#return((a@{module[add_two@{1:4}][2:11]}) + (b@{module[add_two@{1:4}][2:15]}))"];
             "Constraint(location=2:11)" [label="a@{module[add_two@{1:4}][1:12]} ⊑ a@{module[add_two@{1:4}][2:11]} ∧ b@{module[add_two@{1:4}][1:20]} ⊑ b@{module[add_two@{1:4}][2:15]}"];
@@ -3273,6 +3351,8 @@ mod tests {
             "Module(builtins)" -> "Module(module)";
             "Module(module)" -> "Exit";
         }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:4)" [label="#function(identifier=module[foo@{1:4}], async=false) ⊑ foo@{module[1:4]} ∧ #defined(foo@{module[1:4]})"];
@@ -3291,6 +3371,8 @@ mod tests {
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
+        specification "module[foo@{1:4}]":
+            {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module[foo@{1:4}]" {
             "Constraint(location=2:4)" [label="#return(CONST@{module[foo@{1:4}][2:11]})"];
             "Constraint(location=2:11)" [label="CONST@{module[4:0]} ⊑ CONST@{module[foo@{1:4}][2:11]}"];
@@ -3303,7 +3385,7 @@ mod tests {
         }
         "##},
     )]
-    fn test_program_analysis(#[case] source: &str, #[case] expected_dot: &str) {
+    fn test_program_analysis(#[case] source: &str, #[case] expected_constraints: &str) {
         let module_name = Arc::new(QualifiedName::parse("module"));
 
         let module_loader = TestModuleLoader {
@@ -3326,17 +3408,25 @@ mod tests {
         };
         let dependent_graph = analyse_program(&module_loader, std::iter::once(module_name.clone()));
 
-        let mut actual_dot = dependent_graph.dot("DependentGraph");
+        let mut actual_constraints = dependent_graph.dot("DependentGraph");
 
         for program_entities in dependent_graph.nodes.values() {
             for (namespace, constraints) in program_entities {
                 if *namespace.module_name() != module_name {
                     continue;
                 }
-                actual_dot.push_str(&constraints.constraint_graph.dot(&namespace.to_string()));
+                actual_constraints.push_str(&format!(
+                    "specification \"{}\":\n    {}\n",
+                    namespace, constraints.specification
+                ));
+                actual_constraints
+                    .push_str(&constraints.constraint_graph.dot(&namespace.to_string()));
             }
         }
 
-        assert_eq!(expected_dot, actual_dot, "{actual_dot}");
+        assert_eq!(
+            expected_constraints, actual_constraints,
+            "{actual_constraints}"
+        );
     }
 }
