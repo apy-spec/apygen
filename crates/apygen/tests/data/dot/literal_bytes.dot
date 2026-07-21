@@ -31,9 +31,9 @@ digraph "DependentGraph" {
 }
 digraph "literal_bytes" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=1:0)" [label="b\"\" ⊑ empty_bytes@{literal_bytes[1:0]} ∧ #defined(empty_bytes@{literal_bytes[1:0]})"];
-    "Constraint(location=2:0)" [label="b\"a\" ⊑ single_bytes@{literal_bytes[2:0]} ∧ #defined(single_bytes@{literal_bytes[2:0]})"];
-    "Constraint(location=3:0)" [label="b\"test\" ⊑ multiple_bytes@{literal_bytes[3:0]} ∧ #defined(multiple_bytes@{literal_bytes[3:0]})"];
+    "Constraint(location=1:0)" [label="b&quot;&quot; ⊑ empty_bytes@{literal_bytes[1:0]} ∧ #defined(empty_bytes@{literal_bytes[1:0]})"];
+    "Constraint(location=2:0)" [label="b&quot;a&quot; ⊑ single_bytes@{literal_bytes[2:0]} ∧ #defined(single_bytes@{literal_bytes[2:0]})"];
+    "Constraint(location=3:0)" [label="b&quot;test&quot; ⊑ multiple_bytes@{literal_bytes[3:0]} ∧ #defined(multiple_bytes@{literal_bytes[3:0]})"];
     "Constraint(location=5:0)" [label="(bool@{literal_bytes[5:19]})(empty_bytes@{literal_bytes[5:24]}) ⊑ bool_empty_bytes@{literal_bytes[5:0]} ∧ #defined(bool_empty_bytes@{literal_bytes[5:0]})"];
     "Constraint(location=5:19)" [label="bool@{builtins[970:6]} ⊑ bool@{literal_bytes[5:19]} ∧ empty_bytes@{literal_bytes[1:0]} ⊑ empty_bytes@{literal_bytes[5:24]}"];
     "Constraint(location=6:0)" [label="(bool@{literal_bytes[6:20]})(single_bytes@{literal_bytes[6:25]}) ⊑ bool_single_bytes@{literal_bytes[6:0]} ∧ #defined(bool_single_bytes@{literal_bytes[6:0]})"];

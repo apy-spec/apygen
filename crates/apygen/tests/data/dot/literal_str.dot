@@ -31,9 +31,9 @@ digraph "DependentGraph" {
 }
 digraph "literal_str" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=1:0)" [label="\"\" ⊑ empty_str@{literal_str[1:0]} ∧ #defined(empty_str@{literal_str[1:0]})"];
-    "Constraint(location=2:0)" [label="\"a\" ⊑ single_str@{literal_str[2:0]} ∧ #defined(single_str@{literal_str[2:0]})"];
-    "Constraint(location=3:0)" [label="\"test\" ⊑ multiple_str@{literal_str[3:0]} ∧ #defined(multiple_str@{literal_str[3:0]})"];
+    "Constraint(location=1:0)" [label="&quot;&quot; ⊑ empty_str@{literal_str[1:0]} ∧ #defined(empty_str@{literal_str[1:0]})"];
+    "Constraint(location=2:0)" [label="&quot;a&quot; ⊑ single_str@{literal_str[2:0]} ∧ #defined(single_str@{literal_str[2:0]})"];
+    "Constraint(location=3:0)" [label="&quot;test&quot; ⊑ multiple_str@{literal_str[3:0]} ∧ #defined(multiple_str@{literal_str[3:0]})"];
     "Constraint(location=5:0)" [label="(bool@{literal_str[5:17]})(empty_str@{literal_str[5:22]}) ⊑ bool_empty_str@{literal_str[5:0]} ∧ #defined(bool_empty_str@{literal_str[5:0]})"];
     "Constraint(location=5:17)" [label="bool@{builtins[970:6]} ⊑ bool@{literal_str[5:17]} ∧ empty_str@{literal_str[1:0]} ⊑ empty_str@{literal_str[5:22]}"];
     "Constraint(location=6:0)" [label="(bool@{literal_str[6:18]})(single_str@{literal_str[6:23]}) ⊑ bool_single_str@{literal_str[6:0]} ∧ #defined(bool_single_str@{literal_str[6:0]})"];
