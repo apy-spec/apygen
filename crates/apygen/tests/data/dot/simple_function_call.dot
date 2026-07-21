@@ -54,7 +54,7 @@ digraph "simple_function_call" {
     "Constraint(location=6:9)" -> "Constraint(location=6:0)" [label="#succeed((add_two@{simple_function_call[6:9]})(a@{simple_function_call[6:17]}, b@{simple_function_call[6:20]}))"];
     "Constraint(location=6:9)" -> "ExceptionExit" [label="#raise((add_two@{simple_function_call[6:9]})(a@{simple_function_call[6:17]}, b@{simple_function_call[6:20]}))"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }
 digraph "simple_function_call[add_two@{1:4}]" {
     "Constraint(location=2:4)" [label="#return((x@{simple_function_call[add_two@{1:4}][2:11]}) + (y@{simple_function_call[add_two@{1:4}][2:15]}))"];
@@ -66,5 +66,5 @@ digraph "simple_function_call[add_two@{1:4}]" {
     "Constraint(location=2:4)" -> "TypeExit";
     "Constraint(location=2:11)" -> "Constraint(location=2:4)";
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }

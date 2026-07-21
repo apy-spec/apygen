@@ -104,5 +104,5 @@ digraph "literal_boolean" {
     "Constraint(location=24:0)" -> "ExceptionExit" [label="#raise((False) + (False))"];
     "Constraint(location=25:0)" -> "Constraint()";
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }

@@ -118,5 +118,5 @@ digraph "int_conversion" {
     "Constraint(location=15:4)" -> "Constraint(location=15:0)" [label="#succeed((bool@{int_conversion[15:4]})(y@{int_conversion[15:9]}))"];
     "Constraint(location=15:4)" -> "ExceptionExit" [label="#raise((bool@{int_conversion[15:4]})(y@{int_conversion[15:9]}))"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }

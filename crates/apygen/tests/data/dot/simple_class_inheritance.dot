@@ -76,7 +76,7 @@ digraph "simple_class_inheritance" {
     "Constraint(location=26:10)" -> "Constraint(location=26:0)" [label="#succeed((point@{simple_class_inheritance[26:10]}).z)"];
     "Constraint(location=26:10)" -> "ExceptionExit" [label="#raise((point@{simple_class_inheritance[26:10]}).z)"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }
 digraph "simple_class_inheritance[Point2D@{1:6}]" {
     "Constraint()" [label="#return(None)"];
@@ -89,7 +89,7 @@ digraph "simple_class_inheritance[Point2D@{1:6}]" {
     "Constraint(location=5:16)" -> "Constraint(location=5:8)" [label="#succeed(#function(identifier=simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}], async=false))"];
     "Constraint(location=5:16)" -> "ExceptionExit" [label="#raise(#function(identifier=simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}], async=false))"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }
 digraph "simple_class_inheritance[Point3D@{10:6}]" {
     "Constraint()" [label="#return(None)"];
@@ -102,7 +102,7 @@ digraph "simple_class_inheritance[Point3D@{10:6}]" {
     "Constraint(location=13:16)" -> "Constraint(location=13:8)" [label="#succeed(#function(identifier=simple_class_inheritance[Point3D@{10:6}][__init__@{13:8}], async=false))"];
     "Constraint(location=13:16)" -> "ExceptionExit" [label="#raise(#function(identifier=simple_class_inheritance[Point3D@{10:6}][__init__@{13:8}], async=false))"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }
 digraph "simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}]" {
     "Constraint()" [label="#return(None)"];
@@ -115,7 +115,7 @@ digraph "simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}]" {
     "Constraint(location=6:17)" -> "ExceptionExit" [label="#raise(y@{simple_class_inheritance[Point2D@{1:6}][__init__@{5:8}][5:31]})"];
     "Constraint(location=7:17)" -> "Constraint()";
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }
 digraph "simple_class_inheritance[Point3D@{10:6}][__init__@{13:8}]" {
     "Constraint()" [label="#return(None)"];
@@ -125,5 +125,5 @@ digraph "simple_class_inheritance[Point3D@{10:6}][__init__@{13:8}]" {
     "Constraint()" -> "TypeExit";
     "Constraint(location=15:17)" -> "Constraint()";
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }

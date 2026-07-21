@@ -238,5 +238,5 @@ digraph "big_int_literal_inference" {
     "Constraint(location=49:28)" -> "Constraint(location=49:0)" [label="#succeed((assign@{big_int_literal_inference[49:28]}) ^ (static_bitwise_xor@{big_int_literal_inference[49:37]}))"];
     "Constraint(location=49:28)" -> "ExceptionExit" [label="#raise((assign@{big_int_literal_inference[49:28]}) ^ (static_bitwise_xor@{big_int_literal_inference[49:37]}))"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }

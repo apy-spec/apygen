@@ -215,5 +215,5 @@ digraph "literal_bytes" {
     "Constraint(location=56:26)" -> "Constraint(location=56:0)" [label="#succeed((2) * (multiple_bytes@{literal_bytes[56:30]}))"];
     "Constraint(location=56:26)" -> "ExceptionExit" [label="#raise((2) * (multiple_bytes@{literal_bytes[56:30]}))"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }

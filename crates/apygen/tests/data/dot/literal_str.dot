@@ -215,5 +215,5 @@ digraph "literal_str" {
     "Constraint(location=56:24)" -> "Constraint(location=56:0)" [label="#succeed((2) * (multiple_str@{literal_str[56:28]}))"];
     "Constraint(location=56:24)" -> "ExceptionExit" [label="#raise((2) * (multiple_str@{literal_str[56:28]}))"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }

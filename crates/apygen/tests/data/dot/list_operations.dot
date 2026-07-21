@@ -48,5 +48,5 @@ digraph "list_operations" {
     "Constraint(location=4:9)" -> "Constraint(location=4:0)" [label="#succeed((ls@{list_operations[4:9]})[1])"];
     "Constraint(location=4:9)" -> "ExceptionExit" [label="#raise((ls@{list_operations[4:9]})[1])"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }

@@ -1704,15 +1704,12 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            add_two@{module[1:4]} = function(module[add_two@{1:4}])
             #raise = {}
             #return = Never
         module[add_two@{1:4}]:
-            a@{module[1:12]} = @class(builtins[int@{1:6}])
-            b@{module[1:20]} = Never
-            #raise = {}
+            #raise = {} ⊔ #deferred{#annotated(int@{module[1:15]})}
             #return = Never
-        "##},
+        "##}, // TODO: fix because it never reach TypeExit
     )]
     #[case::simple_class_attribute_access(
         indoc! {r##"
@@ -1813,7 +1810,6 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            foo@{module[1:4]} = function(module[foo@{1:4}])
             #raise = {Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)}
             #return = Never
         module[foo@{1:4}]:

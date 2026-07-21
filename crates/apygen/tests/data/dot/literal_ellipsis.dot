@@ -51,5 +51,5 @@ digraph "literal_ellipsis" {
     "Constraint(location=14:4)" -> "Constraint(location=20:4)" [label="#succeed(@(...))"];
     "Constraint(location=20:4)" -> "Constraint()";
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }

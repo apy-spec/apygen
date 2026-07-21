@@ -54,7 +54,7 @@ digraph "overloaded_function" {
     "Constraint(location=12:7)" -> "Constraint(location=12:4)" [label="#succeed(#function(identifier=overloaded_function[add@{12:4}], async=false))"];
     "Constraint(location=12:7)" -> "ExceptionExit" [label="#raise(#function(identifier=overloaded_function[add@{12:4}], async=false))"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }
 digraph "overloaded_function[add@{5:4}]" {
     "Constraint()" [label="#return(None)"];
@@ -78,5 +78,5 @@ digraph "overloaded_function[add@{12:4}]" {
     "Constraint(location=13:4)" -> "TypeExit";
     "Constraint(location=13:11)" -> "Constraint(location=13:4)";
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }

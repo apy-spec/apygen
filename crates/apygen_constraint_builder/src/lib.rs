@@ -2014,7 +2014,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                         guards.clone(),
                     );
                     target_abstract_environment.edges.insert(
-                        (ConstraintNode::ExceptionExit, ConstraintNode::TypeExit),
+                        (ConstraintNode::ExceptionExit, ConstraintNode::Exit),
                         imbl::OrdSet::default(),
                     );
                 }
@@ -2385,7 +2385,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:7)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2410,7 +2410,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:22)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2438,7 +2438,7 @@ mod tests {
             "Constraint(location=1:7)" -> "ExceptionExit" [label="#raise(#import(some_module.submodule))"];
             "Constraint(location=1:19)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2472,7 +2472,7 @@ mod tests {
             "Constraint(location=1:20)" -> "ExceptionExit" [label="#raise(#import(some_module.submodule))"];
             "Constraint(location=1:32)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2503,7 +2503,7 @@ mod tests {
             "Constraint(location=1:7)" -> "ExceptionExit" [label="#raise(#import(another_module))"];
             "Constraint(location=1:20)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2534,7 +2534,7 @@ mod tests {
             "Constraint(location=1:22)" -> "ExceptionExit" [label="#raise(#import(another_module))"];
             "Constraint(location=1:45)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2596,7 +2596,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2618,7 +2618,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2640,7 +2640,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2662,7 +2662,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2684,7 +2684,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2706,7 +2706,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2728,7 +2728,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2750,7 +2750,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2772,7 +2772,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2794,7 +2794,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2816,7 +2816,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2838,7 +2838,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2860,7 +2860,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2882,7 +2882,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2904,7 +2904,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2926,7 +2926,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2948,7 +2948,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2970,7 +2970,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -2992,7 +2992,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -3014,7 +3014,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -3036,7 +3036,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -3058,7 +3058,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -3080,7 +3080,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -3102,7 +3102,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -3124,7 +3124,7 @@ mod tests {
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -3155,7 +3155,7 @@ mod tests {
             "Constraint(location=3:4)" -> "Constraint(location=3:0)" [label="#succeed((a@{module[3:4]}) + (a@{module[3:8]}))"];
             "Constraint(location=3:4)" -> "ExceptionExit" [label="#raise((a@{module[3:4]}) + (a@{module[3:8]}))"];
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -3205,7 +3205,7 @@ mod tests {
             "Constraint(location=8:4)" -> "Constraint(location=8:0)" [label="#succeed(a@{module[8:4]})"];
             "Constraint(location=8:4)" -> "ExceptionExit" [label="#raise(a@{module[8:4]})"];
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -3261,7 +3261,7 @@ mod tests {
             "Constraint(location=6:4, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[1:0]})"];
             "Constraint(location=6:4, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -3294,7 +3294,7 @@ mod tests {
             "Constraint(location=4:9)" -> "Constraint(location=4:0)" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
             "Constraint(location=4:9)" -> "ExceptionExit" [label="#raise((add_two@{module[4:9]})(42, 67))"];
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         digraph "module[add_two@{1:4}]" {
             "Constraint(location=2:4)" [label="#return((a@{module[add_two@{1:4}][2:11]}) + (b@{module[add_two@{1:4}][2:15]}))"];
@@ -3306,7 +3306,7 @@ mod tests {
             "Constraint(location=2:4)" -> "TypeExit";
             "Constraint(location=2:11)" -> "Constraint(location=2:4)";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -3344,7 +3344,7 @@ mod tests {
             "Constraint(location=6:9)" -> "Constraint(location=6:0)" [label="#succeed((foo@{module[6:9]})())"];
             "Constraint(location=6:9)" -> "ExceptionExit" [label="#raise((foo@{module[6:9]})())"];
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         digraph "module[foo@{1:4}]" {
             "Constraint(location=2:4)" [label="#return(CONST@{module[foo@{1:4}][2:11]})"];
@@ -3354,7 +3354,7 @@ mod tests {
             "Constraint(location=2:4)" -> "TypeExit";
             "Constraint(location=2:11)" -> "Constraint(location=2:4)";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "TypeExit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]

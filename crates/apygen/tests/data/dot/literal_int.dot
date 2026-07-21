@@ -336,5 +336,5 @@ digraph "literal_int" {
     "Constraint(location=55:27)" -> "Constraint(location=55:0)" [label="#succeed(@(big_int_neg_value@{literal_int[55:28]}))"];
     "Constraint(location=55:27)" -> "ExceptionExit" [label="#raise(@(big_int_neg_value@{literal_int[55:28]}))"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }

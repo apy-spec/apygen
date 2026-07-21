@@ -63,7 +63,7 @@ digraph "simple_class_init" {
     "Constraint(location=15:10)" -> "Constraint(location=15:0)" [label="#succeed((point@{simple_class_init[15:10]}).y)"];
     "Constraint(location=15:10)" -> "ExceptionExit" [label="#raise((point@{simple_class_init[15:10]}).y)"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }
 digraph "simple_class_init[Point@{1:6}]" {
     "Constraint()" [label="#return(None)"];
@@ -76,7 +76,7 @@ digraph "simple_class_init[Point@{1:6}]" {
     "Constraint(location=5:16)" -> "Constraint(location=5:8)" [label="#succeed(#function(identifier=simple_class_init[Point@{1:6}][__init__@{5:8}], async=false))"];
     "Constraint(location=5:16)" -> "ExceptionExit" [label="#raise(#function(identifier=simple_class_init[Point@{1:6}][__init__@{5:8}], async=false))"];
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }
 digraph "simple_class_init[Point@{1:6}][__init__@{5:8}]" {
     "Constraint()" [label="#return(None)"];
@@ -89,5 +89,5 @@ digraph "simple_class_init[Point@{1:6}][__init__@{5:8}]" {
     "Constraint(location=6:17)" -> "ExceptionExit" [label="#raise(y@{simple_class_init[Point@{1:6}][__init__@{5:8}][5:31]})"];
     "Constraint(location=7:17)" -> "Constraint()";
     "TypeExit" -> "Exit";
-    "ExceptionExit" -> "TypeExit";
+    "ExceptionExit" -> "Exit";
 }
