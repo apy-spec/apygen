@@ -10,8 +10,6 @@ apygen_analysis = { workspace = true }
 apygen_finder = { workspace = true }
 apygen_cfg = { workspace = true }
 apygen_constraint_graph = { workspace = true }
-apygen_identifiers = { workspace = true }
-apygen_primitives = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }
 imbl = { workspace = true }

@@ -2,8 +2,6 @@ pub use apygen_analysis as analysis;
 pub use apygen_cfg as cfg;
 pub use apygen_constraint_graph as constraint_graph;
 pub use apygen_finder as finder;
-pub use apygen_identifiers as identifiers;
-pub use apygen_primitives as primitives;
 
 use crate::analysis::lattice::{Join, OrdJoin};
 use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
@@ -19,20 +17,20 @@ use crate::constraint_graph::expressions::{
     ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionImport, ExpressionOverride,
     ExpressionSubscript, ExpressionUnary, ExpressionVariable, KeywordArgument, UnaryOperator,
 };
+use crate::constraint_graph::identifiers::{
+    Identifier, Location, ModuleName, NamedQualifiedLocation, Namespace, OneOrMany,
+    ParseIdentifierError, QualifiedName, VariableName,
+};
+use crate::constraint_graph::primitives::literals::{
+    LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
+};
+use crate::constraint_graph::primitives::{BigInt, Complex64, Int, Num};
 use crate::constraint_graph::{
     Constraint, ConstraintGraph, ConstraintNode, Guard, IncludeConstraint, ModuleDependentGraph,
     ModuleNode, ProgramEntityConstraints, ProgramEntitySpecification, ReturnConstraint,
 };
 use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
 use crate::finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
-use crate::identifiers::{
-    Identifier, Location, ModuleName, NamedQualifiedLocation, Namespace, OneOrMany,
-    ParseIdentifierError, QualifiedName, VariableName,
-};
-use crate::primitives::literals::{
-    LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
-};
-use crate::primitives::{BigInt, Complex64, Int, Num};
 
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelBridge;
