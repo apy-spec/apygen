@@ -1281,11 +1281,15 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq
                         new_abstract_state.get_or_insert_default(self.namespace.clone());
 
                     if let Some(type_eval) = eval {
-                        evaluation_state
+                        evaluation_state.raised_exceptions.value = evaluation_state
                             .raised_exceptions
                             .value
-                            .exceptions
-                            .extend(type_eval.effects.exceptions.exceptions)
+                            .join(&type_eval.effects.exceptions);
+                    } else {
+                        evaluation_state
+                            .raised_exceptions
+                            .expressions
+                            .insert(expression.clone());
                     }
                     should_ignore = false;
                 }
@@ -1706,7 +1710,7 @@ mod tests {
         module:
             add_two@{module[1:4]} = function(module[add_two@{1:4}])
             result@{module[4:0]} = Never ⊔ #deferred{(add_two@{module[4:9]})(42, 67)}
-            #raise = {}
+            #raise = {} ⊔ #deferred{(add_two@{module[4:9]})(42, 67)}
             #return = None
         module[add_two@{1:4}]:
             a@{module[add_two@{1:4}][1:12]} = @class(builtins[int@{1:6}])
