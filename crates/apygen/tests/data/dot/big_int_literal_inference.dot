@@ -8,11 +8,8 @@ digraph "DependentGraph" {
     "Module(types)";
     "Entry" -> "Module(builtins)";
     "Module(_ast)" -> "Module(builtins)";
-    "Module(_ast)" -> "Exit";
     "Module(_sitebuiltins)" -> "Module(builtins)";
-    "Module(_sitebuiltins)" -> "Exit";
     "Module(_typeshed)" -> "Module(builtins)";
-    "Module(_typeshed)" -> "Exit";
     "Module(big_int_literal_inference)" -> "Exit";
     "Module(builtins)" -> "Module(_ast)";
     "Module(builtins)" -> "Module(_sitebuiltins)";
@@ -27,7 +24,6 @@ digraph "DependentGraph" {
     "Module(sys)" -> "Module(sys)";
     "Module(sys)" -> "Module(types)";
     "Module(types)" -> "Module(builtins)";
-    "Module(types)" -> "Exit";
 }
 digraph "big_int_literal_inference" {
     "Constraint()" [label="#return(None)"];

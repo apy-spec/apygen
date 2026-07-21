@@ -2255,16 +2255,23 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
     );
 
     let builtins_module_analysis = &builtins_cfg_analyses[&builtins_entity];
+    let imports = builtins_cfg_analyses
+        .values()
+        .flat_map(|cfg_analysis| cfg_analysis.environment.imports.iter().cloned())
+        .collect::<BTreeSet<_>>();
 
     dependent_graph.add_dependent(ModuleNode::Entry, builtins_module_node.clone());
     dependent_graph.add_dependent(builtins_module_node.clone(), ModuleNode::Exit);
+    for import in &imports {
+        dependent_graph.add_dependent(
+            ModuleNode::Module(import.clone()),
+            builtins_module_node.clone(),
+        );
+    }
 
     let mut worklist = initial_modules
-        .chain(
-            builtins_cfg_analyses
-                .values()
-                .flat_map(|cfg_analysis| cfg_analysis.environment.imports.iter().cloned()),
-        )
+        .chain(imports)
+        .filter(|import| *import != builtins_module_name)
         .collect::<BTreeSet<_>>();
 
     while !worklist.is_empty() {
@@ -2305,17 +2312,16 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
 
         worklist = BTreeSet::new();
         for (module_node, constraints, imports) in analysed_modules {
-            if module_node == builtins_module_node {
-                continue;
-            }
-
             dependent_graph.add_dependent(builtins_module_node.clone(), module_node.clone());
+            dependent_graph.remove_dependent(builtins_module_node.clone(), ModuleNode::Exit);
             if !dependent_graph.dependents.contains_key(&module_node) {
                 dependent_graph.add_dependent(module_node.clone(), ModuleNode::Exit);
-                dependent_graph.remove_dependent(builtins_module_node.clone(), ModuleNode::Exit);
             }
 
             for import in imports {
+                if import == builtins_module_name {
+                    continue;
+                }
                 let import_module_node = ModuleNode::Module(import.clone());
 
                 dependent_graph.add_dependent(import_module_node.clone(), module_node.clone());
@@ -2330,14 +2336,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         }
     }
 
-    let (constraints, imports) = create_constraints(builtins_cfg_analyses);
-
-    for import in imports {
-        dependent_graph.add_dependent(
-            ModuleNode::Module(import.clone()),
-            builtins_module_node.clone(),
-        );
-    }
+    let (constraints, _) = create_constraints(builtins_cfg_analyses);
 
     dependent_graph.insert(builtins_module_node, constraints);
 
