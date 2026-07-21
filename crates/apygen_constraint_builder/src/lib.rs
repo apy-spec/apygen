@@ -7,10 +7,7 @@ pub use apygen_primitives as primitives;
 
 use crate::analysis::lattice::{Join, OrdJoin};
 use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
-use crate::cfg::ast::{self, Number};
-use crate::cfg::ast::{
-    Expr, ExprAttribute, ExprList, ExprName, ExprStarred, ExprSubscript, ExprTuple,
-};
+use crate::cfg::ast;
 use crate::cfg::build_cfg;
 use crate::cfg::convert_text_size_to_location;
 use crate::cfg::parser::parse_module;
@@ -23,9 +20,8 @@ use crate::constraint_graph::expressions::{
     ExpressionSubscript, ExpressionUnary, ExpressionVariable, KeywordArgument, UnaryOperator,
 };
 use crate::constraint_graph::{
-    AbstractEnvironmentSpecification, Constraint, ConstraintGraph, ConstraintNode, Guard,
-    IncludeConstraint, ModuleDependentGraph, ModuleNode, ProgramEntityConstraints,
-    ReturnConstraint,
+    Constraint, ConstraintGraph, ConstraintNode, Guard, IncludeConstraint, ModuleDependentGraph,
+    ModuleNode, ProgramEntityConstraints, ProgramEntitySpecification, ReturnConstraint,
 };
 use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
 use crate::finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
@@ -64,27 +60,27 @@ pub enum AssignmentTarget<'e> {
     },
     Subscript {
         target: Box<AssignmentTarget<'e>>,
-        slice: &'e Expr,
+        slice: &'e ast::Expr,
     },
     Starred(Box<AssignmentTarget<'e>>),
     Tuple(Vec<AssignmentTarget<'e>>),
     List(Vec<AssignmentTarget<'e>>),
 }
 
-impl TryFrom<&ExprName> for AssignmentTarget<'_> {
+impl TryFrom<&ast::ExprName> for AssignmentTarget<'_> {
     type Error = FromAssignmentTargetError;
 
-    fn try_from(value: &ExprName) -> Result<Self, Self::Error> {
+    fn try_from(value: &ast::ExprName) -> Result<Self, Self::Error> {
         Ok(AssignmentTarget::Name(Identifier::try_parse(
             value.id.as_ref(),
         )?))
     }
 }
 
-impl<'e> TryFrom<&'e ExprAttribute> for AssignmentTarget<'e> {
+impl<'e> TryFrom<&'e ast::ExprAttribute> for AssignmentTarget<'e> {
     type Error = FromAssignmentTargetError;
 
-    fn try_from(value: &'e ExprAttribute) -> Result<Self, Self::Error> {
+    fn try_from(value: &'e ast::ExprAttribute) -> Result<Self, Self::Error> {
         Ok(AssignmentTarget::Attribute {
             attr: Identifier::try_parse(value.attr.id.as_ref())?,
             target: Box::new(AssignmentTarget::try_from(value.value.as_ref())?),
@@ -92,10 +88,10 @@ impl<'e> TryFrom<&'e ExprAttribute> for AssignmentTarget<'e> {
     }
 }
 
-impl<'e> TryFrom<&'e ExprSubscript> for AssignmentTarget<'e> {
+impl<'e> TryFrom<&'e ast::ExprSubscript> for AssignmentTarget<'e> {
     type Error = FromAssignmentTargetError;
 
-    fn try_from(value: &'e ExprSubscript) -> Result<Self, Self::Error> {
+    fn try_from(value: &'e ast::ExprSubscript) -> Result<Self, Self::Error> {
         Ok(AssignmentTarget::Subscript {
             slice: &value.slice,
             target: Box::new(AssignmentTarget::try_from(value.value.as_ref())?),
@@ -103,20 +99,20 @@ impl<'e> TryFrom<&'e ExprSubscript> for AssignmentTarget<'e> {
     }
 }
 
-impl<'e> TryFrom<&'e ExprStarred> for AssignmentTarget<'e> {
+impl<'e> TryFrom<&'e ast::ExprStarred> for AssignmentTarget<'e> {
     type Error = FromAssignmentTargetError;
 
-    fn try_from(value: &'e ExprStarred) -> Result<Self, Self::Error> {
+    fn try_from(value: &'e ast::ExprStarred) -> Result<Self, Self::Error> {
         Ok(AssignmentTarget::Starred(Box::new(
             AssignmentTarget::try_from(value.value.as_ref())?,
         )))
     }
 }
 
-impl<'e> TryFrom<&'e ExprTuple> for AssignmentTarget<'e> {
+impl<'e> TryFrom<&'e ast::ExprTuple> for AssignmentTarget<'e> {
     type Error = FromAssignmentTargetError;
 
-    fn try_from(value: &'e ExprTuple) -> Result<Self, Self::Error> {
+    fn try_from(value: &'e ast::ExprTuple) -> Result<Self, Self::Error> {
         Ok(AssignmentTarget::Tuple(
             value
                 .elts
@@ -127,10 +123,10 @@ impl<'e> TryFrom<&'e ExprTuple> for AssignmentTarget<'e> {
     }
 }
 
-impl<'e> TryFrom<&'e ExprList> for AssignmentTarget<'e> {
+impl<'e> TryFrom<&'e ast::ExprList> for AssignmentTarget<'e> {
     type Error = FromAssignmentTargetError;
 
-    fn try_from(value: &'e ExprList) -> Result<Self, Self::Error> {
+    fn try_from(value: &'e ast::ExprList) -> Result<Self, Self::Error> {
         Ok(AssignmentTarget::List(
             value
                 .elts
@@ -141,17 +137,17 @@ impl<'e> TryFrom<&'e ExprList> for AssignmentTarget<'e> {
     }
 }
 
-impl<'e> TryFrom<&'e Expr> for AssignmentTarget<'e> {
+impl<'e> TryFrom<&'e ast::Expr> for AssignmentTarget<'e> {
     type Error = FromAssignmentTargetError;
 
-    fn try_from(value: &'e Expr) -> Result<Self, Self::Error> {
+    fn try_from(value: &'e ast::Expr) -> Result<Self, Self::Error> {
         match value {
-            Expr::Name(expr_name) => AssignmentTarget::try_from(expr_name),
-            Expr::Attribute(expr_attribute) => AssignmentTarget::try_from(expr_attribute),
-            Expr::Subscript(expr_subscript) => AssignmentTarget::try_from(expr_subscript),
-            Expr::Starred(expr_starred) => AssignmentTarget::try_from(expr_starred),
-            Expr::Tuple(expr_tuple) => AssignmentTarget::try_from(expr_tuple),
-            Expr::List(expr_list) => AssignmentTarget::try_from(expr_list),
+            ast::Expr::Name(expr_name) => AssignmentTarget::try_from(expr_name),
+            ast::Expr::Attribute(expr_attribute) => AssignmentTarget::try_from(expr_attribute),
+            ast::Expr::Subscript(expr_subscript) => AssignmentTarget::try_from(expr_subscript),
+            ast::Expr::Starred(expr_starred) => AssignmentTarget::try_from(expr_starred),
+            ast::Expr::Tuple(expr_tuple) => AssignmentTarget::try_from(expr_tuple),
+            ast::Expr::List(expr_list) => AssignmentTarget::try_from(expr_list),
             _ => Err(FromAssignmentTargetError::InvalidTarget),
         }
     }
@@ -186,13 +182,13 @@ impl Display for ProgramEntity {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct SubProgramEntityContext {
-    pub specification: AbstractEnvironmentSpecification,
+    pub specification: ProgramEntitySpecification,
     pub variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
 }
 
 impl SubProgramEntityContext {
     pub fn new(
-        specification: AbstractEnvironmentSpecification,
+        specification: ProgramEntitySpecification,
         variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
     ) -> Self {
         Self {
@@ -298,16 +294,10 @@ impl<T> ExpressionEval<T> {
 
 #[derive(Debug, Error)]
 pub enum ConstraintsBuilderError {
-    #[error("`{name}` at program point `{program_point}` is an invalid Python module")]
-    InvalidModule {
-        program_point: ProgramPoint,
-        name: String,
-    },
-    #[error("`{name}` at program point `{program_point}` is an invalid Python identifier")]
-    InvalidIdentifier {
-        program_point: ProgramPoint,
-        name: String,
-    },
+    #[error("`{name}` at location `{location}` is an invalid Python module")]
+    InvalidModule { name: String, location: Location },
+    #[error("`{name}` at location `{location}` is an invalid Python identifier")]
+    InvalidIdentifier { name: String, location: Location },
     #[error("program point `{program_point}` is invalid")]
     InvalidProgramPoint { program_point: ProgramPoint },
     #[error("invalid bool expression `{expr:?}`")]
@@ -722,28 +712,26 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn gen_module_name(
         &self,
-        program_point: ProgramPoint,
-        name: &str,
+        identifier: &ast::Identifier,
     ) -> Result<ModuleName, ConstraintsBuilderError> {
-        match QualifiedName::try_from(name) {
+        match QualifiedName::try_from(identifier.id.as_str()) {
             Ok(module_name) => Ok(Arc::new(module_name)),
             Err(_) => Err(ConstraintsBuilderError::InvalidModule {
-                program_point,
-                name: name.to_owned(),
+                location: self.gen_location(&identifier),
+                name: identifier.id.to_owned(),
             }),
         }
     }
 
     pub fn gen_variable_name(
         &self,
-        program_point: ProgramPoint,
-        name: &str,
+        identifier: &ast::Identifier,
     ) -> Result<VariableName, ConstraintsBuilderError> {
-        match Identifier::try_from(name) {
-            Ok(module_name) => Ok(Arc::new(module_name)),
+        match Identifier::try_from(identifier.id.as_str()) {
+            Ok(identifier_name) => Ok(Arc::new(identifier_name)),
             Err(_) => Err(ConstraintsBuilderError::InvalidIdentifier {
-                program_point,
-                name: name.to_owned(),
+                location: self.gen_location(&identifier),
+                name: identifier.id.to_owned(),
             }),
         }
     }
@@ -756,22 +744,17 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_parameter(
         &self,
-        program_point: ProgramPoint,
         parameter: &ast::Parameter,
     ) -> Result<(ExpressionVariable, Option<ExpressionEval<Expression>>), ConstraintsBuilderError>
     {
-        let parameter_name = self.gen_variable_name(program_point, &parameter.name)?;
+        let parameter_name = self.gen_variable_name(&parameter.name)?;
 
         let annotation = if let Some(annotation) = &parameter.annotation {
             Some(
-                self.evaluate_expr(
-                    &ProgramEntityAnalysisState::default(),
-                    program_point,
-                    &annotation,
-                )?
-                .map(|expression| {
-                    Expression::Annotated(ExpressionAnnotated::new(Arc::new(expression)))
-                }),
+                self.evaluate_expr(&ProgramEntityAnalysisState::default(), &annotation)?
+                    .map(|expression| {
+                        Expression::Annotated(ExpressionAnnotated::new(Arc::new(expression)))
+                    }),
             )
         } else {
             None
@@ -789,19 +772,15 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_parameter_with_default(
         &self,
-        program_point: ProgramPoint,
         parameter_with_default: &ast::ParameterWithDefault,
     ) -> Result<(ExpressionVariable, Option<ExpressionEval<Expression>>), ConstraintsBuilderError>
     {
         let (parameter_name, annotation_eval_option) =
-            self.evaluate_parameter(program_point, &parameter_with_default.parameter)?;
+            self.evaluate_parameter(&parameter_with_default.parameter)?;
 
         let parameter_eval_option = if let Some(default) = &parameter_with_default.default {
-            let default_eval = self.evaluate_expr(
-                &ProgramEntityAnalysisState::default(),
-                program_point,
-                &default,
-            )?;
+            let default_eval =
+                self.evaluate_expr(&ProgramEntityAnalysisState::default(), &default)?;
 
             if let Some(annotation_eval) = annotation_eval_option {
                 Some(annotation_eval.merge(default_eval, |annotation, default| {
@@ -822,7 +801,6 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn gen_parameters(
         &self,
-        program_point: ProgramPoint,
         parameters: &ast::Parameters,
     ) -> Result<
         ExpressionEval<imbl::OrdMap<ExpressionVariable, imbl::OrdSet<Expression>>>,
@@ -831,23 +809,23 @@ impl<'a> ConstraintsBuilder<'a> {
         let positional_only_parameters = parameters
             .posonlyargs
             .iter()
-            .map(|parameter| self.evaluate_parameter_with_default(program_point, &parameter));
+            .map(|parameter| self.evaluate_parameter_with_default(&parameter));
         let positional_or_keyword_parameters = parameters
             .args
             .iter()
-            .map(|parameter| self.evaluate_parameter(program_point, &parameter.parameter));
+            .map(|parameter| self.evaluate_parameter(&parameter.parameter));
         let var_positional_parameters = parameters
             .vararg
             .iter()
-            .map(|parameter| self.evaluate_parameter(program_point, &parameter));
+            .map(|parameter| self.evaluate_parameter(&parameter));
         let keyword_only_parameters = parameters
             .kwonlyargs
             .iter()
-            .map(|parameter| self.evaluate_parameter_with_default(program_point, &parameter));
+            .map(|parameter| self.evaluate_parameter_with_default(&parameter));
         let var_keyword_parameters = parameters
             .kwarg
             .iter()
-            .map(|parameter| self.evaluate_parameter(program_point, &parameter));
+            .map(|parameter| self.evaluate_parameter(&parameter));
 
         let parameter_evals = positional_only_parameters
             .chain(positional_or_keyword_parameters)
@@ -876,13 +854,12 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_bool_op(
         &self,
         namespace: &ProgramEntityAnalysisState,
-        program_point: ProgramPoint,
         expr_bool_op: &ast::ExprBoolOp,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
         let mut values_iter = expr_bool_op.values.iter();
 
         let mut eval = match values_iter.next() {
-            Some(value) => self.evaluate_expr(namespace, program_point, value)?,
+            Some(value) => self.evaluate_expr(namespace, value)?,
             None => {
                 return Err(ConstraintsBuilderError::InvalidExprBoolOp {
                     expr: expr_bool_op.clone(),
@@ -896,16 +873,13 @@ impl<'a> ConstraintsBuilder<'a> {
         };
 
         for value in values_iter {
-            eval = eval.merge(
-                self.evaluate_expr(namespace, program_point, &value)?,
-                |left, right| {
-                    Expression::Binary(ExpressionBinary {
-                        left: Arc::new(left),
-                        operator: operator.clone(),
-                        right: Arc::new(right),
-                    })
-                },
-            )
+            eval = eval.merge(self.evaluate_expr(namespace, &value)?, |left, right| {
+                Expression::Binary(ExpressionBinary {
+                    left: Arc::new(left),
+                    operator: operator.clone(),
+                    right: Arc::new(right),
+                })
+            })
         }
 
         Ok(eval)
@@ -914,11 +888,10 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_bin_op(
         &self,
         namespace: &ProgramEntityAnalysisState,
-        program_point: ProgramPoint,
         expr_bin_op: &ast::ExprBinOp,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let left_eval = self.evaluate_expr(namespace, program_point, &expr_bin_op.left)?;
-        let right_eval = self.evaluate_expr(namespace, program_point, &expr_bin_op.right)?;
+        let left_eval = self.evaluate_expr(namespace, &expr_bin_op.left)?;
+        let right_eval = self.evaluate_expr(namespace, &expr_bin_op.right)?;
 
         let operator = match expr_bin_op.op {
             ast::Operator::Add => BinaryOperator::Add,
@@ -948,10 +921,9 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_unary_op(
         &self,
         namespace: &ProgramEntityAnalysisState,
-        program_point: ProgramPoint,
         expr_unary_op: &ast::ExprUnaryOp,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let operand_eval = self.evaluate_expr(namespace, program_point, &expr_unary_op.operand)?;
+        let operand_eval = self.evaluate_expr(namespace, &expr_unary_op.operand)?;
 
         let operator = match expr_unary_op.op {
             ast::UnaryOp::Invert => UnaryOperator::Invert,
@@ -971,10 +943,9 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_compare(
         &self,
         namespace: &ProgramEntityAnalysisState,
-        program_point: ProgramPoint,
         expr_compare: &ast::ExprCompare,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let mut eval = self.evaluate_expr(namespace, program_point, &expr_compare.left)?;
+        let mut eval = self.evaluate_expr(namespace, &expr_compare.left)?;
 
         if expr_compare.ops.is_empty()
             || expr_compare.comparators.is_empty()
@@ -999,7 +970,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 ast::CmpOp::NotIn => BinaryOperator::NotIn,
             };
 
-            let comparator = self.evaluate_expr(namespace, program_point, comparator)?;
+            let comparator = self.evaluate_expr(namespace, comparator)?;
 
             eval = eval.merge(comparator, |left, right| {
                 Expression::Binary(ExpressionBinary {
@@ -1016,35 +987,32 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_call(
         &self,
         namespace: &ProgramEntityAnalysisState,
-        program_point: ProgramPoint,
         expr_call: &ast::ExprCall,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let mut func_eval = self.evaluate_expr(namespace, program_point, &expr_call.func)?;
+        let mut func_eval = self.evaluate_expr(namespace, &expr_call.func)?;
 
         let mut positional_arguments: imbl::Vector<Arc<Expression>> = imbl::Vector::new();
         for positional_argument in &expr_call.arguments.args {
             positional_arguments.push_back(Arc::new(
-                func_eval.variables.consume(self.evaluate_expr(
-                    namespace,
-                    program_point,
-                    &positional_argument,
-                )?),
+                func_eval
+                    .variables
+                    .consume(self.evaluate_expr(namespace, &positional_argument)?),
             ));
         }
 
         let mut keyword_arguments: imbl::Vector<KeywordArgument> = imbl::Vector::new();
         for keyword_argument in &expr_call.arguments.keywords {
             let keyword_name = match &keyword_argument.arg {
-                Some(identifier) => Some(self.gen_variable_name(program_point, &identifier)?),
+                Some(identifier) => Some(self.gen_variable_name(&identifier)?),
                 None => None,
             };
             keyword_arguments.push_back(KeywordArgument {
                 name: keyword_name,
-                value: Arc::new(func_eval.variables.consume(self.evaluate_expr(
-                    namespace,
-                    program_point,
-                    &keyword_argument.value,
-                )?)),
+                value: Arc::new(
+                    func_eval
+                        .variables
+                        .consume(self.evaluate_expr(namespace, &keyword_argument.value)?),
+                ),
             });
         }
 
@@ -1087,7 +1055,7 @@ impl<'a> ConstraintsBuilder<'a> {
         expr_number_literal: &ast::ExprNumberLiteral,
     ) -> Expression {
         match &expr_number_literal.value {
-            Number::Int(int) => match int.as_i64() {
+            ast::Number::Int(int) => match int.as_i64() {
                 Some(value) => Expression::LiteralInteger(LiteralInt::new(Int::SmallInt(value))),
                 None => Expression::LiteralInteger(LiteralInt::new(Int::BigInt({
                     let base = int.to_string();
@@ -1103,8 +1071,8 @@ impl<'a> ConstraintsBuilder<'a> {
                     }
                 }))),
             },
-            Number::Float(float) => Expression::LiteralFloat(LiteralFloat { value: *float }),
-            Number::Complex { real, imag } => Expression::LiteralComplex(LiteralComplex {
+            ast::Number::Float(float) => Expression::LiteralFloat(LiteralFloat { value: *float }),
+            ast::Number::Complex { real, imag } => Expression::LiteralComplex(LiteralComplex {
                 value: Complex64::new(*real, *imag),
             }),
         }
@@ -1130,11 +1098,10 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_attribute(
         &self,
         namespace: &ProgramEntityAnalysisState,
-        program_point: ProgramPoint,
         expr_attribute: &ast::ExprAttribute,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let value_eval = self.evaluate_expr(namespace, program_point, &expr_attribute.value)?;
-        let attribute = self.gen_variable_name(program_point, &expr_attribute.attr)?;
+        let value_eval = self.evaluate_expr(namespace, &expr_attribute.value)?;
+        let attribute = self.gen_variable_name(&expr_attribute.attr)?;
 
         Ok(value_eval.map(|value| {
             Expression::Attribute(ExpressionAttribute {
@@ -1147,11 +1114,10 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_subscript(
         &self,
         namespace: &ProgramEntityAnalysisState,
-        program_point: ProgramPoint,
         expr_subscript: &ast::ExprSubscript,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let value_eval = self.evaluate_expr(namespace, program_point, &expr_subscript.value)?;
-        let slice_eval = self.evaluate_expr(namespace, program_point, &expr_subscript.slice)?;
+        let value_eval = self.evaluate_expr(namespace, &expr_subscript.value)?;
+        let slice_eval = self.evaluate_expr(namespace, &expr_subscript.slice)?;
 
         Ok(value_eval.merge(slice_eval, |value, slice| {
             Expression::Subscript(ExpressionSubscript {
@@ -1163,11 +1129,18 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_name(
         &self,
-        program_point: ProgramPoint,
         expr_name: &ast::ExprName,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let variable_name = self.gen_variable_name(program_point, &expr_name.id)?;
         let location = self.gen_location(expr_name);
+
+        let Ok(identifier) = Identifier::try_from(expr_name.id.as_str()) else {
+            return Err(ConstraintsBuilderError::InvalidIdentifier {
+                location,
+                name: expr_name.id.to_owned(),
+            });
+        };
+
+        let variable_name = Arc::new(identifier);
 
         Ok(ExpressionEval::new(
             Expression::Variable(ExpressionVariable::new(NamedQualifiedLocation::new(
@@ -1185,21 +1158,16 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr(
         &self,
         namespace: &ProgramEntityAnalysisState,
-        program_point: ProgramPoint,
         expr: &ast::Expr,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
         match expr {
-            ast::Expr::BoolOp(expr_bool_op) => {
-                self.evaluate_expr_bool_op(namespace, program_point, expr_bool_op)
-            }
+            ast::Expr::BoolOp(expr_bool_op) => self.evaluate_expr_bool_op(namespace, expr_bool_op),
             ast::Expr::Named(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
             )),
-            ast::Expr::BinOp(expr_bin_op) => {
-                self.evaluate_expr_bin_op(namespace, program_point, expr_bin_op)
-            }
+            ast::Expr::BinOp(expr_bin_op) => self.evaluate_expr_bin_op(namespace, expr_bin_op),
             ast::Expr::UnaryOp(expr_unary_op) => {
-                self.evaluate_expr_unary_op(namespace, program_point, expr_unary_op)
+                self.evaluate_expr_unary_op(namespace, expr_unary_op)
             }
             ast::Expr::Lambda(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
@@ -1234,12 +1202,8 @@ impl<'a> ConstraintsBuilder<'a> {
             ast::Expr::YieldFrom(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
             )),
-            ast::Expr::Compare(expr_compare) => {
-                self.evaluate_expr_compare(namespace, program_point, expr_compare)
-            }
-            ast::Expr::Call(expr_call) => {
-                self.evaluate_expr_call(namespace, program_point, expr_call)
-            }
+            ast::Expr::Compare(expr_compare) => self.evaluate_expr_compare(namespace, expr_compare),
+            ast::Expr::Call(expr_call) => self.evaluate_expr_call(namespace, expr_call),
             ast::Expr::FString(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
             )),
@@ -1262,15 +1226,15 @@ impl<'a> ConstraintsBuilder<'a> {
                 self.evaluate_expr_ellipsis_literal(),
             )),
             ast::Expr::Attribute(expr_attribute) => {
-                self.evaluate_expr_attribute(namespace, program_point, expr_attribute)
+                self.evaluate_expr_attribute(namespace, expr_attribute)
             }
             ast::Expr::Subscript(expr_subscript) => {
-                self.evaluate_expr_subscript(namespace, program_point, expr_subscript)
+                self.evaluate_expr_subscript(namespace, expr_subscript)
             }
             ast::Expr::Starred(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
             )),
-            ast::Expr::Name(expr_name) => self.evaluate_name(program_point, expr_name),
+            ast::Expr::Name(expr_name) => self.evaluate_name(expr_name),
             ast::Expr::List(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
             )),
@@ -1295,7 +1259,7 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let parameters = self.gen_parameters(ProgramPoint::Entry, &stmt_function_def.parameters)?;
+        let parameters = self.gen_parameters(&stmt_function_def.parameters)?;
 
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
@@ -1305,7 +1269,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let location = self.gen_location(&stmt_function_def.name);
 
-        let variable_name = self.gen_variable_name(program_point, &stmt_function_def.name)?;
+        let variable_name = self.gen_variable_name(&stmt_function_def.name)?;
 
         let function_qualified_location = NamedQualifiedLocation::new(
             variable_name.clone(),
@@ -1330,7 +1294,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 ProgramEntityKind::Function,
             ),
             SubProgramEntityContext::new(
-                AbstractEnvironmentSpecification {
+                ProgramEntitySpecification {
                     arguments: parameters.value,
                     return_type: imbl::OrdSet::default(),
                     exceptions: imbl::OrdSet::default(),
@@ -1353,7 +1317,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let location = self.gen_location(&stmt_class_def.name);
 
-        let variable_name = self.gen_variable_name(program_point, &stmt_class_def.name)?;
+        let variable_name = self.gen_variable_name(&stmt_class_def.name)?;
 
         let class_qualified_location = NamedQualifiedLocation::new(
             variable_name.clone(),
@@ -1377,7 +1341,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 ProgramEntityKind::Class,
             ),
             SubProgramEntityContext::new(
-                AbstractEnvironmentSpecification {
+                ProgramEntitySpecification {
                     arguments: imbl::OrdMap::default(),
                     return_type: imbl::OrdSet::default(),
                     exceptions: imbl::OrdSet::default(),
@@ -1399,7 +1363,7 @@ impl<'a> ConstraintsBuilder<'a> {
             namespace.clone_abstract_environment_or_default(program_point);
 
         let expression = if let Some(value) = &stmt_return.value {
-            let value_eval = self.evaluate_expr(namespace, program_point, value.as_ref())?;
+            let value_eval = self.evaluate_expr(namespace, value.as_ref())?;
 
             self.create_used_variables_constraints(
                 &mut target_abstract_environment,
@@ -1456,13 +1420,13 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let mut current_nodes = imbl::OrdSet::default();
         for alias in &stmt_import.names {
-            let module_name = self.gen_module_name(program_point, &alias.name)?;
+            let module_name = self.gen_module_name(&alias.name)?;
 
             if let Some(as_name) = &alias.asname {
                 self.assign_variable(
                     &mut target_abstract_environment,
                     self.gen_location(as_name),
-                    self.gen_variable_name(program_point, &as_name)?,
+                    self.gen_variable_name(&as_name)?,
                     Arc::new(Expression::Import(ExpressionImport::new(
                         module_name.clone(),
                     ))),
@@ -1563,7 +1527,7 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let eval = self.evaluate_expr(namespace, program_point, &stmt_assign.value)?;
+        let eval = self.evaluate_expr(namespace, &stmt_assign.value)?;
 
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
@@ -1629,7 +1593,7 @@ impl<'a> ConstraintsBuilder<'a> {
             return Ok(target_abstract_environment);
         };
 
-        let eval = self.evaluate_expr(namespace, program_point, value)?;
+        let eval = self.evaluate_expr(namespace, value)?;
 
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
@@ -1667,7 +1631,7 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let condition_eval = self.evaluate_expr(namespace, program_point, &stmt_while.test)?;
+        let condition_eval = self.evaluate_expr(namespace, &stmt_while.test)?;
 
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
@@ -1702,7 +1666,7 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let condition_eval = self.evaluate_expr(namespace, program_point, &stmt_if.test)?;
+        let condition_eval = self.evaluate_expr(namespace, &stmt_if.test)?;
 
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
@@ -1741,7 +1705,7 @@ impl<'a> ConstraintsBuilder<'a> {
             todo!("impossible");
         };
 
-        let condition_eval = self.evaluate_expr(namespace, program_point, &test)?;
+        let condition_eval = self.evaluate_expr(namespace, &test)?;
 
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
@@ -2131,7 +2095,7 @@ pub enum ConstraintsError {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct CfgAnalysis {
-    pub specification: AbstractEnvironmentSpecification,
+    pub specification: ProgramEntitySpecification,
     pub environment: ProgramEntityAbstractEnvironment,
 }
 

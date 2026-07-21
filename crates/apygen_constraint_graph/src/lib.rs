@@ -269,7 +269,7 @@ impl Display for ModuleNode {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
-pub struct AbstractEnvironmentSpecification {
+pub struct ProgramEntitySpecification {
     pub arguments: imbl::OrdMap<ExpressionVariable, imbl::OrdSet<Expression>>,
     pub return_type: imbl::OrdSet<Expression>,
     pub exceptions: imbl::OrdSet<Expression>,
@@ -277,7 +277,7 @@ pub struct AbstractEnvironmentSpecification {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ProgramEntityConstraints {
-    pub specification: AbstractEnvironmentSpecification,
+    pub specification: ProgramEntitySpecification,
     pub constraint_graph: ConstraintGraph,
 }
 
