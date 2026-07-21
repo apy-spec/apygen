@@ -41,10 +41,23 @@ impl<K: Clone + Ord, V: Join + Clone + Eq> Join for imbl::OrdMap<K, V> {
         if self.ptr_eq(other) || self == other {
             self.clone()
         } else {
-            self.clone()
-                .union_with(other.clone(), |self_value, other_value| {
-                    self_value.join(&other_value)
-                })
+            let (mut to_mutate, to_consume) = if self.len() >= other.len() {
+                (self.clone(), other)
+            } else {
+                (other.clone(), self)
+            };
+            for (key, value) in to_consume {
+                match to_mutate.entry(key.clone()) {
+                    imbl::ordmap::Entry::Occupied(entry) => {
+                        let current = entry.into_mut();
+                        *current = current.join(value);
+                    }
+                    imbl::ordmap::Entry::Vacant(entry) => {
+                        entry.insert(value.clone());
+                    }
+                }
+            }
+            to_mutate
         }
     }
 }
@@ -64,10 +77,23 @@ impl<K: Clone + Eq + Hash, V: Join + Clone + Eq> Join for imbl::HashMap<K, V> {
         if self.ptr_eq(other) || self == other {
             self.clone()
         } else {
-            self.clone()
-                .union_with(other.clone(), |self_value, other_value| {
-                    self_value.join(&other_value)
-                })
+            let (mut to_mutate, to_consume) = if self.len() >= other.len() {
+                (self.clone(), other)
+            } else {
+                (other.clone(), self)
+            };
+            for (key, value) in to_consume {
+                match to_mutate.entry(key.clone()) {
+                    imbl::hashmap::Entry::Occupied(entry) => {
+                        let current = entry.into_mut();
+                        *current = current.join(value);
+                    }
+                    imbl::hashmap::Entry::Vacant(entry) => {
+                        entry.insert(value.clone());
+                    }
+                }
+            }
+            to_mutate
         }
     }
 }
@@ -87,10 +113,23 @@ impl<K: Clone + Ord, V: Meet + Clone + Eq> Meet for imbl::OrdMap<K, V> {
         if self.ptr_eq(other) || self == other {
             self.clone()
         } else {
-            self.clone()
-                .intersection_with(other.clone(), |self_value, other_value| {
-                    self_value.meet(&other_value)
-                })
+            let (mut to_mutate, to_consume) = if self.len() >= other.len() {
+                (self.clone(), other)
+            } else {
+                (other.clone(), self)
+            };
+            for (key, value) in to_consume {
+                match to_mutate.entry(key.clone()) {
+                    imbl::ordmap::Entry::Occupied(entry) => {
+                        let current = entry.into_mut();
+                        *current = current.meet(value);
+                    }
+                    imbl::ordmap::Entry::Vacant(entry) => {
+                        entry.insert(value.clone());
+                    }
+                }
+            }
+            to_mutate
         }
     }
 }
@@ -110,10 +149,23 @@ impl<K: Clone + Eq + Hash, V: Meet + Clone + Eq> Meet for imbl::HashMap<K, V> {
         if self.ptr_eq(other) || self == other {
             self.clone()
         } else {
-            self.clone()
-                .intersection_with(other.clone(), |self_value, other_value| {
-                    self_value.meet(&other_value)
-                })
+            let (mut to_mutate, to_consume) = if self.len() >= other.len() {
+                (self.clone(), other)
+            } else {
+                (other.clone(), self)
+            };
+            for (key, value) in to_consume {
+                match to_mutate.entry(key.clone()) {
+                    imbl::hashmap::Entry::Occupied(entry) => {
+                        let current = entry.into_mut();
+                        *current = current.meet(value);
+                    }
+                    imbl::hashmap::Entry::Vacant(entry) => {
+                        entry.insert(value.clone());
+                    }
+                }
+            }
+            to_mutate
         }
     }
 }
