@@ -1260,7 +1260,7 @@ impl<'a> ConstraintsBuilder<'a> {
             namespace.clone_abstract_environment_or_default(program_point);
 
         let parameters = self.gen_parameters(namespace, &stmt_function_def.parameters)?;
-        println!("{parameters:?}");
+
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
             self.gen_location(stmt_function_def.parameters.as_ref()),
@@ -2310,6 +2310,11 @@ mod tests {
         }
     }
 
+    const TEST_BUILTINS: &str = indoc! {r##"
+        class int:
+            pass
+    "##};
+
     #[rstest]
     #[case::import(
         "import some_module",
@@ -3304,13 +3309,16 @@ mod tests {
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:4)" [label="#function(identifier=module[add_two@{1:4}], async=false) ⊑ add_two@{module[1:4]} ∧ #defined(add_two@{module[1:4]})"];
+            "Constraint(location=1:11)" [label="int@{builtins[1:6]} ⊑ int@{module[1:15]} ∧ int@{builtins[1:6]} ⊑ int@{module[1:23]}"];
             "Constraint(location=4:0)" [label="(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]} ∧ #defined(result@{module[4:0]})"];
             "Constraint(location=4:9)" [label="add_two@{module[1:4]} ⊑ add_two@{module[4:9]}"];
-            "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=module[add_two@{1:4}], async=false))"];
-            "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=module[add_two@{1:4}], async=false))"];
+            "Entry" -> "Constraint(location=1:11)" [label="#succeed(int@{builtins[1:6]})"];
+            "Entry" -> "ExceptionExit" [label="#raise(int@{builtins[1:6]})"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:4)" -> "Constraint(location=4:9)" [label="#succeed(add_two@{module[1:4]})"];
             "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise(add_two@{module[1:4]})"];
+            "Constraint(location=1:11)" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=module[add_two@{1:4}], async=false))"];
+            "Constraint(location=1:11)" -> "ExceptionExit" [label="#raise(#function(identifier=module[add_two@{1:4}], async=false))"];
             "Constraint(location=4:0)" -> "Constraint()";
             "Constraint(location=4:9)" -> "Constraint(location=4:0)" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
             "Constraint(location=4:9)" -> "ExceptionExit" [label="#raise((add_two@{module[4:9]})(42, 67))"];
@@ -3402,7 +3410,7 @@ mod tests {
                 ),
                 (
                     Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                    String::new(),
+                    TEST_BUILTINS.to_owned(),
                 ),
             ]),
         };
