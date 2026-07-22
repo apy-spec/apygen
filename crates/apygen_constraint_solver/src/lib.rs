@@ -853,6 +853,60 @@ impl<'a> ExpressionEvaluator<'a> {
                 operator,
                 right.as_ref(),
             )),
+            (Type::Instance(_), _) => {
+                let mut effects = PyEffects::new();
+
+                let method = pytype_consume_or_return_option!(
+                    effects,
+                    self.evaluate_attributes(
+                        abstract_state,
+                        left_ty,
+                        &Arc::new(Identifier::parse(&format!(
+                            "__{}__",
+                            operator.method_name()?
+                        ))),
+                        None
+                    )?
+                );
+
+                let return_type = pytype_consume_or_return_option!(
+                    effects,
+                    self.evaluate_call(
+                        abstract_state,
+                        &method,
+                        &Arguments::new().add_positional_argument(Arc::new(right_ty.clone())),
+                    )?
+                );
+
+                Some(PyTypeEval::new(return_type, effects))
+            }
+            (_, Type::Instance(_)) => {
+                let mut effects = PyEffects::new();
+
+                let method = pytype_consume_or_return_option!(
+                    effects,
+                    self.evaluate_attributes(
+                        abstract_state,
+                        right_ty,
+                        &Arc::new(Identifier::parse(&format!(
+                            "__r{}__",
+                            operator.method_name()?
+                        ))),
+                        None
+                    )?
+                );
+
+                let return_type = pytype_consume_or_return_option!(
+                    effects,
+                    self.evaluate_call(
+                        abstract_state,
+                        &method,
+                        &Arguments::new().add_positional_argument(Arc::new(left_ty.clone())),
+                    )?
+                );
+
+                Some(PyTypeEval::new(return_type, effects))
+            }
             (Type::Union(left_type_union), Type::Union(right_type_union)) => {
                 let mut type_eval = PyTypeEval::never();
                 for ty in left_type_union.types() {
