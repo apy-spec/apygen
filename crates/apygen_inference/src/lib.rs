@@ -96,7 +96,7 @@ impl<T: Join + Clone> Join for Sourced<T> {
 
 impl<T: Clone + Display> Display for Sourced<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Sourced(data={}, source={})", self.data, self.source)
+        write!(f, "{}({})", self.source, self.data)
     }
 }
 

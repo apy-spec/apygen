@@ -111,16 +111,9 @@ pub fn convert_literal_function(
         literal_function.value.program_entity.clone(),
     ))?;
 
-    let return_type = convert_type(
-        program_evaluation,
-        &evaluation_state
-            .return_value
-            .as_value()
-            .cloned()
-            .unwrap_or_default(),
-    )?;
+    // TODO: add return type
 
-    let mut signature = apy::v1::Signature::new(return_type);
+    let mut signature = apy::v1::Signature::new(apy::v1::Type::Instance(convert_type_any()));
 
     let mut parameters: Vec<apy::v1::Parameter> = Vec::new();
     for parameter in &literal_function.value.parameters {
@@ -138,7 +131,7 @@ pub fn convert_literal_function(
     signature.parameters = apy::v1::Parameters::try_from(parameters).ok()?;
     signature.raises = convert_exceptions(
         program_evaluation,
-        evaluation_state.raised_exceptions.as_value()?,
+        &evaluation_state.raised_exceptions.as_value()?.data,
     )?;
 
     let function = apy::v1::Function::new(apy::OneOrMany::one(signature));
@@ -153,15 +146,6 @@ pub fn convert_literal_class(
     let evaluation_state = program_evaluation.get(&Namespace::NamedProgramEntity(
         literal_class.value.program_entity.clone(),
     ))?;
-
-    let return_type = convert_type(
-        program_evaluation,
-        &evaluation_state
-            .return_value
-            .as_value()
-            .cloned()
-            .unwrap_or_default(),
-    )?;
 
     // TODO: assert classes should return None
 
@@ -195,7 +179,7 @@ pub fn convert_literal_class(
             )?)
             .with_raises(convert_exceptions(
                 program_evaluation,
-                evaluation_state.raised_exceptions.as_value()?,
+                &evaluation_state.raised_exceptions.as_value()?.data,
             )?),
     )
 }
@@ -525,6 +509,7 @@ pub fn convert_abstract_environment(
                     .cloned()
                     .unwrap_or_default()
                     .to_value()
+                    .map(|ty| ty.data)
                     .unwrap_or(Type::Any),
             );
         }

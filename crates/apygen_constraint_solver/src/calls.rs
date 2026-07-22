@@ -1,8 +1,10 @@
 use crate::constraint_graph::expressions::{Identifier, ParameterKind};
 use crate::inference::{LiteralTuple, Parameter, Sourced, Type, TypeLiteral, TypeUnion};
 use crate::primitives::literals::LiteralStr;
+use apygen_analysis::fmt::{fmt_display_iterator, fmt_iterator};
 use imbl;
 use std::collections::BTreeMap;
+use std::fmt::Display;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -45,6 +47,11 @@ impl Arguments {
             positional: Vec::new(),
             keyword: BTreeMap::new(),
         }
+    }
+
+    pub fn with_self(mut self, self_type: Arc<Type>) -> Self {
+        self.positional.insert(0, self_type);
+        self
     }
 
     pub fn add_positional_argument(mut self, argument: Arc<Type>) -> Self {
@@ -170,5 +177,17 @@ impl Arguments {
         }
 
         Ok(bindings)
+    }
+}
+
+impl Display for Arguments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt_display_iterator(f, self.positional.iter(), ", ")?;
+        if !self.keyword.is_empty() {
+            fmt_iterator(f, self.keyword.iter(), ", ", |f, (identifier, ty)| {
+                write!(f, "{}={}", identifier, ty)
+            })?;
+        }
+        Ok(())
     }
 }
