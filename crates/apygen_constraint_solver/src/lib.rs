@@ -1860,8 +1860,8 @@ mod tests {
         indoc! {r##"
         module:
             a@{module[1:0]} = Inferred(0)
-            a@{module[4:4]} = Inferred(Union[Any, @class(builtins[int@{1:6}]), 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, class(builtins[int@{1:6}])])
-            b@{module[6:0]} = Inferred(Union[Any, @class(builtins[int@{1:6}]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, class(builtins[int@{1:6}])])
+            a@{module[4:4]} = Inferred(Union[@class(builtins[int@{1:6}]), 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
+            b@{module[6:0]} = Inferred(Union[@class(builtins[int@{1:6}]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
             #raise = Inferred({Exception(type=Any, origin=Unknown)}) ⊔ #deferred{(a@{module[3:6]}) < (5)}
             #return = Inferred(None)
         "##},  // TODO: fix this when operations are implemented
@@ -1876,14 +1876,14 @@ mod tests {
         indoc! {r##"
         module:
             add_two@{module[1:4]} = Inferred(function(module[add_two@{1:4}]))
-            result@{module[4:0]} = Inferred(class(builtins[int@{1:6}]))
+            result@{module[4:0]} = Inferred(@class(builtins[int@{1:6}]))
             #raise = Inferred({})
             #return = Inferred(None)
         module[add_two@{1:4}]:
             a@{module[add_two@{1:4}][1:12]} = Specified(@class(builtins[int@{1:6}]))
             b@{module[add_two@{1:4}][1:20]} = Specified(@class(builtins[int@{1:6}]))
             #raise = Inferred({})
-            #return = Specified(class(builtins[int@{1:6}]))
+            #return = Specified(@class(builtins[int@{1:6}]))
         "##},
     )]
     #[case::simple_class_attribute_access(

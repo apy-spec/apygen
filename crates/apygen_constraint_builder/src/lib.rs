@@ -1376,7 +1376,12 @@ impl<'a> ConstraintsBuilder<'a> {
         let (return_type, return_variables) = if let Some(returns) = &stmt_function_def.returns {
             let return_eval =
                 self.evaluate_expr(namespace, &target_abstract_environment, &returns)?;
-            (imbl::OrdSet::unit(return_eval.value), return_eval.variables)
+            (
+                imbl::OrdSet::unit(Expression::Annotated(ExpressionAnnotated::new(Arc::new(
+                    return_eval.value,
+                )))),
+                return_eval.variables,
+            )
         } else {
             (imbl::OrdSet::default(), UsedVariables::default())
         };
@@ -2463,7 +2468,7 @@ mod tests {
             "ExceptionExit" -> "Exit";
         }
         specification "builtins[int@{1:6}][__add__@{2:8}]":
-            {arguments: {self@{builtins[int@{1:6}][__add__@{2:8}][2:16]}: , value@{builtins[int@{1:6}][__add__@{2:8}][2:22]}: #annotated(int@{2:29})}, return_type: {int@{2:40}}, exceptions: {}}
+            {arguments: {self@{builtins[int@{1:6}][__add__@{2:8}][2:16]}: , value@{builtins[int@{1:6}][__add__@{2:8}][2:22]}: #annotated(int@{2:29})}, return_type: {#annotated(int@{2:40})}, exceptions: {}}
         digraph "builtins[int@{1:6}][__add__@{2:8}]" {
             "Constraint()" [label="#return(None)"];
             "Entry" -> "Constraint()";
@@ -3521,7 +3526,7 @@ mod tests {
             "ExceptionExit" -> "Exit";
         }
         specification "module[add_two@{1:4}]":
-            {arguments: {a@{module[add_two@{1:4}][1:12]}: #annotated(int@{module[1:15]}), b@{module[add_two@{1:4}][1:20]}: #annotated(int@{module[1:23]})}, return_type: {int@{module[1:31]}}, exceptions: {}}
+            {arguments: {a@{module[add_two@{1:4}][1:12]}: #annotated(int@{module[1:15]}), b@{module[add_two@{1:4}][1:20]}: #annotated(int@{module[1:23]})}, return_type: {#annotated(int@{module[1:31]})}, exceptions: {}}
         digraph "module[add_two@{1:4}]" {
             "Constraint(location=2:4)" [label="#return((a@{module[add_two@{1:4}][2:11]}) + (b@{module[add_two@{1:4}][2:15]}))"];
             "Constraint(location=2:11)" [label="a@{module[add_two@{1:4}][1:12]} ⊑ a@{module[add_two@{1:4}][2:11]} ∧ b@{module[add_two@{1:4}][1:20]} ⊑ b@{module[add_two@{1:4}][2:15]}"];
