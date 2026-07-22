@@ -489,14 +489,6 @@ impl<'a> ExpressionEvaluator<'a> {
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
         expression_function: &ExpressionFunction,
     ) -> Option<PyTypeEval> {
-        if abstract_state.contains(&self.qualified_location) {
-            analyse_program_entity(
-                abstract_state,
-                self.constraint_graphs,
-                &Namespace::NamedProgramEntity(expression_function.program_entity.clone()),
-            )
-            .unwrap();
-        }
         Some(PyTypeEval::with_default_effects(Type::new_literal(
             TypeLiteral::Function(LiteralFunction {
                 value: Arc::new(FunctionType {
