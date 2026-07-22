@@ -38,6 +38,27 @@ impl Display for ExpressionVariable {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExpressionForwardVariable {
+    pub name: VariableName,
+    pub location: Location,
+}
+
+impl ExpressionForwardVariable {
+    pub fn new(name: VariableName, location: Location) -> Self {
+        Self {
+            name,
+            location,
+        }
+    }
+}
+
+impl Display for ExpressionForwardVariable {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{{{}}}", self.name, self.location)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionAnnotated {
     pub annotation: Arc<Expression>,
 }
@@ -373,6 +394,7 @@ impl Display for ExpressionUnary {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Expression {
     Variable(ExpressionVariable),
+    ForwardVariable(ExpressionForwardVariable),
     Annotated(ExpressionAnnotated),
     Override(ExpressionOverride),
     Function(ExpressionFunction),
@@ -413,6 +435,7 @@ impl Display for Expression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Expression::Variable(expression_variable) => write!(f, "{}", expression_variable),
+            Expression::ForwardVariable(expression_forward_variable) => write!(f, "{}", expression_forward_variable),
             Expression::Annotated(expression_annotated) => write!(f, "{}", expression_annotated),
             Expression::Override(expression_override) => write!(f, "{}", expression_override),
             Expression::Function(expression_function) => write!(f, "{}", expression_function),

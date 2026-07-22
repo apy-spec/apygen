@@ -32,6 +32,7 @@ use crate::inference::{
     StructuralDepth, StructuralWidth, TYPES_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion,
     WIDTH_LIMIT,
 };
+use apygen_constraint_graph::expressions::ExpressionForwardVariable;
 use imbl::ordmap::Entry;
 use std::convert::Infallible;
 use std::fmt::{Debug, Display};
@@ -214,23 +215,26 @@ impl<N: Clone + Ord, S: AbstractState<Key = Namespace, AbstractValue = Evaluatio
 }
 
 pub struct ExpressionEvaluator<'a> {
-    pub qualified_location: &'a Namespace,
+    pub namespace: &'a Namespace,
     pub constraint_graphs: &'a imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
+    pub in_evaluation: &'a imbl::OrdSet<&'a Namespace>,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
     pub fn new(
-        qualified_location: &'a Namespace,
+        namespace: &'a Namespace,
         constraint_graphs: &'a imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
+        in_evaluation: &'a imbl::OrdSet<&'a Namespace>,
     ) -> Self {
         Self {
-            qualified_location,
+            namespace,
             constraint_graphs,
+            in_evaluation,
         }
     }
 
-    pub fn with_qualified_location(&self, qualified_location: &'a Namespace) -> Self {
-        Self::new(qualified_location, self.constraint_graphs)
+    pub fn with_namespace(&self, namespace: &'a Namespace) -> Self {
+        Self::new(namespace, self.constraint_graphs, self.in_evaluation)
     }
 
     pub fn get_variable_type(
@@ -364,7 +368,7 @@ impl<'a> ExpressionEvaluator<'a> {
         &self,
         abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
     ) -> Option<()> {
-        let mut types = abstract_state.get(&self.qualified_location)?.types.clone();
+        let mut types = abstract_state.get(&self.namespace)?.types.clone();
 
         loop {
             let mut changed = false;
@@ -395,7 +399,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 .collect();
 
             let evaluation_state = abstract_state
-                .get_mut(&self.qualified_location)
+                .get_mut(&self.namespace)
                 .expect("evaluation_state should exists");
 
             evaluation_state.types = types.clone();
@@ -446,6 +450,42 @@ impl<'a> ExpressionEvaluator<'a> {
 
         Some(PyTypeEval::with_default_effects(
             ty.as_value()?.data.clone(),
+        ))
+    }
+
+    pub fn evaluate_expression_forward_variable<
+        's,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+    >(
+        &self,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        expression_forward_variable: &ExpressionForwardVariable,
+    ) -> Option<PyTypeEval> {
+        if let Some(program_evaluation) = abstract_state.get(self.namespace) {
+            if let Some(ty) = program_evaluation.types.get(&Expression::ForwardVariable(
+                expression_forward_variable.clone(),
+            )) {
+                return Some(PyTypeEval::with_default_effects(
+                    ty.as_value()?.data.clone(),
+                ));
+            }
+        }
+        if let Some(parent_namespace) = self.namespace.parent() {
+            return self
+                .with_namespace(parent_namespace.as_ref())
+                .evaluate_expression_forward_variable(abstract_state, expression_forward_variable);
+        }
+
+        Some(PyTypeEval::new(
+            Type::Never,
+            PyEffects::new().with_exceptions(RaisedExceptions::raise(Exception::new(
+                Arc::new(Type::Instance(Self::get_variable_type(
+                    abstract_state,
+                    &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                    &Arc::new(Identifier::parse("NameError")),
+                )?)),
+                ExceptionOrigin::Specified, // TODO: fix origin
+            ))),
         ))
     }
 
@@ -513,6 +553,7 @@ impl<'a> ExpressionEvaluator<'a> {
             abstract_state,
             self.constraint_graphs,
             &Namespace::NamedProgramEntity(expression_class.program_entity.clone()),
+            self.in_evaluation.update(&self.namespace),
         )
         .unwrap();
         Some(PyTypeEval::with_default_effects(Type::new_literal(
@@ -570,11 +611,14 @@ impl<'a> ExpressionEvaluator<'a> {
                         let evaluation_state =
                             if let Some(evaluation_state) = abstract_state.get(&class_namespace) {
                                 evaluation_state
+                            } else if self.in_evaluation.contains(self.namespace) {
+                                return None;
                             } else {
                                 analyse_program_entity(
                                     abstract_state,
                                     self.constraint_graphs,
                                     &class_namespace,
+                                    self.in_evaluation.update(&self.namespace),
                                 )
                                 .unwrap()
                             };
@@ -713,11 +757,14 @@ impl<'a> ExpressionEvaluator<'a> {
                 let evaluation_state =
                     if let Some(evaluation_state) = abstract_state.get(&function_namespace) {
                         evaluation_state
+                    } else if self.in_evaluation.contains(self.namespace) {
+                        return None;
                     } else {
                         analyse_program_entity(
                             abstract_state,
                             self.constraint_graphs,
                             &function_namespace,
+                            self.in_evaluation.update(self.namespace),
                         )
                         .unwrap()
                     };
@@ -982,7 +1029,7 @@ impl<'a> ExpressionEvaluator<'a> {
         expression: &Expression,
     ) -> Option<PyTypeEval> {
         if let Some(expression_eval) = abstract_state
-            .get(self.qualified_location)
+            .get(self.namespace)
             .and_then(|state| state.types.get(expression))
         {
             return Some(PyTypeEval::with_default_effects(
@@ -994,6 +1041,8 @@ impl<'a> ExpressionEvaluator<'a> {
             Expression::Variable(expression_variable) => {
                 self.evaluate_expression_variable(abstract_state, expression_variable)
             }
+            Expression::ForwardVariable(expression_forward_variable) => self
+                .evaluate_expression_forward_variable(abstract_state, expression_forward_variable),
             Expression::Annotated(expression_annotated) => {
                 self.evaluate_expression_annotated(abstract_state, expression_annotated)
             }
@@ -1071,6 +1120,7 @@ pub struct ConstraintSolver<'s, S: AbstractState<Key = Namespace, AbstractValue 
     pub namespace: &'s Namespace,
     pub constraint_graphs: &'s imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     pub program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation>,
+    pub in_evaluation: imbl::OrdSet<&'s Namespace>,
 }
 
 impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>
@@ -1080,11 +1130,13 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>
         namespace: &'s Namespace,
         constraint_graphs: &'s imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
         program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation>,
+        in_evaluation: imbl::OrdSet<&'s Namespace>,
     ) -> Self {
         Self {
             namespace,
             constraint_graphs,
             program_evaluation,
+            in_evaluation,
         }
     }
 
@@ -1093,7 +1145,7 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>
     }
 
     pub fn evaluator(&self) -> ExpressionEvaluator<'_> {
-        ExpressionEvaluator::new(self.namespace, self.constraint_graphs)
+        ExpressionEvaluator::new(self.namespace, self.constraint_graphs, &self.in_evaluation)
     }
 }
 
@@ -1578,9 +1630,10 @@ pub fn analyse_program_entity<
     abstract_state: &'e mut AbstractStateProxy<'s, S, ProgramEvaluation>,
     constraint_graphs: &imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     namespace: &'e Namespace,
+    in_evaluation: imbl::OrdSet<&'e Namespace>,
 ) -> Result<&'e mut EvaluationState, Infallible> {
     let solver_state = analysis(
-        &ConstraintSolver::new(namespace, constraint_graphs, abstract_state),
+        &ConstraintSolver::new(namespace, constraint_graphs, abstract_state, in_evaluation),
         &mut DummyAnalysisObserver::default(),
     )?;
 
@@ -1673,7 +1726,12 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 
         let mut proxy = AbstractStateProxy::with_default_proxy(&new_analysis_state);
 
-        analyse_program_entity(&mut proxy, program_entity_constraints, &namespace)?;
+        analyse_program_entity(
+            &mut proxy,
+            program_entity_constraints,
+            &namespace,
+            imbl::OrdSet::new(),
+        )?;
 
         new_analysis_state.extend(proxy.proxy.states);
 
@@ -1681,7 +1739,12 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
             if **other_namespace != namespace {
                 let mut proxy = AbstractStateProxy::with_default_proxy(&new_analysis_state);
 
-                analyse_program_entity(&mut proxy, program_entity_constraints, other_namespace)?;
+                analyse_program_entity(
+                    &mut proxy,
+                    program_entity_constraints,
+                    other_namespace,
+                    imbl::OrdSet::new(),
+                )?;
 
                 new_analysis_state.extend(proxy.proxy.states);
             }
@@ -1797,8 +1860,8 @@ mod tests {
         indoc! {r##"
         module:
             a@{module[1:0]} = Inferred(0)
-            a@{module[4:4]} = Inferred(Union[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
-            b@{module[6:0]} = Inferred(Union[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
+            a@{module[4:4]} = Inferred(Union[Any, @class(builtins[int@{1:6}]), 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, class(builtins[int@{1:6}])])
+            b@{module[6:0]} = Inferred(Union[Any, @class(builtins[int@{1:6}]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, class(builtins[int@{1:6}])])
             #raise = Inferred({Exception(type=Any, origin=Unknown)}) ⊔ #deferred{(a@{module[3:6]}) < (5)}
             #return = Inferred(None)
         "##},  // TODO: fix this when operations are implemented
@@ -1927,7 +1990,7 @@ mod tests {
         module[foo@{1:4}]:
             #raise = Inferred({Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)})
             #return = Inferred(Never)
-        "##},  // TODO: fix
+        "##},
     )]
     #[case::forward_reference_function_call(
         indoc! {r##"
@@ -1940,11 +2003,14 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            #raise = Inferred({Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)})
-            #return = Inferred(Never)
+            CONST@{module[4:0]} = Inferred(5)
+            foo@{module[1:4]} = Inferred(function(module[foo@{1:4}]))
+            result@{module[6:0]} = Inferred(5)
+            #raise = Inferred({})
+            #return = Inferred(None)
         module[foo@{1:4}]:
-            #raise = Inferred({Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)})
-            #return = Inferred(Never)
+            #raise = Inferred({})
+            #return = Inferred(5)
         "##},
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {

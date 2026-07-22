@@ -77,6 +77,16 @@ pub enum Namespace {
 }
 
 impl Namespace {
+    pub fn parent(&self) -> Option<&Arc<Self>> {
+        match self {
+            Namespace::Module(_) => None,
+            Namespace::ProgramEntity(qualified_location) => Some(&qualified_location.namespace),
+            Namespace::NamedProgramEntity(named_qualified_location) => {
+                Some(&named_qualified_location.namespace)
+            }
+        }
+    }
+
     pub fn module_name(&self) -> &ModuleName {
         match self {
             Namespace::Module(module_name) => module_name,

@@ -14,8 +14,9 @@ use crate::cfg::text_size::Ranged;
 use crate::cfg::{Cfg, CfgEdge, CfgEdgeKind, CfgNode as StmtNode, ProgramPoint};
 use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
-    ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionImport, ExpressionOverride,
-    ExpressionSubscript, ExpressionUnary, ExpressionVariable, KeywordArgument, UnaryOperator,
+    ExpressionCall, ExpressionClass, ExpressionForwardVariable, ExpressionFunction,
+    ExpressionImport, ExpressionOverride, ExpressionSubscript, ExpressionUnary, ExpressionVariable,
+    KeywordArgument, UnaryOperator,
 };
 use crate::constraint_graph::identifiers::{
     Identifier, Location, ModuleName, NamedQualifiedLocation, Namespace, OneOrMany,
@@ -181,10 +182,8 @@ impl OrdJoin for ReturnStatus {}
 pub struct ProgramEntityAbstractEnvironment {
     pub return_status: ReturnStatus,
     pub current_nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>,
-    pub unknown_variables: imbl::OrdMap<
-        VariableName,
-        imbl::OrdMap<ConstraintNode, imbl::OrdSet<(Arc<Namespace>, Location)>>,
-    >,
+    pub unknown_variables:
+        imbl::OrdMap<VariableName, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Location>>>,
     pub variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
     pub nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
     pub edges: imbl::OrdMap<(ConstraintNode, ConstraintNode), imbl::OrdSet<Guard>>,
@@ -488,15 +487,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     .unknown_variables
                     .join(&imbl::OrdMap::unit(
                         used_variable_name.clone(),
-                        imbl::OrdMap::unit(
-                            node.clone(),
-                            used_locations
-                                .iter()
-                                .map(|used_location| {
-                                    (self.program_entity.namespace.clone(), used_location.clone())
-                                })
-                                .collect(),
-                        ),
+                        imbl::OrdMap::unit(node.clone(), used_locations.clone()),
                     ));
             }
         }
@@ -651,15 +642,17 @@ impl<'a> ConstraintsBuilder<'a> {
             for (unknown_variable, variable_nodes) in
                 &sub_cfg_analysis.environment.unknown_variables
             {
-                let variables_locations = variable_nodes
-                    .iter()
-                    .flat_map(|(_, locations)| locations.clone())
-                    .collect();
                 abstract_environment.unknown_variables = abstract_environment
                     .unknown_variables
                     .join(&imbl::OrdMap::unit(
                         unknown_variable.clone(),
-                        imbl::OrdMap::unit(node.clone(), variables_locations),
+                        imbl::OrdMap::unit(
+                            node.clone(),
+                            variable_nodes
+                                .iter()
+                                .flat_map(|(_, locations)| locations.clone())
+                                .collect(),
+                        ),
                     ));
             }
         }
@@ -677,7 +670,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     unknown_variable_node.clone(),
                     unknown_variable_locations
                         .into_iter()
-                        .map(|(unknown_variable_namespace, unknown_variable_location)| {
+                        .map(|unknown_variable_location| {
                             Constraint::Type(IncludeConstraint::new(
                                 Arc::new(Expression::Variable(ExpressionVariable::new(
                                     NamedQualifiedLocation::new(
@@ -686,13 +679,12 @@ impl<'a> ConstraintsBuilder<'a> {
                                         self.program_entity.namespace.clone(),
                                     ),
                                 ))),
-                                Arc::new(Expression::Variable(ExpressionVariable::new(
-                                    NamedQualifiedLocation::new(
+                                Arc::new(Expression::ForwardVariable(
+                                    ExpressionForwardVariable::new(
                                         variable_name.clone(),
                                         unknown_variable_location,
-                                        unknown_variable_namespace,
                                     ),
-                                ))),
+                                )),
                             ))
                         })
                         .collect(),
@@ -786,6 +778,7 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_parameter(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        abstract_environment: &ProgramEntityAbstractEnvironment,
         function_namespace: &Arc<Namespace>,
         parameter: &ast::Parameter,
     ) -> Result<(ExpressionVariable, Option<ExpressionEval<Expression>>), ConstraintsBuilderError>
@@ -794,7 +787,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let annotation = if let Some(annotation) = &parameter.annotation {
             Some(
-                self.evaluate_expr(&namespace, &annotation)?
+                self.evaluate_expr(&namespace, abstract_environment, &annotation)?
                     .map(|expression| {
                         Expression::Annotated(ExpressionAnnotated::new(Arc::new(expression)))
                     }),
@@ -816,18 +809,20 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_parameter_with_default(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        abstract_environment: &ProgramEntityAbstractEnvironment,
         function_namespace: &Arc<Namespace>,
         parameter_with_default: &ast::ParameterWithDefault,
     ) -> Result<(ExpressionVariable, Option<ExpressionEval<Expression>>), ConstraintsBuilderError>
     {
         let (parameter_name, annotation_eval_option) = self.evaluate_parameter(
             namespace,
+            abstract_environment,
             function_namespace,
             &parameter_with_default.parameter,
         )?;
 
         let parameter_eval_option = if let Some(default) = &parameter_with_default.default {
-            let default_eval = self.evaluate_expr(&namespace, &default)?;
+            let default_eval = self.evaluate_expr(&namespace, abstract_environment, &default)?;
 
             if let Some(annotation_eval) = annotation_eval_option {
                 Some(annotation_eval.merge(default_eval, |annotation, default| {
@@ -849,6 +844,7 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn gen_parameters(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        abstract_environment: &ProgramEntityAbstractEnvironment,
         function_namespace: &Arc<Namespace>,
         parameters: &ast::Parameters,
     ) -> Result<
@@ -856,22 +852,45 @@ impl<'a> ConstraintsBuilder<'a> {
         ConstraintsBuilderError,
     > {
         let positional_only_parameters = parameters.posonlyargs.iter().map(|parameter| {
-            self.evaluate_parameter_with_default(namespace, function_namespace, &parameter)
+            self.evaluate_parameter_with_default(
+                namespace,
+                abstract_environment,
+                function_namespace,
+                &parameter,
+            )
         });
         let positional_or_keyword_parameters = parameters.args.iter().map(|parameter| {
-            self.evaluate_parameter(namespace, function_namespace, &parameter.parameter)
+            self.evaluate_parameter(
+                namespace,
+                abstract_environment,
+                function_namespace,
+                &parameter.parameter,
+            )
         });
-        let var_positional_parameters = parameters
-            .vararg
-            .iter()
-            .map(|parameter| self.evaluate_parameter(namespace, function_namespace, &parameter));
+        let var_positional_parameters = parameters.vararg.iter().map(|parameter| {
+            self.evaluate_parameter(
+                namespace,
+                abstract_environment,
+                function_namespace,
+                &parameter,
+            )
+        });
         let keyword_only_parameters = parameters.kwonlyargs.iter().map(|parameter| {
-            self.evaluate_parameter_with_default(namespace, function_namespace, &parameter)
+            self.evaluate_parameter_with_default(
+                namespace,
+                abstract_environment,
+                function_namespace,
+                &parameter,
+            )
         });
-        let var_keyword_parameters = parameters
-            .kwarg
-            .iter()
-            .map(|parameter| self.evaluate_parameter(namespace, function_namespace, &parameter));
+        let var_keyword_parameters = parameters.kwarg.iter().map(|parameter| {
+            self.evaluate_parameter(
+                namespace,
+                abstract_environment,
+                function_namespace,
+                &parameter,
+            )
+        });
 
         let parameter_evals = positional_only_parameters
             .chain(positional_or_keyword_parameters)
@@ -900,12 +919,13 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_bool_op(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        abstract_environment: &ProgramEntityAbstractEnvironment,
         expr_bool_op: &ast::ExprBoolOp,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
         let mut values_iter = expr_bool_op.values.iter();
 
         let mut eval = match values_iter.next() {
-            Some(value) => self.evaluate_expr(namespace, value)?,
+            Some(value) => self.evaluate_expr(namespace, abstract_environment, value)?,
             None => {
                 return Err(ConstraintsBuilderError::InvalidExprBoolOp {
                     expr: expr_bool_op.clone(),
@@ -919,13 +939,16 @@ impl<'a> ConstraintsBuilder<'a> {
         };
 
         for value in values_iter {
-            eval = eval.merge(self.evaluate_expr(namespace, &value)?, |left, right| {
-                Expression::Binary(ExpressionBinary {
-                    left: Arc::new(left),
-                    operator: operator.clone(),
-                    right: Arc::new(right),
-                })
-            })
+            eval = eval.merge(
+                self.evaluate_expr(namespace, abstract_environment, &value)?,
+                |left, right| {
+                    Expression::Binary(ExpressionBinary {
+                        left: Arc::new(left),
+                        operator: operator.clone(),
+                        right: Arc::new(right),
+                    })
+                },
+            )
         }
 
         Ok(eval)
@@ -934,10 +957,11 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_bin_op(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        abstract_environment: &ProgramEntityAbstractEnvironment,
         expr_bin_op: &ast::ExprBinOp,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let left_eval = self.evaluate_expr(namespace, &expr_bin_op.left)?;
-        let right_eval = self.evaluate_expr(namespace, &expr_bin_op.right)?;
+        let left_eval = self.evaluate_expr(namespace, abstract_environment, &expr_bin_op.left)?;
+        let right_eval = self.evaluate_expr(namespace, abstract_environment, &expr_bin_op.right)?;
 
         let operator = match expr_bin_op.op {
             ast::Operator::Add => BinaryOperator::Add,
@@ -967,9 +991,11 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_unary_op(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        abstract_environment: &ProgramEntityAbstractEnvironment,
         expr_unary_op: &ast::ExprUnaryOp,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let operand_eval = self.evaluate_expr(namespace, &expr_unary_op.operand)?;
+        let operand_eval =
+            self.evaluate_expr(namespace, abstract_environment, &expr_unary_op.operand)?;
 
         let operator = match expr_unary_op.op {
             ast::UnaryOp::Invert => UnaryOperator::Invert,
@@ -989,9 +1015,10 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_compare(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        abstract_environment: &ProgramEntityAbstractEnvironment,
         expr_compare: &ast::ExprCompare,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let mut eval = self.evaluate_expr(namespace, &expr_compare.left)?;
+        let mut eval = self.evaluate_expr(namespace, abstract_environment, &expr_compare.left)?;
 
         if expr_compare.ops.is_empty()
             || expr_compare.comparators.is_empty()
@@ -1016,7 +1043,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 ast::CmpOp::NotIn => BinaryOperator::NotIn,
             };
 
-            let comparator = self.evaluate_expr(namespace, comparator)?;
+            let comparator = self.evaluate_expr(namespace, abstract_environment, comparator)?;
 
             eval = eval.merge(comparator, |left, right| {
                 Expression::Binary(ExpressionBinary {
@@ -1033,17 +1060,16 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_call(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        abstract_environment: &ProgramEntityAbstractEnvironment,
         expr_call: &ast::ExprCall,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let mut func_eval = self.evaluate_expr(namespace, &expr_call.func)?;
+        let mut func_eval = self.evaluate_expr(namespace, abstract_environment, &expr_call.func)?;
 
         let mut positional_arguments: imbl::Vector<Arc<Expression>> = imbl::Vector::new();
         for positional_argument in &expr_call.arguments.args {
-            positional_arguments.push_back(Arc::new(
-                func_eval
-                    .variables
-                    .consume(self.evaluate_expr(namespace, &positional_argument)?),
-            ));
+            positional_arguments.push_back(Arc::new(func_eval.variables.consume(
+                self.evaluate_expr(namespace, abstract_environment, &positional_argument)?,
+            )));
         }
 
         let mut keyword_arguments: imbl::Vector<KeywordArgument> = imbl::Vector::new();
@@ -1054,11 +1080,11 @@ impl<'a> ConstraintsBuilder<'a> {
             };
             keyword_arguments.push_back(KeywordArgument {
                 name: keyword_name,
-                value: Arc::new(
-                    func_eval
-                        .variables
-                        .consume(self.evaluate_expr(namespace, &keyword_argument.value)?),
-                ),
+                value: Arc::new(func_eval.variables.consume(self.evaluate_expr(
+                    namespace,
+                    abstract_environment,
+                    &keyword_argument.value,
+                )?)),
             });
         }
 
@@ -1144,9 +1170,11 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_attribute(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        abstract_environment: &ProgramEntityAbstractEnvironment,
         expr_attribute: &ast::ExprAttribute,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let value_eval = self.evaluate_expr(namespace, &expr_attribute.value)?;
+        let value_eval =
+            self.evaluate_expr(namespace, abstract_environment, &expr_attribute.value)?;
         let attribute = self.gen_variable_name(&expr_attribute.attr)?;
 
         Ok(value_eval.map(|value| {
@@ -1160,10 +1188,13 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr_subscript(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        abstract_environment: &ProgramEntityAbstractEnvironment,
         expr_subscript: &ast::ExprSubscript,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let value_eval = self.evaluate_expr(namespace, &expr_subscript.value)?;
-        let slice_eval = self.evaluate_expr(namespace, &expr_subscript.slice)?;
+        let value_eval =
+            self.evaluate_expr(namespace, abstract_environment, &expr_subscript.value)?;
+        let slice_eval =
+            self.evaluate_expr(namespace, abstract_environment, &expr_subscript.slice)?;
 
         Ok(value_eval.merge(slice_eval, |value, slice| {
             Expression::Subscript(ExpressionSubscript {
@@ -1175,6 +1206,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn evaluate_name(
         &self,
+        abstract_environment: &ProgramEntityAbstractEnvironment,
         expr_name: &ast::ExprName,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
         let location = self.gen_location(expr_name);
@@ -1189,11 +1221,18 @@ impl<'a> ConstraintsBuilder<'a> {
         let variable_name = Arc::new(identifier);
 
         Ok(ExpressionEval::new(
-            Expression::Variable(ExpressionVariable::new(NamedQualifiedLocation::new(
-                variable_name.clone(),
-                location.clone(),
-                self.program_entity.namespace.clone(),
-            ))),
+            if let Some(_) = self.previous_locations(abstract_environment, &variable_name) {
+                Expression::Variable(ExpressionVariable::new(NamedQualifiedLocation::new(
+                    variable_name.clone(),
+                    location.clone(),
+                    self.program_entity.namespace.clone(),
+                )))
+            } else {
+                Expression::ForwardVariable(ExpressionForwardVariable::new(
+                    variable_name.clone(),
+                    location.clone(),
+                ))
+            },
             UsedVariables::new(imbl::OrdMap::unit(
                 variable_name,
                 imbl::OrdSet::unit(location),
@@ -1204,16 +1243,21 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn evaluate_expr(
         &self,
         namespace: &ProgramEntityAnalysisState,
+        abstract_environment: &ProgramEntityAbstractEnvironment,
         expr: &ast::Expr,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
         match expr {
-            ast::Expr::BoolOp(expr_bool_op) => self.evaluate_expr_bool_op(namespace, expr_bool_op),
+            ast::Expr::BoolOp(expr_bool_op) => {
+                self.evaluate_expr_bool_op(namespace, abstract_environment, expr_bool_op)
+            }
             ast::Expr::Named(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
             )),
-            ast::Expr::BinOp(expr_bin_op) => self.evaluate_expr_bin_op(namespace, expr_bin_op),
+            ast::Expr::BinOp(expr_bin_op) => {
+                self.evaluate_expr_bin_op(namespace, abstract_environment, expr_bin_op)
+            }
             ast::Expr::UnaryOp(expr_unary_op) => {
-                self.evaluate_expr_unary_op(namespace, expr_unary_op)
+                self.evaluate_expr_unary_op(namespace, abstract_environment, expr_unary_op)
             }
             ast::Expr::Lambda(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
@@ -1248,8 +1292,12 @@ impl<'a> ConstraintsBuilder<'a> {
             ast::Expr::YieldFrom(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
             )),
-            ast::Expr::Compare(expr_compare) => self.evaluate_expr_compare(namespace, expr_compare),
-            ast::Expr::Call(expr_call) => self.evaluate_expr_call(namespace, expr_call),
+            ast::Expr::Compare(expr_compare) => {
+                self.evaluate_expr_compare(namespace, abstract_environment, expr_compare)
+            }
+            ast::Expr::Call(expr_call) => {
+                self.evaluate_expr_call(namespace, abstract_environment, expr_call)
+            }
             ast::Expr::FString(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
             )),
@@ -1272,15 +1320,15 @@ impl<'a> ConstraintsBuilder<'a> {
                 self.evaluate_expr_ellipsis_literal(),
             )),
             ast::Expr::Attribute(expr_attribute) => {
-                self.evaluate_expr_attribute(namespace, expr_attribute)
+                self.evaluate_expr_attribute(namespace, abstract_environment, expr_attribute)
             }
             ast::Expr::Subscript(expr_subscript) => {
-                self.evaluate_expr_subscript(namespace, expr_subscript)
+                self.evaluate_expr_subscript(namespace, abstract_environment, expr_subscript)
             }
             ast::Expr::Starred(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
             )),
-            ast::Expr::Name(expr_name) => self.evaluate_name(expr_name),
+            ast::Expr::Name(expr_name) => self.evaluate_name(abstract_environment, expr_name),
             ast::Expr::List(_) => Ok(ExpressionEval::only_value(
                 self.evaluate_expr_none_literal(),
             )),
@@ -1321,11 +1369,13 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let parameters = self.gen_parameters(
             namespace,
+            &target_abstract_environment,
             &function_namespace,
             &stmt_function_def.parameters,
         )?;
         let (return_type, return_variables) = if let Some(returns) = &stmt_function_def.returns {
-            let return_eval = self.evaluate_expr(namespace, &returns)?;
+            let return_eval =
+                self.evaluate_expr(namespace, &target_abstract_environment, &returns)?;
             (imbl::OrdSet::unit(return_eval.value), return_eval.variables)
         } else {
             (imbl::OrdSet::default(), UsedVariables::default())
@@ -1444,7 +1494,8 @@ impl<'a> ConstraintsBuilder<'a> {
             namespace.clone_abstract_environment_or_default(program_point);
 
         let expression = if let Some(value) = &stmt_return.value {
-            let value_eval = self.evaluate_expr(namespace, value.as_ref())?;
+            let value_eval =
+                self.evaluate_expr(namespace, &target_abstract_environment, value.as_ref())?;
 
             self.create_used_variables_constraints(
                 &mut target_abstract_environment,
@@ -1609,7 +1660,8 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let eval = self.evaluate_expr(namespace, &stmt_assign.value)?;
+        let eval =
+            self.evaluate_expr(namespace, &target_abstract_environment, &stmt_assign.value)?;
 
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
@@ -1676,7 +1728,7 @@ impl<'a> ConstraintsBuilder<'a> {
             return Ok(target_abstract_environment);
         };
 
-        let eval = self.evaluate_expr(namespace, value)?;
+        let eval = self.evaluate_expr(namespace, &target_abstract_environment, value)?;
 
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
@@ -1715,7 +1767,8 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let condition_eval = self.evaluate_expr(namespace, &stmt_while.test)?;
+        let condition_eval =
+            self.evaluate_expr(namespace, &target_abstract_environment, &stmt_while.test)?;
 
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
@@ -1750,7 +1803,8 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut target_abstract_environment =
             namespace.clone_abstract_environment_or_default(program_point);
 
-        let condition_eval = self.evaluate_expr(namespace, &stmt_if.test)?;
+        let condition_eval =
+            self.evaluate_expr(namespace, &target_abstract_environment, &stmt_if.test)?;
 
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
@@ -1789,7 +1843,7 @@ impl<'a> ConstraintsBuilder<'a> {
             todo!("impossible");
         };
 
-        let condition_eval = self.evaluate_expr(namespace, &test)?;
+        let condition_eval = self.evaluate_expr(namespace, &target_abstract_environment, &test)?;
 
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
@@ -2398,7 +2452,7 @@ mod tests {
         digraph "builtins" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:6)" [label="#class(identifier=builtins[int@{1:6}]) ⊑ int@{builtins[1:6]} ∧ #defined(int@{builtins[1:6]})"];
-            "Constraint(location=1:6, id=int)" [label="int@{builtins[1:6]} ⊑ int@{builtins[int@{1:6}][2:29]} ∧ int@{builtins[1:6]} ⊑ int@{builtins[int@{1:6}][2:40]}"];
+            "Constraint(location=1:6, id=int)" [label="int@{builtins[1:6]} ⊑ int@{2:29} ∧ int@{builtins[1:6]} ⊑ int@{2:40}"];
             "Entry" -> "Constraint(location=1:6)" [label="#succeed(#class(identifier=builtins[int@{1:6}]))"];
             "Entry" -> "ExceptionExit" [label="#raise(#class(identifier=builtins[int@{1:6}]))"];
             "Constraint()" -> "TypeExit";
@@ -2409,7 +2463,7 @@ mod tests {
             "ExceptionExit" -> "Exit";
         }
         specification "builtins[int@{1:6}][__add__@{2:8}]":
-            {arguments: {self@{builtins[int@{1:6}][__add__@{2:8}][2:16]}: , value@{builtins[int@{1:6}][__add__@{2:8}][2:22]}: #annotated(int@{builtins[int@{1:6}][2:29]})}, return_type: {int@{builtins[int@{1:6}][2:40]}}, exceptions: {}}
+            {arguments: {self@{builtins[int@{1:6}][__add__@{2:8}][2:16]}: , value@{builtins[int@{1:6}][__add__@{2:8}][2:22]}: #annotated(int@{2:29})}, return_type: {int@{2:40}}, exceptions: {}}
         digraph "builtins[int@{1:6}][__add__@{2:8}]" {
             "Constraint()" [label="#return(None)"];
             "Entry" -> "Constraint()";
@@ -3482,7 +3536,57 @@ mod tests {
         }
         "##},
     )]
-    #[case::forward_reference(
+    #[case::hard_function_call(
+        indoc! {r##"
+        def foo():
+            return CONST
+
+        result = foo()
+
+        CONST = 5
+        "##},
+        indoc! {r##"
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Module(module)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Module(module)";
+            "Module(module)" -> "Exit";
+        }
+        specification "module":
+            {arguments: {}, return_type: {}, exceptions: {}}
+        digraph "module" {
+            "Constraint()" [label="#return(None)"];
+            "Constraint(location=1:4)" [label="#function(identifier=module[foo@{1:4}], async=false) ⊑ foo@{module[1:4]} ∧ #defined(foo@{module[1:4]})"];
+            "Constraint(location=4:0)" [label="(foo@{module[4:9]})() ⊑ result@{module[4:0]} ∧ #defined(result@{module[4:0]})"];
+            "Constraint(location=4:9)" [label="foo@{module[1:4]} ⊑ foo@{module[4:9]}"];
+            "Constraint(location=6:0)" [label="5 ⊑ CONST@{module[6:0]} ∧ #defined(CONST@{module[6:0]})"];
+            "Constraint(location=6:0, id=CONST)" [label="CONST@{module[6:0]} ⊑ CONST@{2:11}"];
+            "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=module[foo@{1:4}], async=false))"];
+            "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=module[foo@{1:4}], async=false))"];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:4)" -> "Constraint(location=4:9)" [label="#succeed(foo@{module[1:4]})"];
+            "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise(foo@{module[1:4]})"];
+            "Constraint(location=4:0)" -> "Constraint(location=6:0)";
+            "Constraint(location=4:9)" -> "Constraint(location=4:0)" [label="#succeed((foo@{module[4:9]})())"];
+            "Constraint(location=4:9)" -> "ExceptionExit" [label="#raise((foo@{module[4:9]})())"];
+            "Constraint(location=6:0)" -> "Constraint()";
+            "Constraint(location=6:0)" -> "Constraint(location=6:0, id=CONST)";
+            "Constraint(location=6:0, id=CONST)" -> "Constraint(location=1:4)";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "Exit";
+        }
+        specification "module[foo@{1:4}]":
+            {arguments: {}, return_type: {}, exceptions: {}}
+        digraph "module[foo@{1:4}]" {
+            "Constraint(location=2:4)" [label="#return(CONST@{2:11})"];
+            "Entry" -> "Constraint(location=2:4)";
+            "Constraint(location=2:4)" -> "TypeExit";
+            "TypeExit" -> "Exit";
+        }
+        "##},
+    )]
+    #[case::forward_reference_function_call(
         indoc! {r##"
         def foo():
             return CONST
@@ -3505,7 +3609,7 @@ mod tests {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:4)" [label="#function(identifier=module[foo@{1:4}], async=false) ⊑ foo@{module[1:4]} ∧ #defined(foo@{module[1:4]})"];
             "Constraint(location=4:0)" [label="5 ⊑ CONST@{module[4:0]} ∧ #defined(CONST@{module[4:0]})"];
-            "Constraint(location=4:0, id=CONST)" [label="CONST@{module[4:0]} ⊑ CONST@{module[foo@{1:4}][2:11]}"];
+            "Constraint(location=4:0, id=CONST)" [label="CONST@{module[4:0]} ⊑ CONST@{2:11}"];
             "Constraint(location=6:0)" [label="(foo@{module[6:9]})() ⊑ result@{module[6:0]} ∧ #defined(result@{module[6:0]})"];
             "Constraint(location=6:9)" [label="foo@{module[1:4]} ⊑ foo@{module[6:9]}"];
             "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=module[foo@{1:4}], async=false))"];
@@ -3525,7 +3629,7 @@ mod tests {
         specification "module[foo@{1:4}]":
             {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module[foo@{1:4}]" {
-            "Constraint(location=2:4)" [label="#return(CONST@{module[foo@{1:4}][2:11]})"];
+            "Constraint(location=2:4)" [label="#return(CONST@{2:11})"];
             "Entry" -> "Constraint(location=2:4)";
             "Constraint(location=2:4)" -> "TypeExit";
             "TypeExit" -> "Exit";
