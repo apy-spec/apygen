@@ -1281,10 +1281,17 @@ impl<'a> ConstraintsBuilder<'a> {
             &function_namespace,
             &stmt_function_def.parameters,
         )?;
+        let (return_type, return_variables) = if let Some(returns) = &stmt_function_def.returns {
+            let return_eval = self.evaluate_expr(namespace, &returns)?;
+            (imbl::OrdSet::unit(return_eval.value), return_eval.variables)
+        } else {
+            (imbl::OrdSet::default(), UsedVariables::default())
+        };
+
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
             self.gen_location(stmt_function_def.parameters.as_ref()),
-            parameters.variables,
+            parameters.variables.join(&return_variables),
         );
 
         self.assign_variable(
@@ -1306,7 +1313,7 @@ impl<'a> ConstraintsBuilder<'a> {
             SubProgramEntityContext::new(
                 ConstraintGraphSpecification {
                     arguments: parameters.value,
-                    return_type: imbl::OrdSet::default(),
+                    return_type,
                     exceptions: imbl::OrdSet::default(),
                 },
                 target_abstract_environment.variable_locations.clone(),
@@ -3303,7 +3310,7 @@ mod tests {
     )]
     #[case::simple_function_definition(
         indoc! {r##"
-        def add_two(a: int, b: int):
+        def add_two(a: int, b: int) -> int:
             return a + b
 
         result = add_two(42, 67)
@@ -3321,7 +3328,7 @@ mod tests {
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:4)" [label="#function(identifier=module[add_two@{1:4}], async=false) ⊑ add_two@{module[1:4]} ∧ #defined(add_two@{module[1:4]})"];
-            "Constraint(location=1:11)" [label="int@{builtins[1:6]} ⊑ int@{module[1:15]} ∧ int@{builtins[1:6]} ⊑ int@{module[1:23]}"];
+            "Constraint(location=1:11)" [label="int@{builtins[1:6]} ⊑ int@{module[1:15]} ∧ int@{builtins[1:6]} ⊑ int@{module[1:23]} ∧ int@{builtins[1:6]} ⊑ int@{module[1:31]}"];
             "Constraint(location=4:0)" [label="(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]} ∧ #defined(result@{module[4:0]})"];
             "Constraint(location=4:9)" [label="add_two@{module[1:4]} ⊑ add_two@{module[4:9]}"];
             "Entry" -> "Constraint(location=1:11)" [label="#succeed(int@{builtins[1:6]})"];
@@ -3338,7 +3345,7 @@ mod tests {
             "ExceptionExit" -> "Exit";
         }
         specification "module[add_two@{1:4}]":
-            {arguments: {a@{module[add_two@{1:4}][1:12]}: #annotated(int@{module[1:15]}), b@{module[add_two@{1:4}][1:20]}: #annotated(int@{module[1:23]})}, return_type: {}, exceptions: {}}
+            {arguments: {a@{module[add_two@{1:4}][1:12]}: #annotated(int@{module[1:15]}), b@{module[add_two@{1:4}][1:20]}: #annotated(int@{module[1:23]})}, return_type: {int@{module[1:31]}}, exceptions: {}}
         digraph "module[add_two@{1:4}]" {
             "Constraint(location=2:4)" [label="#return((a@{module[add_two@{1:4}][2:11]}) + (b@{module[add_two@{1:4}][2:15]}))"];
             "Constraint(location=2:11)" [label="a@{module[add_two@{1:4}][1:12]} ⊑ a@{module[add_two@{1:4}][2:11]} ∧ b@{module[add_two@{1:4}][1:20]} ⊑ b@{module[add_two@{1:4}][2:15]}"];

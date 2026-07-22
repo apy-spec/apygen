@@ -28,11 +28,11 @@ digraph "DependentGraph" {
 digraph "overloaded_function" {
     "Constraint()" [label="#return(None)"];
     "Constraint(location=5:4)" [label="#function(identifier=overloaded_function[add@{5:4}], async=false) ⊑ add@{overloaded_function[5:4]} ∧ #defined(add@{overloaded_function[5:4]})"];
-    "Constraint(location=5:7)" [label="int@{builtins[255:6]} ⊑ int@{overloaded_function[5:11]} ∧ int@{builtins[255:6]} ⊑ int@{overloaded_function[5:19]}"];
+    "Constraint(location=5:7)" [label="int@{builtins[255:6]} ⊑ int@{overloaded_function[5:11]} ∧ int@{builtins[255:6]} ⊑ int@{overloaded_function[5:19]} ∧ int@{builtins[255:6]} ⊑ int@{overloaded_function[5:27]}"];
     "Constraint(location=9:4)" [label="#function(identifier=overloaded_function[add@{9:4}], async=false) ⊑ add@{overloaded_function[9:4]} ∧ #defined(add@{overloaded_function[9:4]})"];
-    "Constraint(location=9:7)" [label="float@{builtins[366:6]} ⊑ float@{overloaded_function[9:11]} ∧ float@{builtins[366:6]} ⊑ float@{overloaded_function[9:21]}"];
+    "Constraint(location=9:7)" [label="float@{builtins[366:6]} ⊑ float@{overloaded_function[9:11]} ∧ float@{builtins[366:6]} ⊑ float@{overloaded_function[9:21]} ∧ float@{builtins[366:6]} ⊑ float@{overloaded_function[9:31]}"];
     "Constraint(location=12:4)" [label="#function(identifier=overloaded_function[add@{12:4}], async=false) ⊑ add@{overloaded_function[12:4]} ∧ #defined(add@{overloaded_function[12:4]})"];
-    "Constraint(location=12:7)" [label="float@{builtins[366:6]} ⊑ float@{overloaded_function[12:17]} ∧ float@{builtins[366:6]} ⊑ float@{overloaded_function[12:33]} ∧ int@{builtins[255:6]} ⊑ int@{overloaded_function[12:11]} ∧ int@{builtins[255:6]} ⊑ int@{overloaded_function[12:27]}"];
+    "Constraint(location=12:7)" [label="float@{builtins[366:6]} ⊑ float@{overloaded_function[12:17]} ∧ float@{builtins[366:6]} ⊑ float@{overloaded_function[12:33]} ∧ float@{builtins[366:6]} ⊑ float@{overloaded_function[12:49]} ∧ int@{builtins[255:6]} ⊑ int@{overloaded_function[12:11]} ∧ int@{builtins[255:6]} ⊑ int@{overloaded_function[12:27]} ∧ int@{builtins[255:6]} ⊑ int@{overloaded_function[12:43]}"];
     "Entry" -> "Constraint(location=5:7)" [label="#succeed(int@{builtins[255:6]})"];
     "Entry" -> "ExceptionExit" [label="#raise(int@{builtins[255:6]})"];
     "Constraint()" -> "TypeExit";

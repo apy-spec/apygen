@@ -714,6 +714,19 @@ impl<'a> ExpressionEvaluator<'a> {
                 let function_namespace =
                     Namespace::NamedProgramEntity(literal_function.value.program_entity.clone());
 
+                let constraint_graph = self
+                    .constraint_graphs
+                    .get(&function_namespace)
+                    .expect("constraint graph not found");
+                let return_type = self.evaluate_expressions(
+                    abstract_state,
+                    &constraint_graph.specification.return_type,
+                )?;
+                let exception_type = self.evaluate_expressions(
+                    abstract_state,
+                    &constraint_graph.specification.exceptions,
+                )?;
+
                 let evaluation_state =
                     if let Some(evaluation_state) = abstract_state.get(&function_namespace) {
                         evaluation_state
@@ -727,9 +740,21 @@ impl<'a> ExpressionEvaluator<'a> {
                     };
 
                 Some(PyTypeEval::new(
-                    evaluation_state.return_value.as_value()?.clone(),
-                    PyEffects::new()
-                        .with_exceptions(evaluation_state.raised_exceptions.as_value()?.clone()),
+                    if constraint_graph.specification.return_type.is_empty() {
+                        evaluation_state.return_value.as_value()?.clone()
+                    } else {
+                        return_type.value
+                    },
+                    PyEffects::new().with_exceptions(
+                        if constraint_graph.specification.exceptions.is_empty() {
+                            evaluation_state.raised_exceptions.as_value()?.clone()
+                        } else {
+                            RaisedExceptions::raise(Exception::new(
+                                Arc::new(exception_type.value),
+                                ExceptionOrigin::Specified,
+                            ))
+                        },
+                    ),
                 ))
             }
             TypeLiteral::Class(literal_class) => Some(PyTypeEval::with_default_effects(
@@ -1700,7 +1725,7 @@ mod tests {
     )]
     #[case::simple_function_definition(
         indoc! {r##"
-        def add_two(a: int, b: int):
+        def add_two(a: int, b: int) -> int:
             return a + b
 
         result = add_two(42, 67)
