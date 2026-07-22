@@ -33,9 +33,8 @@ use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
 use crate::finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
 
 use rayon::iter::IntoParallelIterator;
-use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use thiserror::Error;
@@ -154,45 +153,18 @@ impl<'e> TryFrom<&'e ast::Expr> for AssignmentTarget<'e> {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProgramEntity {
     pub namespace: Arc<Namespace>,
-    pub cfg_location: Option<Location>,
     pub kind: ProgramEntityKind,
 }
 
 impl ProgramEntity {
-    pub fn new(
-        namespace: Arc<Namespace>,
-        cfg_location: Option<Location>,
-        kind: ProgramEntityKind,
-    ) -> Self {
-        Self {
-            namespace,
-            cfg_location,
-            kind,
-        }
+    pub fn new(namespace: Arc<Namespace>, kind: ProgramEntityKind) -> Self {
+        Self { namespace, kind }
     }
 }
 
 impl Display for ProgramEntity {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}Entity({})", self.kind, self.namespace)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
-pub struct SubProgramEntityContext {
-    pub specification: ConstraintGraphSpecification,
-    pub variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
-}
-
-impl SubProgramEntityContext {
-    pub fn new(
-        specification: ConstraintGraphSpecification,
-        variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
-    ) -> Self {
-        Self {
-            specification,
-            variable_locations,
-        }
     }
 }
 
@@ -209,11 +181,15 @@ impl OrdJoin for ReturnStatus {}
 pub struct ProgramEntityAbstractEnvironment {
     pub return_status: ReturnStatus,
     pub current_nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>,
+    pub unknown_variables: imbl::OrdMap<
+        VariableName,
+        imbl::OrdMap<ConstraintNode, imbl::OrdSet<(Arc<Namespace>, Location)>>,
+    >,
     pub variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
     pub nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
     pub edges: imbl::OrdMap<(ConstraintNode, ConstraintNode), imbl::OrdSet<Guard>>,
     pub imports: imbl::OrdSet<ModuleName>,
-    pub sub_program_entities: imbl::OrdMap<ProgramEntity, SubProgramEntityContext>,
+    pub sub_program_entities: imbl::OrdMap<ProgramEntity, CfgAnalysis>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
@@ -341,31 +317,16 @@ impl<'a> ProgramEntityAbstractParentState<'a> {
         }
     }
 
-    pub fn previous_locations<'l>(
-        &'l self,
-        entity: &'l ProgramEntity,
+    pub fn previous_locations(
+        &self,
         variable_name: &VariableName,
-    ) -> Option<(&'l Arc<Namespace>, &'l imbl::OrdSet<Location>)> {
-        let (qualified_location, variable_locations) = match self.entity.kind {
-            ProgramEntityKind::Module | ProgramEntityKind::Function => {
-                (&self.entity.namespace, &self.state.variable_locations)
-            }
-            ProgramEntityKind::Class => (
-                &entity.namespace,
-                &self
-                    .state
-                    .sub_program_entities
-                    .get(entity)?
-                    .variable_locations,
-            ),
-        };
-
-        if let Some(locations) = variable_locations.get(variable_name) {
-            return Some((qualified_location, locations));
+    ) -> Option<(&Arc<Namespace>, &imbl::OrdSet<Location>)> {
+        if let Some(locations) = self.state.variable_locations.get(variable_name) {
+            return Some((&self.entity.namespace, locations));
         }
 
         if let Some(parent) = &self.parent {
-            return parent.previous_locations(self.entity, variable_name);
+            return parent.previous_locations(variable_name);
         }
 
         None
@@ -410,6 +371,7 @@ pub struct ConstraintsBuilder<'a> {
     pub cfg: &'a Cfg<'a>,
     pub line_index: &'a LineIndex,
     pub program_entity: &'a ProgramEntity,
+    pub specification: &'a ConstraintGraphSpecification,
     pub abstract_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
 }
 
@@ -418,12 +380,14 @@ impl<'a> ConstraintsBuilder<'a> {
         cfg: &'a Cfg<'a>,
         line_index: &'a LineIndex,
         program_entity: &'a ProgramEntity,
+        specification: &'a ConstraintGraphSpecification,
         abstract_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
     ) -> ConstraintsBuilder<'a> {
         ConstraintsBuilder {
             cfg,
             line_index,
             program_entity,
+            specification,
             abstract_parent_state,
         }
     }
@@ -461,15 +425,16 @@ impl<'a> ConstraintsBuilder<'a> {
 
     pub fn previous_locations<'l>(
         &'l self,
-        variable_locations: &'l imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
+        abstract_environment: &'l ProgramEntityAbstractEnvironment,
         variable_name: &VariableName,
     ) -> Option<(&'l Arc<Namespace>, &'l imbl::OrdSet<Location>)> {
-        if let Some(previous_locations) = variable_locations.get(variable_name) {
+        if let Some(previous_locations) = abstract_environment.variable_locations.get(variable_name)
+        {
             return Some((&self.program_entity.namespace, previous_locations));
         }
 
         if let Some(parent) = &self.abstract_parent_state {
-            return parent.previous_locations(self.program_entity, variable_name);
+            return parent.previous_locations(variable_name);
         }
 
         None
@@ -485,11 +450,16 @@ impl<'a> ConstraintsBuilder<'a> {
             return;
         }
 
+        let node = ConstraintNode::Constraint {
+            location: Some(location.clone()),
+            id: None,
+        };
+
         let mut constraints = imbl::OrdSet::new();
         let mut previous_expression_variables = imbl::OrdSet::new();
         for (used_variable_name, used_locations) in used_variables.names.as_ref() {
-            if let Some((previous_program_entity, previous_locations)) = self
-                .previous_locations(&abstract_environment.variable_locations, used_variable_name)
+            if let Some((previous_program_entity, previous_locations)) =
+                self.previous_locations(&abstract_environment, used_variable_name)
             {
                 for previous_location in previous_locations {
                     for used_location in used_locations {
@@ -514,7 +484,20 @@ impl<'a> ConstraintsBuilder<'a> {
                     }
                 }
             } else {
-                // TODO: add support for forward references
+                abstract_environment.unknown_variables = abstract_environment
+                    .unknown_variables
+                    .join(&imbl::OrdMap::unit(
+                        used_variable_name.clone(),
+                        imbl::OrdMap::unit(
+                            node.clone(),
+                            used_locations
+                                .iter()
+                                .map(|used_location| {
+                                    (self.program_entity.namespace.clone(), used_location.clone())
+                                })
+                                .collect(),
+                        ),
+                    ));
             }
         }
 
@@ -528,10 +511,6 @@ impl<'a> ConstraintsBuilder<'a> {
                 .any(|guard| matches!(guard, Guard::Raise { .. }))
         });
 
-        let node = ConstraintNode::Constraint {
-            location: Some(location.clone()),
-            id: None,
-        };
         abstract_environment.nodes.insert(node.clone(), constraints);
 
         let empty_constraint_node = ConstraintNode::Constraint {
@@ -581,7 +560,7 @@ impl<'a> ConstraintsBuilder<'a> {
         additional_constraints: imbl::OrdSet<Constraint>,
         left: Arc<Expression>,
         right: Arc<Expression>,
-    ) {
+    ) -> ConstraintNode {
         let node = ConstraintNode::Constraint {
             location: Some(location.clone()),
             id: None,
@@ -609,7 +588,7 @@ impl<'a> ConstraintsBuilder<'a> {
             }
 
             abstract_environment.current_nodes = current_nodes;
-            return;
+            return node;
         }
 
         let current_empty_constraint = ConstraintNode::Constraint {
@@ -642,22 +621,25 @@ impl<'a> ConstraintsBuilder<'a> {
         }
 
         abstract_environment.current_nodes = current_nodes;
+
+        node
     }
 
     pub fn assign_variable(
         &self,
         abstract_environment: &mut ProgramEntityAbstractEnvironment,
         location: Location,
-        variable: VariableName,
+        variable_name: VariableName,
         type_expression: Arc<Expression>,
+        sub_cfg_analysis: Option<&CfgAnalysis>,
     ) {
         let expression_variable = ExpressionVariable::new(NamedQualifiedLocation::new(
-            variable.clone(),
+            variable_name.clone(),
             location.clone(),
             self.program_entity.namespace.clone(),
         ));
 
-        self.create_include_constraint(
+        let node = self.create_include_constraint(
             abstract_environment,
             location.clone(),
             imbl::OrdSet::unit(Constraint::DefinedVariable(expression_variable.clone())),
@@ -665,9 +647,70 @@ impl<'a> ConstraintsBuilder<'a> {
             Arc::new(Expression::Variable(expression_variable)),
         );
 
+        if let Some(sub_cfg_analysis) = sub_cfg_analysis {
+            for (unknown_variable, variable_nodes) in
+                &sub_cfg_analysis.environment.unknown_variables
+            {
+                let variables_locations = variable_nodes
+                    .iter()
+                    .flat_map(|(_, locations)| locations.clone())
+                    .collect();
+                abstract_environment.unknown_variables = abstract_environment
+                    .unknown_variables
+                    .join(&imbl::OrdMap::unit(
+                        unknown_variable.clone(),
+                        imbl::OrdMap::unit(node.clone(), variables_locations),
+                    ));
+            }
+        }
+
+        if let Some(variable_nodes) = abstract_environment
+            .unknown_variables
+            .remove(&variable_name)
+        {
+            let unknown_variable_node = ConstraintNode::Constraint {
+                location: Some(location.clone()),
+                id: Some(Arc::new(variable_name.as_ref().as_ref().to_owned())),
+            };
+            for (original_node, unknown_variable_locations) in variable_nodes {
+                abstract_environment.nodes.insert(
+                    unknown_variable_node.clone(),
+                    unknown_variable_locations
+                        .into_iter()
+                        .map(|(unknown_variable_namespace, unknown_variable_location)| {
+                            Constraint::Type(IncludeConstraint::new(
+                                Arc::new(Expression::Variable(ExpressionVariable::new(
+                                    NamedQualifiedLocation::new(
+                                        variable_name.clone(),
+                                        location.clone(),
+                                        self.program_entity.namespace.clone(),
+                                    ),
+                                ))),
+                                Arc::new(Expression::Variable(ExpressionVariable::new(
+                                    NamedQualifiedLocation::new(
+                                        variable_name.clone(),
+                                        unknown_variable_location,
+                                        unknown_variable_namespace,
+                                    ),
+                                ))),
+                            ))
+                        })
+                        .collect(),
+                );
+                abstract_environment.edges.insert(
+                    (node.clone(), unknown_variable_node.clone()),
+                    imbl::OrdSet::default(),
+                );
+                abstract_environment.edges.insert(
+                    (unknown_variable_node.clone(), original_node),
+                    imbl::OrdSet::default(),
+                );
+            }
+        }
+
         abstract_environment
             .variable_locations
-            .insert(variable, imbl::OrdSet::unit(location));
+            .insert(variable_name, imbl::OrdSet::unit(location));
     }
 
     pub fn assign_empty_constraint(
@@ -1288,6 +1331,28 @@ impl<'a> ConstraintsBuilder<'a> {
             (imbl::OrdSet::default(), UsedVariables::default())
         };
 
+        let function_program_entity =
+            ProgramEntity::new(function_namespace, ProgramEntityKind::Function);
+
+        let sub_cfg_analysis = analyse_cfg(
+            self.cfg
+                .cfgs()
+                .get(&self.gen_location(&stmt_function_def))
+                .unwrap(),
+            self.line_index,
+            &function_program_entity,
+            ConstraintGraphSpecification {
+                arguments: parameters.value,
+                return_type,
+                exceptions: imbl::OrdSet::default(),
+            },
+            Some(&ProgramEntityAbstractParentState::new(
+                &target_abstract_environment,
+                self.program_entity,
+                self.abstract_parent_state,
+            )),
+        );
+
         self.create_used_variables_constraints(
             &mut target_abstract_environment,
             self.gen_location(stmt_function_def.parameters.as_ref()),
@@ -1302,23 +1367,12 @@ impl<'a> ConstraintsBuilder<'a> {
                 function_qualified_location,
                 stmt_function_def.is_async,
             ))),
+            Some(&sub_cfg_analysis),
         );
 
-        target_abstract_environment.sub_program_entities.insert(
-            ProgramEntity::new(
-                function_namespace,
-                Some(self.gen_location(&stmt_function_def)),
-                ProgramEntityKind::Function,
-            ),
-            SubProgramEntityContext::new(
-                ConstraintGraphSpecification {
-                    arguments: parameters.value,
-                    return_type,
-                    exceptions: imbl::OrdSet::default(),
-                },
-                target_abstract_environment.variable_locations.clone(),
-            ),
-        );
+        target_abstract_environment
+            .sub_program_entities
+            .insert(function_program_entity, sub_cfg_analysis);
 
         Ok(target_abstract_environment)
     }
@@ -1342,6 +1396,27 @@ impl<'a> ConstraintsBuilder<'a> {
             self.program_entity.namespace.clone(),
         );
 
+        let class_namespace = Arc::new(Namespace::NamedProgramEntity(
+            class_qualified_location.clone(),
+        ));
+
+        let class_program_entity = ProgramEntity::new(class_namespace, ProgramEntityKind::Class);
+
+        let sub_cfg_analysis = analyse_cfg(
+            self.cfg
+                .cfgs()
+                .get(&self.gen_location(&stmt_class_def))
+                .unwrap(),
+            self.line_index,
+            &class_program_entity,
+            ConstraintGraphSpecification::default(),
+            Some(&ProgramEntityAbstractParentState::new(
+                &target_abstract_environment,
+                self.program_entity,
+                self.abstract_parent_state,
+            )),
+        );
+
         self.assign_variable(
             &mut target_abstract_environment,
             location.clone(),
@@ -1349,23 +1424,12 @@ impl<'a> ConstraintsBuilder<'a> {
             Arc::new(Expression::Class(ExpressionClass::new(
                 class_qualified_location.clone(),
             ))),
+            Some(&sub_cfg_analysis),
         );
 
-        target_abstract_environment.sub_program_entities.insert(
-            ProgramEntity::new(
-                Arc::new(Namespace::NamedProgramEntity(class_qualified_location)),
-                Some(self.gen_location(stmt_class_def)),
-                ProgramEntityKind::Class,
-            ),
-            SubProgramEntityContext::new(
-                ConstraintGraphSpecification {
-                    arguments: imbl::OrdMap::default(),
-                    return_type: imbl::OrdSet::default(),
-                    exceptions: imbl::OrdSet::default(),
-                },
-                target_abstract_environment.variable_locations.clone(),
-            ),
-        );
+        target_abstract_environment
+            .sub_program_entities
+            .insert(class_program_entity, sub_cfg_analysis);
 
         Ok(target_abstract_environment)
     }
@@ -1447,6 +1511,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     Arc::new(Expression::Import(ExpressionImport::new(
                         module_name.clone(),
                     ))),
+                    None,
                 );
             } else {
                 let identifier = Arc::new(module_name.identifiers.first().clone());
@@ -1567,6 +1632,7 @@ impl<'a> ConstraintsBuilder<'a> {
                         self.gen_location(target_expr),
                         Arc::new(target_name),
                         type_expression.clone(),
+                        None,
                     );
                 }
                 AssignmentTarget::Attribute { .. } => {}
@@ -1627,6 +1693,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     self.gen_location(stmt_ann_assign.target.as_ref()),
                     Arc::new(target_name),
                     type_expression.clone(),
+                    None,
                 );
             }
             AssignmentTarget::Attribute { .. } => {}
@@ -1855,19 +1922,11 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
             .current_nodes
             .insert(ConstraintNode::Entry, imbl::OrdSet::default());
 
-        if let Some(abstract_parent_state) = self.abstract_parent_state {
-            if let Some(context) = abstract_parent_state
-                .state
-                .sub_program_entities
-                .get(self.program_entity)
-            {
-                for argument in context.specification.arguments.keys() {
-                    entry_state.variable_locations.insert(
-                        argument.named_qualified_location.name.clone(),
-                        imbl::OrdSet::unit(argument.named_qualified_location.location.clone()),
-                    );
-                }
-            }
+        for argument in self.specification.arguments.keys() {
+            entry_state.variable_locations.insert(
+                argument.named_qualified_location.name.clone(),
+                imbl::OrdSet::unit(argument.named_qualified_location.location.clone()),
+            );
         }
 
         analysis_state
@@ -2110,38 +2169,34 @@ pub enum ConstraintsError {
     BuildError(#[from] ConstraintsBuilderError),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CfgAnalysis {
     pub specification: ConstraintGraphSpecification,
     pub environment: ProgramEntityAbstractEnvironment,
 }
 
-impl From<CfgAnalysis> for ConstraintGraph {
-    fn from(cfg_analysis: CfgAnalysis) -> Self {
-        ConstraintGraph::new(
-            cfg_analysis.specification.clone(),
-            cfg_analysis.environment.nodes.clone(),
-            cfg_analysis.environment.edges.into_iter().fold(
-                imbl::OrdMap::default(),
-                |mut acc, ((from, to), guards)| {
-                    acc.entry(from).or_default().insert(to, guards);
-                    acc
-                },
-            ),
-        )
+impl Join for CfgAnalysis {
+    // impl Join instead of derive(Join) required to avoid overflows
+    fn join(&self, other: &Self) -> Self {
+        CfgAnalysis {
+            specification: self.specification.join(&other.specification),
+            environment: self.environment.join(&other.environment),
+        }
     }
 }
 
 pub fn analyse_cfg<'a>(
     cfg: &'a Cfg,
     line_index: &'a LineIndex,
-    program_entity: ProgramEntity,
+    program_entity: &ProgramEntity,
+    specification: ConstraintGraphSpecification,
     program_entity_analysis_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
-) -> BTreeMap<ProgramEntity, CfgAnalysis> {
+) -> CfgAnalysis {
     let constraint_builder = ConstraintsBuilder::new(
         cfg,
         line_index,
-        &program_entity,
+        program_entity,
+        &specification,
         program_entity_analysis_parent_state,
     );
 
@@ -2154,55 +2209,70 @@ pub fn analyse_cfg<'a>(
         .remove(&ProgramPoint::Exit)
         .expect("ProgramPoint::Exit should exist in analysed cfg");
 
-    let sub_program_entity_analysis_parent_state = ProgramEntityAbstractParentState::new(
-        &program_entity_exit_abstract_state,
-        &program_entity,
-        program_entity_analysis_parent_state,
-    );
-    let mut program_entities = program_entity_exit_abstract_state
-        .sub_program_entities
-        .keys()
-        .par_bridge()
-        .flat_map(|sub_program_entity| {
-            analyse_cfg(
-                cfg.cfgs()
-                    .get(&sub_program_entity.cfg_location.unwrap())
-                    .unwrap(),
-                line_index,
-                sub_program_entity.clone(),
-                Some(&sub_program_entity_analysis_parent_state),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-
-    let cfg_analysis = CfgAnalysis {
-        specification: program_entity_analysis_parent_state
-            .and_then(|parent_state| parent_state.state.sub_program_entities.get(&program_entity))
-            .map(|context| context.specification.clone())
-            .unwrap_or_default(),
+    CfgAnalysis {
+        specification,
         environment: program_entity_exit_abstract_state,
-    };
-
-    program_entities.insert(program_entity, cfg_analysis);
-
-    program_entities
+    }
 }
 
 pub fn analyse_module<'a>(
     module_loader: &impl ModuleLoader<Error: Debug>,
     parent_state: Option<&ProgramEntityAbstractParentState>,
     module_name: &ModuleName,
-) -> Option<BTreeMap<ProgramEntity, CfgAnalysis>> {
+) -> Option<imbl::OrdMap<ProgramEntity, CfgAnalysis>> {
     let source = module_loader.load(&module_name).ok()?;
     let module = parse_module(&source).ok()?;
     let line_index = LineIndex::from_source_text(&source);
     let cfg = build_cfg(&line_index, module.syntax()).ok()?;
     let program_entity = ProgramEntity::new(
         Arc::new(Namespace::Module(module_name.clone())),
-        None,
         ProgramEntityKind::Module,
     );
-    Some(analyse_cfg(&cfg, &line_index, program_entity, parent_state))
+    let cfg_analysis = analyse_cfg(
+        &cfg,
+        &line_index,
+        &program_entity,
+        ConstraintGraphSpecification::default(),
+        parent_state,
+    );
+    Some(imbl::OrdMap::unit(program_entity, cfg_analysis))
+}
+
+pub fn get_imports(
+    cfg_analyses: &imbl::OrdMap<ProgramEntity, CfgAnalysis>,
+) -> BTreeSet<ModuleName> {
+    cfg_analyses
+        .values()
+        .flat_map(|cfg_analysis| {
+            get_imports(&cfg_analysis.environment.sub_program_entities)
+                .into_iter()
+                .chain(cfg_analysis.environment.imports.iter().cloned())
+        })
+        .collect()
+}
+
+pub fn create_constraint_graphs(
+    cfg_analyses: imbl::OrdMap<ProgramEntity, CfgAnalysis>,
+) -> imbl::OrdMap<Arc<Namespace>, ConstraintGraph> {
+    cfg_analyses
+        .into_iter()
+        .flat_map(|(program_entity, cfg_analysis)| {
+            create_constraint_graphs(cfg_analysis.environment.sub_program_entities).update(
+                program_entity.namespace,
+                ConstraintGraph::new(
+                    cfg_analysis.specification.clone(),
+                    cfg_analysis.environment.nodes.clone(),
+                    cfg_analysis.environment.edges.into_iter().fold(
+                        imbl::OrdMap::default(),
+                        |mut acc, ((from, to), guards)| {
+                            acc.entry(from).or_default().insert(to, guards);
+                            acc
+                        },
+                    ),
+                ),
+            )
+        })
+        .collect()
 }
 
 pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
@@ -2217,7 +2287,6 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
     let builtins_module_node = ModuleNode::Module(builtins_module_name.clone());
     let builtins_entity = ProgramEntity::new(
         Arc::new(Namespace::Module(builtins_module_name.clone())),
-        None,
         ProgramEntityKind::Module,
     );
 
@@ -2228,15 +2297,12 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         None,
     );
 
-    let imports = builtins_cfg_analyses
-        .values()
-        .flat_map(|cfg_analysis| cfg_analysis.environment.imports.iter().cloned())
-        .collect::<BTreeSet<_>>();
+    let builtins_imports = get_imports(&builtins_cfg_analyses);
 
     let mut dependent_graph = ModuleDependentGraph::default();
     dependent_graph.add_dependent(ModuleNode::Entry, builtins_module_node.clone());
     dependent_graph.add_dependent(builtins_module_node.clone(), ModuleNode::Exit);
-    for import in &imports {
+    for import in &builtins_imports {
         dependent_graph.add_dependent(
             ModuleNode::Module(import.clone()),
             builtins_module_node.clone(),
@@ -2244,7 +2310,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
     }
 
     let mut worklist = initial_modules
-        .chain(imports)
+        .chain(builtins_imports)
         .filter(|import| *import != builtins_module_name)
         .collect::<BTreeSet<_>>();
 
@@ -2252,18 +2318,10 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         let analysed_modules = worklist
             .into_par_iter()
             .filter_map(|module_name| {
-                let mut imports = BTreeSet::new();
-                let constraint_graphs =
-                    analyse_module(module_loader, Some(builtin_parent_state), &module_name)?
-                        .into_iter()
-                        .map(|(program_entity, cfg_analysis)| {
-                            imports.extend(cfg_analysis.environment.imports.clone());
-                            (
-                                program_entity.namespace,
-                                ConstraintGraph::from(cfg_analysis),
-                            )
-                        })
-                        .collect();
+                let cfg_analyses =
+                    analyse_module(module_loader, Some(builtin_parent_state), &module_name)?;
+                let imports = get_imports(&cfg_analyses);
+                let constraint_graphs = create_constraint_graphs(cfg_analyses);
                 Some((ModuleNode::Module(module_name), constraint_graphs, imports))
             })
             .collect::<Vec<_>>();
@@ -2296,15 +2354,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
 
     dependent_graph.insert(
         builtins_module_node,
-        builtins_cfg_analyses
-            .into_iter()
-            .map(|(program_entity, cfg_analysis)| {
-                (
-                    program_entity.namespace,
-                    ConstraintGraph::from(cfg_analysis),
-                )
-            })
-            .collect(),
+        create_constraint_graphs(builtins_cfg_analyses),
     );
 
     dependent_graph
@@ -2331,8 +2381,79 @@ mod tests {
 
     const TEST_BUILTINS: &str = indoc! {r##"
         class int:
-            pass
+            def __add__(self, value: int, /) -> int: ...
     "##};
+
+    #[rstest]
+    fn test_build_builtins_constraints() {
+        let expected_constraints = indoc! {r##"
+        digraph "DependentGraph" {
+            "Module(builtins)";
+            "Entry" -> "Module(builtins)";
+            "Module(builtins)" -> "Exit";
+        }
+        specification "builtins":
+            {arguments: {}, return_type: {}, exceptions: {}}
+        digraph "builtins" {
+            "Constraint()" [label="#return(None)"];
+            "Constraint(location=1:6)" [label="#class(identifier=builtins[int@{1:6}]) ⊑ int@{builtins[1:6]} ∧ #defined(int@{builtins[1:6]})"];
+            "Constraint(location=1:6, id=int)" [label="int@{builtins[1:6]} ⊑ int@{builtins[int@{1:6}][2:29]} ∧ int@{builtins[1:6]} ⊑ int@{builtins[int@{1:6}][2:40]}"];
+            "Entry" -> "Constraint(location=1:6)" [label="#succeed(#class(identifier=builtins[int@{1:6}]))"];
+            "Entry" -> "ExceptionExit" [label="#raise(#class(identifier=builtins[int@{1:6}]))"];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=1:6)" -> "Constraint()";
+            "Constraint(location=1:6)" -> "Constraint(location=1:6, id=int)";
+            "Constraint(location=1:6, id=int)" -> "Constraint(location=1:6)";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "Exit";
+        }
+        specification "builtins[int@{1:6}][__add__@{2:8}]":
+            {arguments: {self@{builtins[int@{1:6}][__add__@{2:8}][2:16]}: , value@{builtins[int@{1:6}][__add__@{2:8}][2:22]}: #annotated(int@{builtins[int@{1:6}][2:29]})}, return_type: {int@{builtins[int@{1:6}][2:40]}}, exceptions: {}}
+        digraph "builtins[int@{1:6}][__add__@{2:8}]" {
+            "Constraint()" [label="#return(None)"];
+            "Entry" -> "Constraint()";
+            "Constraint()" -> "TypeExit";
+            "TypeExit" -> "Exit";
+        }
+        specification "builtins[int@{1:6}]":
+            {arguments: {}, return_type: {}, exceptions: {}}
+        digraph "builtins[int@{1:6}]" {
+            "Constraint()" [label="#return(None)"];
+            "Constraint(location=2:8)" [label="#function(identifier=builtins[int@{1:6}][__add__@{2:8}], async=false) ⊑ __add__@{builtins[int@{1:6}][2:8]} ∧ #defined(__add__@{builtins[int@{1:6}][2:8]})"];
+            "Entry" -> "Constraint(location=2:8)" [label="#succeed(#function(identifier=builtins[int@{1:6}][__add__@{2:8}], async=false))"];
+            "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=builtins[int@{1:6}][__add__@{2:8}], async=false))"];
+            "Constraint()" -> "TypeExit";
+            "Constraint(location=2:8)" -> "Constraint()";
+            "TypeExit" -> "Exit";
+            "ExceptionExit" -> "Exit";
+        }
+        "##};
+
+        let module_loader = TestModuleLoader {
+            modules: HashMap::from_iter([(
+                Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
+                TEST_BUILTINS.to_owned(),
+            )]),
+        };
+        let dependent_graph = analyse_program(&module_loader, [].into_iter());
+
+        let mut actual_constraints = dependent_graph.dot("DependentGraph");
+
+        for program_entities in dependent_graph.nodes.values() {
+            for (namespace, constraints) in program_entities {
+                actual_constraints.push_str(&format!(
+                    "specification \"{}\":\n    {}\n",
+                    namespace, constraints.specification
+                ));
+                actual_constraints.push_str(&constraints.dot(&namespace.to_string()));
+            }
+        }
+
+        assert_eq!(
+            expected_constraints, actual_constraints,
+            "{actual_constraints}"
+        );
+    }
 
     #[rstest]
     #[case::import(
@@ -3360,7 +3481,6 @@ mod tests {
         }
         "##},
     )]
-    #[rstest]
     #[case::forward_reference(
         indoc! {r##"
         def foo():
@@ -3384,14 +3504,17 @@ mod tests {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:4)" [label="#function(identifier=module[foo@{1:4}], async=false) ⊑ foo@{module[1:4]} ∧ #defined(foo@{module[1:4]})"];
             "Constraint(location=4:0)" [label="5 ⊑ CONST@{module[4:0]} ∧ #defined(CONST@{module[4:0]})"];
+            "Constraint(location=4:0, id=CONST)" [label="CONST@{module[4:0]} ⊑ CONST@{module[foo@{1:4}][2:11]}"];
             "Constraint(location=6:0)" [label="(foo@{module[6:9]})() ⊑ result@{module[6:0]} ∧ #defined(result@{module[6:0]})"];
             "Constraint(location=6:9)" [label="foo@{module[1:4]} ⊑ foo@{module[6:9]}"];
             "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=module[foo@{1:4}], async=false))"];
             "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=module[foo@{1:4}], async=false))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:4)" -> "Constraint(location=4:0)";
+            "Constraint(location=4:0)" -> "Constraint(location=4:0, id=CONST)";
             "Constraint(location=4:0)" -> "Constraint(location=6:9)" [label="#succeed(foo@{module[1:4]})"];
             "Constraint(location=4:0)" -> "ExceptionExit" [label="#raise(foo@{module[1:4]})"];
+            "Constraint(location=4:0, id=CONST)" -> "Constraint(location=1:4)";
             "Constraint(location=6:0)" -> "Constraint()";
             "Constraint(location=6:9)" -> "Constraint(location=6:0)" [label="#succeed((foo@{module[6:9]})())"];
             "Constraint(location=6:9)" -> "ExceptionExit" [label="#raise((foo@{module[6:9]})())"];
@@ -3402,13 +3525,9 @@ mod tests {
             {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module[foo@{1:4}]" {
             "Constraint(location=2:4)" [label="#return(CONST@{module[foo@{1:4}][2:11]})"];
-            "Constraint(location=2:11)" [label="CONST@{module[4:0]} ⊑ CONST@{module[foo@{1:4}][2:11]}"];
-            "Entry" -> "Constraint(location=2:11)" [label="#succeed(CONST@{module[4:0]})"];
-            "Entry" -> "ExceptionExit" [label="#raise(CONST@{module[4:0]})"];
+            "Entry" -> "Constraint(location=2:4)";
             "Constraint(location=2:4)" -> "TypeExit";
-            "Constraint(location=2:11)" -> "Constraint(location=2:4)";
             "TypeExit" -> "Exit";
-            "ExceptionExit" -> "Exit";
         }
         "##},
     )]

@@ -23,29 +23,6 @@ modules:
         final: false
         deprecated: false
         visibility: PUBLIC
-      add_two:
-        kind: FUNCTION
-        signature:
-          return_type:
-            reference:
-              id: Any
-              module: typing
-              history_index: 0
-            arguments:
-              []
-          summary: ""
-          description: ""
-          generics: {}
-          parameters: []
-          raises: []
-          partial: false
-          pure: false
-          deprecated: false
-          visibility: PUBLIC
-        async: false
-        override: false
-        abstract: false
-        final: false
       b:
         kind: VARIABLE
         type:
@@ -56,6 +33,21 @@ modules:
           arguments:
             - value:
                 int: "4"
+        description: ""
+        initialised: true
+        readonly: false
+        final: false
+        deprecated: false
+        visibility: PUBLIC
+      result:
+        kind: VARIABLE
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
         description: ""
         initialised: true
         readonly: false
