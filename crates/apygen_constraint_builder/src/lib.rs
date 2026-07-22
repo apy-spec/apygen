@@ -1988,6 +1988,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                 .all(|edge_kind| matches!(edge_kind, CfgEdgeKind::UnhandledException));
 
             if are_all_exceptions {
+                target_abstract_environment.unknown_variables.clear();
                 target_abstract_environment.variable_locations.clear();
                 target_abstract_environment.nodes.clear();
                 target_abstract_environment.edges.clear();
