@@ -1,7 +1,8 @@
+use crate::analysis::fmt::{fmt_display_iterator, fmt_iterator};
+use crate::analysis::lattice::Join;
 use crate::constraint_graph::expressions::{Identifier, ParameterKind};
-use crate::inference::{LiteralTuple, Parameter, Sourced, Type, TypeLiteral, TypeUnion};
+use crate::inference::{LiteralTuple, Parameter, Sourced, Type, TypeLiteral};
 use crate::primitives::literals::LiteralStr;
-use apygen_analysis::fmt::{fmt_display_iterator, fmt_iterator};
 use imbl;
 use std::collections::BTreeMap;
 use std::fmt::Display;
@@ -96,20 +97,20 @@ impl Arguments {
                     }
                 }
                 ParameterKind::VarPositional => {
-                    let mut var_positional_arguments = TypeUnion::new();
-
-                    while let Some(argument) = positional_iter.next() {
-                        var_positional_arguments.add_type(argument);
-                    }
-
-                    let arguments = if var_positional_arguments.is_empty() {
+                    let arguments = if self.positional.is_empty() {
                         imbl::vector![Arc::new(Type::Literal(Arc::new(TypeLiteral::Tuple(
                             LiteralTuple {
                                 value: imbl::Vector::new()
                             }
                         ))))]
                     } else {
-                        imbl::vector![var_positional_arguments.simplify()]
+                        let mut var_positional_arguments = Type::Never;
+
+                        while let Some(argument) = positional_iter.next() {
+                            var_positional_arguments = var_positional_arguments.join(&argument);
+                        }
+
+                        imbl::vector![Arc::new(var_positional_arguments)]
                     };
 
                     let ty = Arc::new(Type::Any); // TODO: fix
@@ -136,11 +137,11 @@ impl Arguments {
                         return Err(BindError::MultipleValuesForParameter);
                     }
 
-                    let mut var_keyword_arguments = TypeUnion::new();
+                    let mut var_keyword_arguments = Type::Never;
 
                     for (key, argument) in &self.keyword {
                         if !parameters.iter().any(|p| p.name == *key) {
-                            var_keyword_arguments.add_type(argument.clone());
+                            var_keyword_arguments = var_keyword_arguments.join(argument.as_ref());
                         }
                     }
 
@@ -148,11 +149,7 @@ impl Arguments {
                         LiteralStr::from("str"),
                     )));
 
-                    let arguments = if var_keyword_arguments.is_empty() {
-                        imbl::vector![str_literal, Arc::new(Type::Never)]
-                    } else {
-                        imbl::vector![str_literal, var_keyword_arguments.simplify()]
-                    };
+                    let arguments = imbl::vector![str_literal, Arc::new(var_keyword_arguments)];
 
                     let ty = Arc::new(Type::Any); // TODO: fix
 

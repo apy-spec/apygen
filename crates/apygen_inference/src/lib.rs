@@ -1072,55 +1072,14 @@ impl Display for TypeInstance {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
 pub struct TypeUnion {
-    types: imbl::OrdSet<Arc<Type>>,
+    pub types: imbl::OrdSet<Type>,
 }
 
 impl TypeUnion {
-    pub fn new() -> Self {
-        TypeUnion {
-            types: imbl::OrdSet::new(),
-        }
-    }
-
-    pub fn add_type(&mut self, ty: Arc<Type>) {
-        match ty.as_ref() {
-            Type::Union(inner_types) => {
-                for inner_ty in &inner_types.types {
-                    self.add_type(inner_ty.clone());
-                }
-            }
-            Type::Never => {}
-            _ => {
-                self.types.insert(ty);
-            }
-        };
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.types.is_empty()
-    }
-
-    pub fn contains(&self, ty: &Type) -> bool {
-        self.types.contains(ty)
-    }
-
-    pub fn types(&self) -> &imbl::OrdSet<Arc<Type>> {
-        &self.types
-    }
-
-    pub fn simplify(self) -> Arc<Type> {
-        if self.types.is_empty() {
-            Arc::new(Type::Never)
-        } else if self.types.len() == 1 {
-            self.types
-                .into_iter()
-                .next()
-                .expect("Only one type in the union")
-        } else {
-            Arc::new(Type::Union(self))
-        }
+    pub fn new(types: imbl::OrdSet<Type>) -> TypeUnion {
+        TypeUnion { types }
     }
 }
 
@@ -1190,14 +1149,6 @@ impl Type {
         Type::Literal(Arc::new(TypeLiteral::Boolean(literal_boolean)))
     }
 
-    pub fn new_union<I: IntoIterator<Item = Arc<Type>>>(types: I) -> Self {
-        let mut type_union = TypeUnion::new();
-        for ty in types {
-            type_union.add_type(ty);
-        }
-        Type::Union(type_union)
-    }
-
     pub fn new_intersection<I: IntoIterator<Item = Type>>(types: I) -> Self {
         Type::Intersection(imbl::OrdSet::from_iter(types.into_iter()))
     }
@@ -1212,13 +1163,44 @@ impl Default for Type {
 impl Join for Type {
     fn join(&self, other: &Self) -> Self {
         if self == other {
-            self.clone()
-        } else {
-            let mut type_union = TypeUnion::new();
-            type_union.add_type(Arc::new(self.clone()));
-            type_union.add_type(Arc::new(other.clone()));
-            type_union.simplify().as_ref().clone()
+            return self.clone();
         }
+
+        match (self, other) {
+            (Type::Any, _) | (_, Type::Any) => return Type::Any,
+            (Type::Never, ty) | (ty, Type::Never) => return ty.clone(),
+            (Type::Union(left_union), Type::Union(right_union)) => {
+                return Type::Union(left_union.join(&right_union));
+            }
+            (Type::Union(union), ty) | (ty, Type::Union(union)) => {
+                let mut new_union = union.clone();
+                new_union.types.insert(ty.clone());
+                return Type::Union(new_union);
+            }
+            (Type::Instance(int_instance), int_literal)
+            | (int_literal, Type::Instance(int_instance)) => {
+                if let Type::Literal(type_literal) = &int_literal {
+                    if let TypeLiteral::Integer(_) = type_literal.as_ref() {
+                        if let Base::Class(base_class) = &int_instance.base {
+                            if let Namespace::Module(module_name) =
+                                base_class.value.program_entity.namespace.as_ref()
+                            {
+                                if *module_name.as_ref() == QualifiedName::parse(BUILTINS_MODULE)
+                                    && base_class.value.program_entity.name.as_ref() == "int"
+                                {
+                                    return Type::Instance(int_instance.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        };
+
+        Type::Union(TypeUnion::new(
+            imbl::OrdSet::unit(self.clone()).update(other.clone()),
+        ))
     }
 }
 
@@ -1234,9 +1216,9 @@ impl LatticeOrd for Type {
             Type::Instance(_) => true,
             Type::Union(other_type_union) => {
                 if let Type::Union(self_type_union) = self {
-                    self_type_union.types().leq(other_type_union.types())
+                    self_type_union.types.leq(&other_type_union.types)
                 } else {
-                    other_type_union.contains(self)
+                    other_type_union.types.contains(self)
                 }
             }
             Type::Intersection(other_type_intersection) => {

@@ -18,21 +18,21 @@ use crate::identifiers::{Location, NamedQualifiedLocation};
 use crate::inference::{
     BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Exception, ExceptionOrigin, FunctionType,
     LiteralClass, LiteralFunction, LiteralMethod, RaisedExceptions, Source, Sourced,
-    StructuralDepth, StructuralWidth, TYPES_MODULE, Type, TypeInstance, TypeLiteral, TypeUnion,
-    WIDTH_LIMIT,
+    StructuralDepth, StructuralWidth, Type, TypeInstance, TypeLiteral, WIDTH_LIMIT,
 };
 use crate::inference::{Deferred, DefinedVariables, NamespaceEvaluation, ProgramEvaluation};
+use imbl::ordmap::Entry;
+use std::collections::{BTreeMap, BTreeSet};
+use std::convert::Infallible;
+use std::fmt::{Debug, Display};
+use std::sync::Arc;
+
 pub use apygen_analysis as analysis;
 pub use apygen_constraint_graph as constraint_graph;
 pub use apygen_identifiers as identifiers;
 pub use apygen_inference as inference;
 pub use apygen_primitives as primitives;
 pub use imbl;
-use imbl::ordmap::Entry;
-use std::collections::{BTreeMap, BTreeSet};
-use std::convert::Infallible;
-use std::fmt::{Debug, Display};
-use std::sync::Arc;
 
 pub mod calls;
 pub mod expressions;
@@ -460,7 +460,7 @@ impl<'a> ExpressionEvaluator<'a> {
             ),
             Type::Union(type_union) => {
                 let mut eval = PyTypeEval::never();
-                for ty in type_union.types() {
+                for ty in &type_union.types {
                     eval = eval.join(&self.evaluate_attributes(abstract_state, ty, name, None)?);
                 }
                 Some(eval)
@@ -833,7 +833,7 @@ impl<'a> ExpressionEvaluator<'a> {
             }
             (Type::Union(left_type_union), Type::Union(right_type_union)) => {
                 let mut type_eval = PyTypeEval::never();
-                for ty in left_type_union.types() {
+                for ty in &left_type_union.types {
                     type_eval = type_eval.join(&self.evaluate_binary_operation(
                         abstract_state,
                         ty,
@@ -841,7 +841,7 @@ impl<'a> ExpressionEvaluator<'a> {
                         right_ty,
                     )?);
                 }
-                for ty in right_type_union.types() {
+                for ty in &right_type_union.types {
                     type_eval = type_eval.join(&self.evaluate_binary_operation(
                         abstract_state,
                         left_ty,
@@ -853,7 +853,7 @@ impl<'a> ExpressionEvaluator<'a> {
             }
             (Type::Union(left_type_union), _) => {
                 let mut type_eval = PyTypeEval::never();
-                for ty in left_type_union.types() {
+                for ty in &left_type_union.types {
                     type_eval = type_eval.join(&self.evaluate_binary_operation(
                         abstract_state,
                         ty,
@@ -865,7 +865,7 @@ impl<'a> ExpressionEvaluator<'a> {
             }
             (_, Type::Union(right_type_union)) => {
                 let mut type_eval = PyTypeEval::never();
-                for ty in right_type_union.types() {
+                for ty in &right_type_union.types {
                     type_eval = type_eval.join(&self.evaluate_binary_operation(
                         abstract_state,
                         left_ty,
@@ -1432,24 +1432,20 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expre
                     while eval.value.data.width() > WIDTH_LIMIT {
                         eval.value = match eval.value.data {
                             Type::Union(type_union) => {
-                                let mut new_type_union = TypeUnion::new();
-                                for ty in type_union.types() {
-                                    new_type_union.add_type(
-                                        if let Type::Literal(type_literal) = ty.as_ref() {
-                                            Arc::new(
-                                                type_literal
-                                                    .as_type_instance(&new_abstract_state)
-                                                    .map(|type_instance| {
-                                                        Type::Instance(type_instance)
-                                                    })
-                                                    .unwrap_or(Type::Any),
-                                            )
-                                        } else {
-                                            ty.clone()
-                                        },
-                                    );
+                                let mut new_ty = Type::Never;
+                                for ty in type_union.types {
+                                    new_ty = new_ty.join(&if let Type::Literal(type_literal) = &ty {
+                                        type_literal
+                                            .as_type_instance(&new_abstract_state)
+                                            .map(|type_instance| {
+                                                Type::Instance(type_instance)
+                                            })
+                                            .expect("should be able to convert type literal to type instance")
+                                    } else {
+                                        ty
+                                    });
                                 }
-                                Sourced::inferred(new_type_union.simplify().as_ref().clone())
+                                Sourced::inferred(new_ty)
                             }
                             _ => Sourced::inferred(Type::Any),
                         };
