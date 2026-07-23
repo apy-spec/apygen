@@ -1,23 +1,24 @@
 use crate::analysis::fmt::fmt_display_wrapped;
 use crate::analysis::lattice::{Join, LatticeOrd, OrdJoin, OrdLatticeOrd};
-pub use crate::identifiers::{
-    Identifier, Location, NamedQualifiedLocation, Namespace, QualifiedName,
+use crate::identifiers::{
+    Identifier, Location, ModuleName, NamedQualifiedLocation, Namespace, QualifiedName,
+    VariableName,
 };
-pub use crate::primitives::literals::{
+use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
-pub use apy::v1::{GenericKind, ParameterKind};
 pub use apygen_analysis as analysis;
 use apygen_analysis::abstract_state::AbstractState;
 use apygen_analysis::fmt::{fmt_display_set, fmt_set};
-pub use apygen_identifiers as identifiers;
-use apygen_identifiers::VariableName;
-pub use apygen_primitives as primitives;
-pub use imbl;
 use imbl::ordmap::Entry;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::sync::Arc;
+
+pub use apy::v1::{GenericKind, ParameterKind};
+pub use apygen_identifiers as identifiers;
+pub use apygen_primitives as primitives;
+pub use imbl;
 
 pub const BUILTINS_MODULE: &str = "builtins";
 pub const TYPES_MODULE: &str = "types";
@@ -809,6 +810,47 @@ pub enum TypeLiteral {
     ImportedModule(LiteralImportedModule),
 }
 
+impl TypeLiteral {
+    pub fn type_name(&self) -> (&str, &str) {
+        match self {
+            TypeLiteral::Integer(_) => (BUILTINS_MODULE, "int"),
+            TypeLiteral::Boolean(_) => (BUILTINS_MODULE, "bool"),
+            TypeLiteral::Float(_) => (BUILTINS_MODULE, "float"),
+            TypeLiteral::Complex(_) => (BUILTINS_MODULE, "complex"),
+            TypeLiteral::String(_) => (BUILTINS_MODULE, "str"),
+            TypeLiteral::Bytes(_) => (BUILTINS_MODULE, "bytes"),
+            TypeLiteral::None => (TYPES_MODULE, "NoneType"),
+            TypeLiteral::Ellipsis => (TYPES_MODULE, "Ellipsis"),
+            TypeLiteral::List(_) => (BUILTINS_MODULE, "list"),
+            TypeLiteral::Tuple(_) => (BUILTINS_MODULE, "tuple"),
+            TypeLiteral::Dict(_) => (BUILTINS_MODULE, "dict"),
+            TypeLiteral::Function(_) => (TYPES_MODULE, "FunctionType"), // TODO: add support for BuiltinFunctionType
+            TypeLiteral::OverloadedFunction(_) => (TYPES_MODULE, "FunctionType"),
+            TypeLiteral::Method(_) => (TYPES_MODULE, "MethodType"), // TODO: add support for BuiltinMethodType
+            TypeLiteral::Class(_) => (BUILTINS_MODULE, "type"),
+            TypeLiteral::TypeAlias(literal_type_alias) => match literal_type_alias.value.kind {
+                TypeAliasKind::Type => (TYPING_MODULE, "TypeAliasType"), // TODO: fix
+                TypeAliasKind::String => (TYPING_MODULE, "TypeAliasType"), // TODO: fix
+                TypeAliasKind::Statement => (TYPING_MODULE, "TypeAliasType"),
+            },
+            TypeLiteral::Generic(_) => (TYPING_MODULE, "TypeVar"),
+            TypeLiteral::ImportedModule(_) => (TYPES_MODULE, "ModuleType"),
+        }
+    }
+
+    pub fn as_type_instance<N: NamespaceEvaluation + Clone>(
+        &self,
+        program_evaluation: &impl AbstractState<Key = Namespace, AbstractValue = N>,
+    ) -> Option<TypeInstance> {
+        let (module_name_str, class_name_str) = self.type_name();
+        TypeInstance::from_qualified_name(
+            program_evaluation,
+            &Arc::new(QualifiedName::parse(module_name_str)),
+            &Arc::new(Identifier::parse(class_name_str)),
+        )
+    }
+}
+
 impl StructuralDepth for TypeLiteral {
     fn depth(&self) -> usize {
         match self {
@@ -967,6 +1009,36 @@ impl StructuralWidth for Base {
 pub struct TypeInstance {
     pub base: Base,
     pub arguments: imbl::Vector<Arc<Type>>,
+}
+
+impl TypeInstance {
+    pub fn from_qualified_name<N: NamespaceEvaluation + Clone>(
+        program_evaluation: &impl AbstractState<Key = Namespace, AbstractValue = N>,
+        module_name: &ModuleName,
+        variable_name: &VariableName,
+    ) -> Option<TypeInstance> {
+        let namespace_evaluation =
+            program_evaluation.get(&Namespace::Module(module_name.clone()))?;
+        let ty = namespace_evaluation.get_attribute(&variable_name)?;
+
+        let Type::Literal(type_literal) = &ty.as_value()?.data else {
+            return None;
+        };
+
+        let base = match type_literal.as_ref() {
+            TypeLiteral::Class(literal_class) => Base::Class(literal_class.clone()),
+            TypeLiteral::TypeAlias(literal_type_alias) => {
+                Base::TypeAlias(literal_type_alias.clone())
+            }
+            TypeLiteral::Generic(literal_generic) => Base::Generic(literal_generic.clone()),
+            _ => return None,
+        };
+
+        Some(TypeInstance {
+            base,
+            arguments: imbl::Vector::new(),
+        })
+    }
 }
 
 impl StructuralDepth for TypeInstance {

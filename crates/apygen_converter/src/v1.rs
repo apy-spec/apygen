@@ -1,14 +1,14 @@
 use crate::apy;
 use crate::inference::analysis::abstract_state::AbstractState;
-use crate::inference::identifiers::{ModuleName, Namespace};
+use crate::inference::identifiers::{ModuleName, Namespace, QualifiedName};
 use crate::inference::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
 use crate::inference::{
     BUILTINS_MODULE, Base, LiteralClass, LiteralDict, LiteralFunction, LiteralGeneric,
     LiteralImportedModule, LiteralList, LiteralTuple, LiteralTypeAlias, NamespaceEvaluation,
-    ProgramEvaluation, QualifiedName, RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type,
-    TypeInstance, TypeLiteral, TypeUnion, Visibility,
+    ProgramEvaluation, RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type, TypeInstance,
+    TypeLiteral, TypeUnion, Visibility,
 };
 use log::debug;
 use rayon::iter::IntoParallelIterator;

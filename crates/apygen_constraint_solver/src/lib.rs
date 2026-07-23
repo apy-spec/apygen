@@ -204,139 +204,6 @@ impl<'a> ExpressionEvaluator<'a> {
         Self::new(namespace, self.constraint_graphs, self.in_evaluation)
     }
 
-    pub fn get_variable_type(
-        abstract_state: &impl AbstractState<
-            Key = Namespace,
-            AbstractValue = EvaluationState<Expression>,
-        >,
-        module_name: &ModuleName,
-        name: &VariableName,
-    ) -> Option<TypeInstance> {
-        let evaluation_state = abstract_state.get(&Namespace::Module(module_name.clone()))?;
-
-        let locations = evaluation_state.defined_variables.names.get(name)?;
-
-        let (namespace, location) = locations.get_min()?;
-
-        let ty = evaluation_state
-            .types
-            .get(&Expression::Variable(ExpressionVariable::new(
-                NamedQualifiedLocation::new(name.clone(), location.clone(), namespace.clone()),
-            )))?
-            .as_value()?;
-
-        let Type::Literal(type_literal) = &ty.data else {
-            return None;
-        };
-
-        let base = match type_literal.as_ref() {
-            TypeLiteral::Class(literal_class) => Base::Class(literal_class.clone()),
-            TypeLiteral::TypeAlias(literal_type_alias) => {
-                Base::TypeAlias(literal_type_alias.clone())
-            }
-            TypeLiteral::Generic(literal_generic) => Base::Generic(literal_generic.clone()),
-            _ => return None,
-        };
-
-        Some(TypeInstance {
-            base,
-            arguments: imbl::Vector::new(),
-        })
-    }
-
-    pub fn type_instance(
-        abstract_state: &impl AbstractState<
-            Key = Namespace,
-            AbstractValue = EvaluationState<Expression>,
-        >,
-        ty: &TypeLiteral,
-    ) -> Option<TypeInstance> {
-        match ty {
-            TypeLiteral::Integer(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("int")),
-            ),
-            TypeLiteral::Boolean(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("bool")),
-            ),
-            TypeLiteral::Float(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("float")),
-            ),
-            TypeLiteral::Complex(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("complex")),
-            ),
-            TypeLiteral::String(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("str")),
-            ),
-            TypeLiteral::Bytes(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("bytes")),
-            ),
-            TypeLiteral::None => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-                &Arc::new(Identifier::parse("NoneType")),
-            ),
-            TypeLiteral::Ellipsis => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-                &Arc::new(Identifier::parse("EllipsisType")),
-            ),
-            TypeLiteral::List(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("list")),
-            ),
-            TypeLiteral::Tuple(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("tuple")),
-            ),
-            TypeLiteral::Dict(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("dict")),
-            ),
-            TypeLiteral::Function(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-                &Arc::new(Identifier::parse("FunctionType")),
-            ),
-            TypeLiteral::OverloadedFunction(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-                &Arc::new(Identifier::parse("FunctionType")),
-            ),
-            TypeLiteral::Method(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-                &Arc::new(Identifier::parse("MethodType")),
-            ),
-            TypeLiteral::Class(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                &Arc::new(Identifier::parse("type")),
-            ),
-            TypeLiteral::TypeAlias(_) => None,
-            TypeLiteral::Generic(_) => None,
-            TypeLiteral::ImportedModule(_) => Self::get_variable_type(
-                abstract_state,
-                &Arc::new(QualifiedName::parse(TYPES_MODULE)),
-                &Arc::new(Identifier::parse("ModuleType")),
-            ),
-        }
-    }
-
     pub fn simplify<
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
@@ -421,7 +288,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 Some(PyTypeEval::new(
                     Type::Never,
                     PyEffects::new().with_exceptions(RaisedExceptions::raise(Exception::new(
-                        Arc::new(Type::Instance(Self::get_variable_type(
+                        Arc::new(Type::Instance(TypeInstance::from_qualified_name(
                             abstract_state,
                             &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
                             &Arc::new(Identifier::parse("NameError")),
@@ -467,7 +334,7 @@ impl<'a> ExpressionEvaluator<'a> {
         Some(PyTypeEval::new(
             Type::Never,
             PyEffects::new().with_exceptions(RaisedExceptions::raise(Exception::new(
-                Arc::new(Type::Instance(Self::get_variable_type(
+                Arc::new(Type::Instance(TypeInstance::from_qualified_name(
                     abstract_state,
                     &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
                     &Arc::new(Identifier::parse("NameError")),
@@ -671,7 +538,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 }
                 _ => self.evaluate_attributes(
                     abstract_state,
-                    &Type::Instance(Self::type_instance(abstract_state, type_literal)?),
+                    &Type::Instance(type_literal.as_type_instance(abstract_state)?),
                     name,
                     None,
                 ),
@@ -1570,12 +1437,12 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expre
                                     new_type_union.add_type(
                                         if let Type::Literal(type_literal) = ty.as_ref() {
                                             Arc::new(
-                                                ExpressionEvaluator::type_instance(
-                                                    &new_abstract_state,
-                                                    type_literal,
-                                                )
-                                                .map(|type_instance| Type::Instance(type_instance))
-                                                .unwrap_or(Type::Any),
+                                                type_literal
+                                                    .as_type_instance(&new_abstract_state)
+                                                    .map(|type_instance| {
+                                                        Type::Instance(type_instance)
+                                                    })
+                                                    .unwrap_or(Type::Any),
                                             )
                                         } else {
                                             ty.clone()
