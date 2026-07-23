@@ -43,8 +43,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: bool
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -58,8 +58,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: bool
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -73,8 +73,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: bool
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -88,8 +88,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: bool
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -103,8 +103,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: bool
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -118,8 +118,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: bool
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -133,8 +133,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: float
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -148,8 +148,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: float
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -163,8 +163,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: float
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -178,8 +178,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: float
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -193,8 +193,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: float
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -208,8 +208,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: float
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -223,8 +223,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: int
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -238,8 +238,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: int
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -253,8 +253,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: int
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -268,8 +268,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: int
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -283,8 +283,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: int
+            module: builtins
             history_index: 0
           arguments:
             []
@@ -298,8 +298,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: int
+            module: builtins
             history_index: 0
           arguments:
             []

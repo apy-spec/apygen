@@ -8,9 +8,13 @@ pub use crate::primitives::literals::{
 };
 pub use apy::v1::{GenericKind, ParameterKind};
 pub use apygen_analysis as analysis;
+use apygen_analysis::abstract_state::AbstractState;
+use apygen_analysis::fmt::{fmt_display_set, fmt_set};
 pub use apygen_identifiers as identifiers;
+use apygen_identifiers::VariableName;
 pub use apygen_primitives as primitives;
 pub use imbl;
+use imbl::ordmap::Entry;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::sync::Arc;
@@ -1361,3 +1365,192 @@ impl Display for Pureness {
 
 impl OrdLatticeOrd for Pureness {}
 impl OrdJoin for Pureness {}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
+pub struct DefinedVariables {
+    pub names: imbl::OrdMap<VariableName, imbl::OrdSet<(Arc<Namespace>, Location)>>,
+}
+
+impl DefinedVariables {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Display for DefinedVariables {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt_set(f, self.names.iter(), |f, (name, locations)| {
+            write!(f, "{}: ", name)?;
+            fmt_set(f, locations.iter(), |f, (program_entity, location)| {
+                write!(f, "{}[{}]", program_entity, location)
+            })
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
+pub struct Deferred<T, E: Ord> {
+    pub value: T,
+    pub expressions: imbl::OrdSet<Arc<E>>,
+}
+
+impl<T, E: Ord> Deferred<T, E> {
+    pub fn new(value: T, expressions: imbl::OrdSet<Arc<E>>) -> Self {
+        Self { value, expressions }
+    }
+
+    pub fn known(value: T) -> Self {
+        Self::new(value, imbl::OrdSet::default())
+    }
+
+    pub fn unknown(expressions: imbl::OrdSet<Arc<E>>) -> Self
+    where
+        T: Default,
+    {
+        Self::new(T::default(), expressions)
+    }
+
+    pub fn as_value(&self) -> Option<&T> {
+        if self.expressions.is_empty() {
+            Some(&self.value)
+        } else {
+            None
+        }
+    }
+
+    pub fn to_value(self) -> Option<T> {
+        if self.expressions.is_empty() {
+            Some(self.value)
+        } else {
+            None
+        }
+    }
+}
+
+impl<T: Default, E: Ord> Default for Deferred<T, E> {
+    fn default() -> Self {
+        Self::new(T::default(), imbl::OrdSet::default())
+    }
+}
+
+impl<T: Display, E: Ord + Display> Display for Deferred<T, E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.expressions.is_empty() {
+            write!(f, "{}", self.value)
+        } else {
+            write!(f, "{} ⊔ #deferred", self.value)?;
+            fmt_display_set(f, self.expressions.iter())
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Join)]
+pub struct EvaluationState<E: Ord> {
+    pub types: imbl::OrdMap<Arc<E>, Deferred<Sourced<Type>, E>>,
+    pub return_value: Deferred<Sourced<Type>, E>,
+    pub raised_exceptions: Deferred<Sourced<RaisedExceptions>, E>,
+    pub defined_variables: DefinedVariables,
+}
+
+impl<E: Ord> Default for EvaluationState<E> {
+    fn default() -> Self {
+        Self {
+            types: imbl::OrdMap::new(),
+            return_value: Deferred::unknown(imbl::OrdSet::new()),
+            raised_exceptions: Deferred::unknown(imbl::OrdSet::new()),
+            defined_variables: DefinedVariables::new(),
+        }
+    }
+}
+
+impl<E: Ord + Display> Display for EvaluationState<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("(evaluations: ")?;
+        fmt_set(f, self.types.iter(), |f, (expression, eval)| {
+            write!(f, "{}: {}", expression, eval)
+        })?;
+        write!(
+            f,
+            ", return: {}, raised: {}, defined_variables = {})",
+            self.return_value, self.raised_exceptions, self.defined_variables
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Join)]
+pub struct ProgramEvaluation<E: Ord> {
+    pub states: imbl::OrdMap<Namespace, EvaluationState<E>>,
+}
+
+impl<E: Ord> ProgramEvaluation<E> {
+    pub fn new(states: imbl::OrdMap<Namespace, EvaluationState<E>>) -> Self {
+        Self { states }
+    }
+
+    pub fn unit(qualified_location: Namespace, evaluation_state: EvaluationState<E>) -> Self {
+        Self::new(imbl::OrdMap::unit(qualified_location, evaluation_state))
+    }
+
+    pub fn update(
+        &self,
+        qualified_location: Namespace,
+        evaluation_state: EvaluationState<E>,
+    ) -> Self
+    where
+        E: Clone,
+    {
+        Self::new(self.states.update(qualified_location, evaluation_state))
+    }
+}
+
+impl<E: Ord> Default for ProgramEvaluation<E> {
+    fn default() -> Self {
+        Self {
+            states: imbl::OrdMap::new(),
+        }
+    }
+}
+
+impl<E: Ord + Display> Display for ProgramEvaluation<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt_set(f, self.states.iter(), |f, (location, state)| {
+            write!(f, "{}: {}", location, state)
+        })
+    }
+}
+
+impl<E: Ord + Clone> AbstractState for ProgramEvaluation<E> {
+    type Key = Namespace;
+    type AbstractValue = EvaluationState<E>;
+
+    fn get(&self, key: &Self::Key) -> Option<&Self::AbstractValue> {
+        self.states.get(key)
+    }
+
+    fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::AbstractValue> {
+        self.states.get_mut(key)
+    }
+
+    fn get_or_insert(
+        &mut self,
+        key: Self::Key,
+        abstract_value: Self::AbstractValue,
+    ) -> &mut Self::AbstractValue {
+        self.states.entry(key).or_insert(abstract_value)
+    }
+
+    fn insert(
+        &mut self,
+        key: Self::Key,
+        abstract_value: Self::AbstractValue,
+    ) -> &mut Self::AbstractValue {
+        match self.states.entry(key) {
+            Entry::Occupied(entry) => {
+                let previous_abstract_value = entry.into_mut();
+                *previous_abstract_value = abstract_value;
+                previous_abstract_value
+            }
+            Entry::Vacant(entry) => entry.insert(abstract_value),
+        }
+    }
+}

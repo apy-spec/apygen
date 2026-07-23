@@ -8,17 +8,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub mod calls;
 pub mod expressions;
-pub mod visibility;
 
 use crate::analysis::abstract_state::{AbstractState, AbstractStateProxy};
-use crate::analysis::fmt::{fmt_display_set, fmt_set};
 use crate::analysis::lattice::Join;
 use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use crate::calls::Arguments;
 use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
     ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionSubscript, ExpressionUnary,
-    ExpressionVariable, Identifier, Location, ModuleName, Namespace, QualifiedName, VariableName,
+    ExpressionVariable, Identifier, ModuleName, Namespace, QualifiedName, VariableName,
 };
 use crate::constraint_graph::{
     Constraint, ConstraintGraph, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode,
@@ -33,129 +31,11 @@ use crate::inference::{
     WIDTH_LIMIT,
 };
 use apygen_constraint_graph::expressions::ExpressionForwardVariable;
+use apygen_inference::{Deferred, EvaluationState, ProgramEvaluation};
 use imbl::ordmap::Entry;
 use std::convert::Infallible;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use std::sync::Arc;
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
-pub struct DefinedVariables {
-    pub names: imbl::OrdMap<VariableName, imbl::OrdSet<(Arc<Namespace>, Location)>>,
-}
-
-impl DefinedVariables {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl Display for DefinedVariables {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fmt_set(f, self.names.iter(), |f, (name, locations)| {
-            write!(f, "{}: ", name)?;
-            fmt_set(f, locations.iter(), |f, (program_entity, location)| {
-                write!(f, "{}[{}]", program_entity, location)
-            })
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Join)]
-pub struct Deferred<T> {
-    value: T,
-    expressions: imbl::OrdSet<Arc<Expression>>,
-}
-
-impl<T> Deferred<T> {
-    pub fn new(value: T, expressions: imbl::OrdSet<Arc<Expression>>) -> Self {
-        Self { value, expressions }
-    }
-
-    pub fn known(value: T) -> Self {
-        Self::new(value, imbl::OrdSet::default())
-    }
-
-    pub fn unknown(expressions: imbl::OrdSet<Arc<Expression>>) -> Self
-    where
-        T: Default,
-    {
-        Self::new(T::default(), expressions)
-    }
-
-    pub fn as_value(&self) -> Option<&T> {
-        if self.expressions.is_empty() {
-            Some(&self.value)
-        } else {
-            None
-        }
-    }
-
-    pub fn to_value(self) -> Option<T> {
-        if self.expressions.is_empty() {
-            Some(self.value)
-        } else {
-            None
-        }
-    }
-}
-
-impl<T: Display> Display for Deferred<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.expressions.is_empty() {
-            write!(f, "{}", self.value)
-        } else {
-            write!(f, "{} ⊔ #deferred", self.value)?;
-            fmt_display_set(f, self.expressions.iter())
-        }
-    }
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
-pub struct EvaluationState {
-    pub types: imbl::OrdMap<Arc<Expression>, Deferred<Sourced<Type>>>,
-    pub return_value: Deferred<Sourced<Type>>,
-    pub raised_exceptions: Deferred<Sourced<RaisedExceptions>>,
-    pub defined_variables: DefinedVariables,
-}
-
-impl Display for EvaluationState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("(evaluations: ")?;
-        fmt_set(f, self.types.iter(), |f, (expression, eval)| {
-            write!(f, "{}: {}", expression, eval)
-        })?;
-        write!(
-            f,
-            ", return: {}, raised: {}, defined_variables = {})",
-            self.return_value, self.raised_exceptions, self.defined_variables
-        )
-    }
-}
-
-impl EvaluationState {
-    pub fn variables(&self) -> impl Iterator<Item = (ExpressionVariable, Deferred<Sourced<Type>>)> {
-        self.defined_variables
-            .names
-            .iter()
-            .flat_map(|(variable, locations)| {
-                locations.iter().map(|(namespace, location)| {
-                    let expression_variable = ExpressionVariable::new(NamedQualifiedLocation::new(
-                        variable.clone(),
-                        location.clone(),
-                        namespace.clone(),
-                    ));
-
-                    (
-                        expression_variable.clone(),
-                        self.types
-                            .get(&Expression::Variable(expression_variable))
-                            .cloned()
-                            .unwrap_or_default(),
-                    )
-                })
-            })
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Join)]
 pub struct SolverState<N: Ord, S> {
@@ -176,8 +56,10 @@ impl<N: Ord, S> Default for SolverState<N, S> {
     }
 }
 
-impl<N: Clone + Ord, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone>
-    AbstractState for SolverState<N, S>
+impl<
+    N: Clone + Ord,
+    S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Clone,
+> AbstractState for SolverState<N, S>
 {
     type Key = N;
     type AbstractValue = S;
@@ -238,7 +120,10 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     pub fn get_variable_type(
-        abstract_state: &impl AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &impl AbstractState<
+            Key = Namespace,
+            AbstractValue = EvaluationState<Expression>,
+        >,
         module_name: &ModuleName,
         name: &VariableName,
     ) -> Option<TypeInstance> {
@@ -275,7 +160,10 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     pub fn type_instance(
-        abstract_state: &impl AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &impl AbstractState<
+            Key = Namespace,
+            AbstractValue = EvaluationState<Expression>,
+        >,
         ty: &TypeLiteral,
     ) -> Option<TypeInstance> {
         match ty {
@@ -364,9 +252,12 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    pub fn simplify<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq>(
+    pub fn simplify<
+        's,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+    >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
     ) -> Option<()> {
         let mut types = abstract_state.get(&self.namespace)?.types.clone();
 
@@ -414,10 +305,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_variable<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         expression_variable: &ExpressionVariable,
     ) -> Option<PyTypeEval> {
         let evaluation_state =
@@ -455,10 +346,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_forward_variable<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         expression_forward_variable: &ExpressionForwardVariable,
     ) -> Option<PyTypeEval> {
         if let Some(program_evaluation) = abstract_state.get(self.namespace) {
@@ -491,10 +382,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_annotated<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         expression_annotated: &ExpressionAnnotated,
     ) -> Option<PyTypeEval> {
         let annotation_eval =
@@ -523,10 +414,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_function<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         expression_function: &ExpressionFunction,
     ) -> Option<PyTypeEval> {
         Some(PyTypeEval::with_default_effects(Type::new_literal(
@@ -543,10 +434,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_class<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         expression_class: &ExpressionClass,
     ) -> Option<PyTypeEval> {
         analyse_program_entity(
@@ -572,10 +463,10 @@ impl<'a> ExpressionEvaluator<'a> {
     /// References: https://docs.python.org/3/howto/descriptor.html
     fn evaluate_attributes<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         value_ty: &Type,
         name: &VariableName,
         instance_arguments: Option<&imbl::Vector<Arc<Type>>>,
@@ -678,10 +569,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_attribute<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         expression_attribute: &ExpressionAttribute,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -701,10 +592,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_subscript<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         expression_subscript: &ExpressionSubscript,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -738,10 +629,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_call<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         ty: &Type,
         arguments: Arguments,
     ) -> Option<PyTypeEval> {
@@ -798,10 +689,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_call<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         expression_call: &ExpressionCall,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -839,10 +730,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_unary<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         expression_unary: &ExpressionUnary,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -868,10 +759,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_binary_operation<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         left_ty: &Type,
         operator: BinaryOperator,
         right_ty: &Type,
@@ -990,10 +881,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_binary<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         expression_binary: &ExpressionBinary,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -1022,10 +913,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         expression: &Expression,
     ) -> Option<PyTypeEval> {
         if let Some(expression_eval) = abstract_state
@@ -1099,10 +990,10 @@ impl<'a> ExpressionEvaluator<'a> {
     pub fn evaluate_expressions<
         'e,
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
         &self,
-        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         expressions: impl IntoIterator<Item = &'e Expression>,
     ) -> Option<PyTypeEval> {
         let mut eval = PyTypeEval::never();
@@ -1115,21 +1006,23 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 }
 
-pub struct ConstraintSolver<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>
-{
+pub struct ConstraintSolver<
+    's,
+    S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>>,
+> {
     pub namespace: &'s Namespace,
     pub constraint_graphs: &'s imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
-    pub program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation>,
+    pub program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
     pub in_evaluation: imbl::OrdSet<&'s Namespace>,
 }
 
-impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>
+impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>>>
     ConstraintSolver<'s, S>
 {
     pub fn new(
         namespace: &'s Namespace,
         constraint_graphs: &'s imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
-        program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation>,
+        program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
         in_evaluation: imbl::OrdSet<&'s Namespace>,
     ) -> Self {
         Self {
@@ -1149,11 +1042,11 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>
     }
 }
 
-impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq> GraphAnalyser
-    for ConstraintSolver<'s, S>
+impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq>
+    GraphAnalyser for ConstraintSolver<'s, S>
 {
     type Node = ConstraintNode;
-    type AbstractState = AbstractStateProxy<'s, S, ProgramEvaluation>;
+    type AbstractState = AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>;
     type AnalysisState = SolverState<Self::Node, Self::AbstractState>;
     type Error = Infallible;
 
@@ -1559,79 +1452,16 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Join)]
-pub struct ProgramEvaluation {
-    pub states: imbl::OrdMap<Namespace, EvaluationState>,
-}
-
-impl ProgramEvaluation {
-    pub fn new(states: imbl::OrdMap<Namespace, EvaluationState>) -> Self {
-        Self { states }
-    }
-
-    pub fn unit(qualified_location: Namespace, evaluation_state: EvaluationState) -> Self {
-        Self::new(imbl::OrdMap::unit(qualified_location, evaluation_state))
-    }
-
-    pub fn update(&self, qualified_location: Namespace, evaluation_state: EvaluationState) -> Self {
-        Self::new(self.states.update(qualified_location, evaluation_state))
-    }
-}
-
-impl Display for ProgramEvaluation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fmt_set(f, self.states.iter(), |f, (location, state)| {
-            write!(f, "{}: {}", location, state)
-        })
-    }
-}
-
-impl AbstractState for ProgramEvaluation {
-    type Key = Namespace;
-    type AbstractValue = EvaluationState;
-
-    fn get(&self, key: &Self::Key) -> Option<&Self::AbstractValue> {
-        self.states.get(key)
-    }
-
-    fn get_mut(&mut self, key: &Self::Key) -> Option<&mut Self::AbstractValue> {
-        self.states.get_mut(key)
-    }
-
-    fn get_or_insert(
-        &mut self,
-        key: Self::Key,
-        abstract_value: Self::AbstractValue,
-    ) -> &mut Self::AbstractValue {
-        self.states.entry(key).or_insert(abstract_value)
-    }
-
-    fn insert(
-        &mut self,
-        key: Self::Key,
-        abstract_value: Self::AbstractValue,
-    ) -> &mut Self::AbstractValue {
-        match self.states.entry(key) {
-            Entry::Occupied(entry) => {
-                let previous_abstract_value = entry.into_mut();
-                *previous_abstract_value = abstract_value;
-                previous_abstract_value
-            }
-            Entry::Vacant(entry) => entry.insert(abstract_value),
-        }
-    }
-}
-
 pub fn analyse_program_entity<
     'e,
     's: 'e,
-    S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
+    S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
 >(
-    abstract_state: &'e mut AbstractStateProxy<'s, S, ProgramEvaluation>,
+    abstract_state: &'e mut AbstractStateProxy<'s, S, ProgramEvaluation<Expression>>,
     constraint_graphs: &imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     namespace: &'e Namespace,
     in_evaluation: imbl::OrdSet<&'e Namespace>,
-) -> Result<&'e mut EvaluationState, Infallible> {
+) -> Result<&'e mut EvaluationState<Expression>, Infallible> {
     let solver_state = analysis(
         &ConstraintSolver::new(namespace, constraint_graphs, abstract_state, in_evaluation),
         &mut DummyAnalysisObserver::default(),
@@ -1684,7 +1514,7 @@ impl<'a> ModuleConstraintSolver<'a> {
 
 impl GraphAnalyser for ModuleConstraintSolver<'_> {
     type Node = ModuleNode;
-    type AbstractState = ProgramEvaluation;
+    type AbstractState = ProgramEvaluation<Expression>;
     type AnalysisState = SolverState<Self::Node, Self::AbstractState>;
     type Error = Infallible;
 
@@ -2042,8 +1872,23 @@ mod tests {
                 continue;
             }
             actual_types.push_str(&format!("{}:\n", qualified_location));
-            for (variable, ty) in abstract_state.variables() {
-                actual_types.push_str(&format!("    {} = {}\n", variable, ty));
+            for (variable_name, variable_locations) in &abstract_state.defined_variables.names {
+                for (variable_namespace, variable_location) in variable_locations {
+                    let expression_variable = ExpressionVariable::new(NamedQualifiedLocation::new(
+                        variable_name.clone(),
+                        variable_location.clone(),
+                        variable_namespace.clone(),
+                    ));
+                    let variable_type = abstract_state
+                        .types
+                        .get(&Expression::Variable(expression_variable.clone()))
+                        .cloned()
+                        .unwrap_or_default();
+                    actual_types.push_str(&format!(
+                        "    {} = {}\n",
+                        expression_variable, variable_type
+                    ));
+                }
             }
             actual_types.push_str(&format!(
                 "    #raise = {}\n",

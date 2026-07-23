@@ -218,12 +218,8 @@ name = "apygen_converter"
 version = "0.1.0"
 dependencies = [
  "apy",
- "apygen_analysis",
  "apygen_constraint_graph",
- "apygen_constraint_solver",
  "apygen_inference",
- "apygen_primitives",
- "imbl",
  "log",
  "rayon",
 ]

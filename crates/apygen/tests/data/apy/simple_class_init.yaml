@@ -82,8 +82,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: Point
+            module: simple_class_init
             history_index: 0
           arguments:
             []

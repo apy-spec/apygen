@@ -137,8 +137,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: Point3D
+            module: simple_class_inheritance
             history_index: 0
           arguments:
             []
