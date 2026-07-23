@@ -1,21 +1,18 @@
 use crate::apy;
 use crate::inference::analysis::abstract_state::AbstractState;
-use crate::inference::analysis::lattice::Join;
-use crate::inference::identifiers::{ModuleName, NamedQualifiedLocation, Namespace};
+use crate::inference::identifiers::{ModuleName, Namespace};
 use crate::inference::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
 use crate::inference::{
-    BUILTINS_MODULE, Base, EvaluationState, LiteralClass, LiteralDict, LiteralFunction,
-    LiteralGeneric, LiteralImportedModule, LiteralList, LiteralTuple, LiteralTypeAlias,
+    BUILTINS_MODULE, Base, LiteralClass, LiteralDict, LiteralFunction, LiteralGeneric,
+    LiteralImportedModule, LiteralList, LiteralTuple, LiteralTypeAlias, NamespaceEvaluation,
     ProgramEvaluation, QualifiedName, RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type,
     TypeInstance, TypeLiteral, TypeUnion, Visibility,
 };
-
 use log::debug;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
-use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -136,8 +133,8 @@ pub fn convert_literal_dict(literal_dict: &LiteralDict) -> apy::v1::TypeInstance
     )))
 }
 
-pub fn convert_literal_function<E: Ord + Clone + ConvertibleExpression>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_literal_function<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
     literal_function: &LiteralFunction,
 ) -> Option<apy::v1::Function> {
     let evaluation_state = program_evaluation.get(&Namespace::NamedProgramEntity(
@@ -164,7 +161,7 @@ pub fn convert_literal_function<E: Ord + Clone + ConvertibleExpression>(
     signature.parameters = apy::v1::Parameters::try_from(parameters).ok()?;
     signature.raises = convert_exceptions(
         program_evaluation,
-        &evaluation_state.raised_exceptions.as_value()?.data,
+        &evaluation_state.raised_exceptions().as_value()?.data,
     )?;
 
     let function = apy::v1::Function::new(apy::OneOrMany::one(signature));
@@ -172,8 +169,8 @@ pub fn convert_literal_function<E: Ord + Clone + ConvertibleExpression>(
     Some(function)
 }
 
-pub fn convert_literal_class<E: Ord + Clone + ConvertibleExpression>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_literal_class<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
     literal_class: &LiteralClass,
 ) -> Option<apy::v1::Class> {
     let evaluation_state = program_evaluation.get(&Namespace::NamedProgramEntity(
@@ -212,13 +209,13 @@ pub fn convert_literal_class<E: Ord + Clone + ConvertibleExpression>(
             )?)
             .with_raises(convert_exceptions(
                 program_evaluation,
-                &evaluation_state.raised_exceptions.as_value()?.data,
+                &evaluation_state.raised_exceptions().as_value()?.data,
             )?),
     )
 }
 
-pub fn convert_literal_type_alias<E: Ord + Clone + ConvertibleExpression>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_literal_type_alias<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
     literal_type_alias: &LiteralTypeAlias,
 ) -> Option<apy::v1::TypeAlias> {
     Some(apy::v1::TypeAlias::new(convert_type(
@@ -227,15 +224,15 @@ pub fn convert_literal_type_alias<E: Ord + Clone + ConvertibleExpression>(
     )?))
 }
 
-pub fn convert_literal_generic<E: Ord>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_literal_generic<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
     literal_generic: &LiteralGeneric,
 ) -> Option<apy::v1::Generic> {
     Some(apy::v1::Generic::new(literal_generic.value.kind))
 }
 
-pub fn convert_literal_imported_module<E: Ord>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_literal_imported_module<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
     literal_imported_module: &LiteralImportedModule,
 ) -> Option<apy::v1::ImportedModule> {
     Some(apy::v1::ImportedModule::new(
@@ -253,8 +250,8 @@ pub enum ConvertedTypeLiteral {
     ImportedModule(apy::v1::ImportedModule),
 }
 
-pub fn convert_type_literal<E: Ord + Clone + ConvertibleExpression>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_type_literal<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
     type_literal: &TypeLiteral,
 ) -> Option<ConvertedTypeLiteral> {
     Some(match type_literal {
@@ -336,8 +333,8 @@ pub fn convert_type_no_return() -> apy::v1::TypeInstance {
     )
 }
 
-pub fn convert_type_instance<E: Ord + Clone + ConvertibleExpression>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_type_instance<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
     type_instance: &TypeInstance,
 ) -> Option<apy::v1::TypeInstance> {
     let program_entity = match &type_instance.base {
@@ -368,8 +365,8 @@ pub fn convert_type_instance<E: Ord + Clone + ConvertibleExpression>(
     )
 }
 
-pub fn convert_type_union<E: Ord + Clone + ConvertibleExpression>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_type_union<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
     type_union: &TypeUnion,
 ) -> Option<apy::v1::TypeInstance> {
     Some(
@@ -399,8 +396,8 @@ pub fn convert_type_intersection() -> apy::v1::TypeInstance {
     )
 }
 
-pub fn convert_type<E: Ord + Clone + ConvertibleExpression>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_type<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
     ty: &Type,
 ) -> Option<apy::v1::Type> {
     Some(apy::v1::Type::Instance(match ty {
@@ -452,8 +449,8 @@ pub fn convert_type<E: Ord + Clone + ConvertibleExpression>(
     }))
 }
 
-pub fn convert_exceptions<E: Ord + Clone + ConvertibleExpression>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_exceptions<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
     raises: &RaisedExceptions,
 ) -> Option<Vec<apy::v1::Exception>> {
     raises
@@ -466,8 +463,8 @@ pub fn convert_exceptions<E: Ord + Clone + ConvertibleExpression>(
         .collect()
 }
 
-pub fn convert_attribute<E: Ord + Clone + ConvertibleExpression>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_attribute<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
     attribute_type: &Type,
 ) -> Option<apy::v1::Attribute> {
     let ty = match attribute_type {
@@ -520,33 +517,18 @@ pub fn convert_attribute<E: Ord + Clone + ConvertibleExpression>(
     Some(apy::v1::Attribute::Variable(apy::v1::Variable::new(ty)))
 }
 
-pub fn convert_abstract_environment<E: Ord + Clone + ConvertibleExpression>(
-    program_evaluation: &ProgramEvaluation<E>,
-    evaluation_state: &EvaluationState<E>,
-) -> Option<BTreeMap<apy::v1::Identifier, apy::OneOrMany<apy::v1::Attribute>>>
-where
-    Arc<E>: Borrow<E>,
-{
+pub fn convert_abstract_environment<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
+    namespace_evaluation: &N,
+) -> Option<BTreeMap<apy::v1::Identifier, apy::OneOrMany<apy::v1::Attribute>>> {
     let mut attributes: BTreeMap<apy::v1::Identifier, apy::OneOrMany<apy::v1::Attribute>> =
         BTreeMap::new();
 
-    for (attribute_name, locations) in &evaluation_state.defined_variables.names {
-        let mut ty = Type::Never;
-        for (namespace, location) in locations {
-            ty = ty.join(
-                &evaluation_state
-                    .types
-                    .get(&E::get_variable(NamedQualifiedLocation::new(
-                        attribute_name.clone(),
-                        location.clone(),
-                        namespace.clone(),
-                    )))
-                    .and_then(|ty| ty.as_value().cloned())
-                    .map(|ty| ty.data)
-                    .unwrap_or(Type::Any),
-            );
-        }
-        let Some(attribute) = convert_attribute(program_evaluation, &ty) else {
+    for (attribute_name, ty) in namespace_evaluation.attributes() {
+        let Some(attribute) = convert_attribute(
+            program_evaluation,
+            &ty.to_value().map(|ty| ty.data).unwrap_or(Type::Any),
+        ) else {
             debug!("Skipping attribute {}", attribute_name);
             continue;
         };
@@ -559,17 +541,17 @@ where
     Some(attributes)
 }
 
-pub fn convert_module<E: Ord + Clone + ConvertibleExpression>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_module<N: NamespaceEvaluation + Clone>(
+    program_evaluation: &ProgramEvaluation<N>,
     module: &ModuleName,
 ) -> Option<apy::v1::Module> {
-    let evaluation_state = program_evaluation.get(&Namespace::Module(module.clone()))?;
+    let namespace_evaluation = program_evaluation.get(&Namespace::Module(module.clone()))?;
 
     Some(
         apy::v1::Module::new(
             apy::v1::ModuleAttributes::try_from(convert_abstract_environment(
                 program_evaluation,
-                evaluation_state,
+                namespace_evaluation,
             )?)
             .ok()?,
             apy::v1::ModuleAttributes::new(),
@@ -578,8 +560,8 @@ pub fn convert_module<E: Ord + Clone + ConvertibleExpression>(
     )
 }
 
-pub fn convert_apy_v1<'a, E: Ord + Clone + ConvertibleExpression + Send + Sync>(
-    program_evaluation: &ProgramEvaluation<E>,
+pub fn convert_apy_v1<'a, N: NamespaceEvaluation + Clone + Send + Sync>(
+    program_evaluation: &ProgramEvaluation<N>,
     target_modules: impl IntoParallelIterator<Item = &'a Arc<QualifiedName>>,
 ) -> apy::v1::ApyV1 {
     apy::v1::ApyV1::new().with_modules(
@@ -593,17 +575,4 @@ pub fn convert_apy_v1<'a, E: Ord + Clone + ConvertibleExpression + Send + Sync>(
             })
             .collect(),
     )
-}
-
-pub trait ConvertibleExpression {
-    fn get_variable(named_qualified_location: NamedQualifiedLocation) -> Self;
-}
-
-// TODO: remove when possible
-impl ConvertibleExpression for apygen_constraint_graph::expressions::Expression {
-    fn get_variable(named_qualified_location: NamedQualifiedLocation) -> Self {
-        apygen_constraint_graph::expressions::Expression::Variable(
-            apygen_constraint_graph::expressions::ExpressionVariable::new(named_qualified_location),
-        )
-    }
 }

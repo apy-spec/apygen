@@ -1444,66 +1444,49 @@ impl<T: Display, E: Ord + Display> Display for Deferred<T, E> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Join)]
-pub struct EvaluationState<E: Ord> {
-    pub types: imbl::OrdMap<Arc<E>, Deferred<Sourced<Type>, E>>,
-    pub return_value: Deferred<Sourced<Type>, E>,
-    pub raised_exceptions: Deferred<Sourced<RaisedExceptions>, E>,
-    pub defined_variables: DefinedVariables,
-}
+pub trait NamespaceEvaluation {
+    type Expression: Ord;
 
-impl<E: Ord> Default for EvaluationState<E> {
-    fn default() -> Self {
-        Self {
-            types: imbl::OrdMap::new(),
-            return_value: Deferred::unknown(imbl::OrdSet::new()),
-            raised_exceptions: Deferred::unknown(imbl::OrdSet::new()),
-            defined_variables: DefinedVariables::new(),
+    fn attributes(
+        &self,
+    ) -> impl Iterator<Item = (&VariableName, Deferred<Sourced<Type>, Self::Expression>)>;
+    fn get_attribute(
+        &self,
+        name: &VariableName,
+    ) -> Option<Deferred<Sourced<Type>, Self::Expression>> {
+        for (variable_name, ty) in self.attributes() {
+            if variable_name == name {
+                return Some(ty);
+            }
         }
+        None
     }
-}
-
-impl<E: Ord + Display> Display for EvaluationState<E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("(evaluations: ")?;
-        fmt_set(f, self.types.iter(), |f, (expression, eval)| {
-            write!(f, "{}: {}", expression, eval)
-        })?;
-        write!(
-            f,
-            ", return: {}, raised: {}, defined_variables = {})",
-            self.return_value, self.raised_exceptions, self.defined_variables
-        )
-    }
+    fn raised_exceptions(&self) -> &Deferred<Sourced<RaisedExceptions>, Self::Expression>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Join)]
-pub struct ProgramEvaluation<E: Ord> {
-    pub states: imbl::OrdMap<Namespace, EvaluationState<E>>,
+pub struct ProgramEvaluation<N: NamespaceEvaluation> {
+    pub states: imbl::OrdMap<Namespace, N>,
 }
 
-impl<E: Ord> ProgramEvaluation<E> {
-    pub fn new(states: imbl::OrdMap<Namespace, EvaluationState<E>>) -> Self {
+impl<N: NamespaceEvaluation> ProgramEvaluation<N> {
+    pub fn new(states: imbl::OrdMap<Namespace, N>) -> Self {
         Self { states }
     }
 
-    pub fn unit(qualified_location: Namespace, evaluation_state: EvaluationState<E>) -> Self {
-        Self::new(imbl::OrdMap::unit(qualified_location, evaluation_state))
+    pub fn unit(namespace: Namespace, namespace_evaluation: N) -> Self {
+        Self::new(imbl::OrdMap::unit(namespace, namespace_evaluation))
     }
 
-    pub fn update(
-        &self,
-        qualified_location: Namespace,
-        evaluation_state: EvaluationState<E>,
-    ) -> Self
+    pub fn update(&self, namespace: Namespace, namespace_evaluation: N) -> Self
     where
-        E: Clone,
+        N: Clone,
     {
-        Self::new(self.states.update(qualified_location, evaluation_state))
+        Self::new(self.states.update(namespace, namespace_evaluation))
     }
 }
 
-impl<E: Ord> Default for ProgramEvaluation<E> {
+impl<N: NamespaceEvaluation> Default for ProgramEvaluation<N> {
     fn default() -> Self {
         Self {
             states: imbl::OrdMap::new(),
@@ -1511,7 +1494,7 @@ impl<E: Ord> Default for ProgramEvaluation<E> {
     }
 }
 
-impl<E: Ord + Display> Display for ProgramEvaluation<E> {
+impl<N: NamespaceEvaluation + Display> Display for ProgramEvaluation<N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         fmt_set(f, self.states.iter(), |f, (location, state)| {
             write!(f, "{}: {}", location, state)
@@ -1519,9 +1502,9 @@ impl<E: Ord + Display> Display for ProgramEvaluation<E> {
     }
 }
 
-impl<E: Ord + Clone> AbstractState for ProgramEvaluation<E> {
+impl<N: NamespaceEvaluation + Clone> AbstractState for ProgramEvaluation<N> {
     type Key = Namespace;
-    type AbstractValue = EvaluationState<E>;
+    type AbstractValue = N;
 
     fn get(&self, key: &Self::Key) -> Option<&Self::AbstractValue> {
         self.states.get(key)

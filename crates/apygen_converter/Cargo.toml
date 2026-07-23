@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 apygen_inference = { workspace = true }
-apygen_constraint_graph = { workspace = true }
 apy = { workspace = true }
 rayon = { workspace = true }
 log = { workspace = true }
