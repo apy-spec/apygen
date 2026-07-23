@@ -6,6 +6,16 @@ pub trait LatticeOrd {
     fn leq(&self, other: &Self) -> bool;
 }
 
+pub trait ContextualLatticeOrd<C, E> {
+    fn leq(&self, other: &Self, context: &C) -> Result<bool, E>;
+}
+
+impl<T: LatticeOrd, C, E> ContextualLatticeOrd<C, E> for T {
+    fn leq(&self, other: &Self, _context: &C) -> Result<bool, E> {
+        Ok(self.leq(other))
+    }
+}
+
 impl<T: LatticeOrd> LatticeOrd for Arc<T> {
     fn leq(&self, other: &Self) -> bool {
         self.as_ref().leq(other.as_ref())
@@ -65,6 +75,19 @@ impl<T: OrdLatticeOrd> LatticeOrd for T {
 
 pub trait Join {
     fn join(&self, other: &Self) -> Self;
+}
+
+pub trait ContextualJoin<C, E>
+where
+    Self: Sized,
+{
+    fn join(&self, other: &Self, context: &C) -> Result<Self, E>;
+}
+
+impl<T: Join, C, E> ContextualJoin<C, E> for T {
+    fn join(&self, other: &Self, _context: &C) -> Result<Self, E> {
+        Ok(self.join(other))
+    }
 }
 
 impl<T: Join + Eq> Join for Arc<T> {
@@ -161,6 +184,19 @@ impl<T: OrdJoin> Join for T {
 
 pub trait Meet {
     fn meet(&self, other: &Self) -> Self;
+}
+
+pub trait ContextualMeet<C, E>
+where
+    Self: Sized,
+{
+    fn meet(&self, other: &Self, context: &C) -> Result<Self, E>;
+}
+
+impl<T: Meet, C, E> ContextualMeet<C, E> for T {
+    fn meet(&self, other: &Self, _context: &C) -> Result<Self, E> {
+        Ok(self.meet(other))
+    }
 }
 
 impl<T: Meet + Eq> Meet for Arc<T> {
