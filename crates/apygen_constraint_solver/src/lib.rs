@@ -219,34 +219,29 @@ impl<'a> ExpressionEvaluator<'a> {
         let evaluation_state =
             abstract_state.get(&expression_variable.named_qualified_location.namespace)?;
 
-        let Some(ty) = evaluation_state
+        if let Some(ty) = evaluation_state
             .types
             .get(&Expression::Variable(expression_variable.clone()))
-        else {
-            return if evaluation_state
-                .defined_variables
-                .names
-                .contains_key(&expression_variable.named_qualified_location.name)
-            {
-                Some(PyTypeEval::with_default_effects(Type::Never))
-            } else {
-                Some(PyTypeEval::new(
-                    Type::Never,
-                    PyEffects::new().with_exceptions(RaisedExceptions::raise(Exception::new(
-                        Arc::new(Type::Instance(TypeInstance::from_qualified_name(
-                            abstract_state,
-                            &BUILTINS_MODULE,
-                            &SmolStr::new_static("NameError"),
-                        )?)),
-                        ExceptionOrigin::Specified, // TODO: fix origin
-                    ))),
-                ))
-            };
-        };
-
-        Some(PyTypeEval::with_default_effects(
-            ty.as_value()?.data.clone(),
-        ))
+        {
+            Some(PyTypeEval::with_default_effects(
+                ty.as_value()?.data.clone(),
+            ))
+        } else if evaluation_state
+            .defined_variables
+            .names
+            .contains_key(&expression_variable.named_qualified_location.name)
+        {
+            Some(PyTypeEval::with_default_effects(Type::Never))
+        } else {
+            Some(PyTypeEval::raise(Exception::new(
+                Arc::new(Type::Instance(TypeInstance::from_qualified_name(
+                    abstract_state,
+                    &BUILTINS_MODULE,
+                    &SmolStr::new_static("NameError"),
+                )?)),
+                ExceptionOrigin::Specified, // TODO: fix origin
+            )))
+        }
     }
 
     pub fn evaluate_expression_forward_variable<
@@ -1917,7 +1912,7 @@ mod tests {
             #raise = Inferred({})
             #return = Inferred(5)
         "##},
-        )]
+    )]
     #[case::hard_function_call(
         indoc! {r##"
         def foo():
