@@ -39,14 +39,14 @@ pub mod calls;
 pub mod expressions;
 
 #[derive(Debug, Clone, PartialEq, Eq, Join)]
-pub struct EvaluationState<E: Ord> {
-    pub types: imbl::OrdMap<Arc<E>, Deferred<Sourced<Type>, E>>,
-    pub return_value: Deferred<Sourced<Type>, E>,
-    pub raised_exceptions: Deferred<Sourced<RaisedExceptions>, E>,
+pub struct EvaluationState {
+    pub types: imbl::OrdMap<Arc<Expression>, Deferred<Sourced<Type>, Expression>>,
+    pub return_value: Deferred<Sourced<Type>, Expression>,
+    pub raised_exceptions: Deferred<Sourced<RaisedExceptions>, Expression>,
     pub defined_variables: DefinedVariables,
 }
 
-impl EvaluationState<Expression> {
+impl EvaluationState {
     pub fn get_variable_type(
         &self,
         variable_name: &SmolStr,
@@ -66,7 +66,7 @@ impl EvaluationState<Expression> {
     }
 }
 
-impl<E: Ord> Default for EvaluationState<E> {
+impl Default for EvaluationState {
     fn default() -> Self {
         Self {
             types: imbl::OrdMap::new(),
@@ -77,7 +77,7 @@ impl<E: Ord> Default for EvaluationState<E> {
     }
 }
 
-impl<E: Ord + Display> Display for EvaluationState<E> {
+impl Display for EvaluationState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("(evaluations: ")?;
         fmt_set(f, self.types.iter(), |f, (expression, eval)| {
@@ -91,7 +91,7 @@ impl<E: Ord + Display> Display for EvaluationState<E> {
     }
 }
 
-impl NamespaceEvaluation for EvaluationState<Expression> {
+impl NamespaceEvaluation for EvaluationState {
     type Expression = Expression;
     fn attributes(
         &self,
@@ -139,10 +139,8 @@ impl<N: Ord, S> Default for SolverState<N, S> {
     }
 }
 
-impl<
-    N: Clone + Ord,
-    S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Clone,
-> AbstractState for SolverState<N, S>
+impl<N: Clone + Ord, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone>
+    AbstractState for SolverState<N, S>
 {
     type Key = N;
     type AbstractValue = S;
@@ -206,14 +204,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_variable<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expression_variable: &ExpressionVariable,
     ) -> Option<PyTypeEval> {
         let evaluation_state =
@@ -246,14 +240,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_forward_variable<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expression_forward_variable: &ExpressionForwardVariable,
     ) -> Option<PyTypeEval> {
         if let Some(program_evaluation) = abstract_state.get(self.namespace) {
@@ -283,14 +273,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_annotated<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expression_annotated: &ExpressionAnnotated,
     ) -> Option<PyTypeEval> {
         let annotation_eval =
@@ -319,14 +305,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_function<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expression_function: &ExpressionFunction,
     ) -> Option<PyTypeEval> {
         Some(PyTypeEval::with_default_effects(Type::new_literal(
@@ -343,14 +325,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_class<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expression_class: &ExpressionClass,
     ) -> Option<PyTypeEval> {
         analyse_program_entity(
@@ -375,14 +353,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_import<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expression_import: &ExpressionImport,
     ) -> Option<PyTypeEval> {
         let namespace = Namespace::Module(expression_import.module.clone());
@@ -405,14 +379,10 @@ impl<'a> ExpressionEvaluator<'a> {
     /// References: https://docs.python.org/3/howto/descriptor.html
     fn evaluate_attributes<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         value_ty: &Type,
         name: &SmolStr,
         instance_arguments: Option<&imbl::Vector<Arc<Type>>>,
@@ -515,14 +485,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_attribute<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expression_attribute: &ExpressionAttribute,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -542,14 +508,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_subscript<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expression_subscript: &ExpressionSubscript,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -583,14 +545,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_call<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         ty: &Type,
         arguments: Arguments,
     ) -> Option<PyTypeEval> {
@@ -647,14 +605,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_call<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expression_call: &ExpressionCall,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -692,14 +646,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_unary<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expression_unary: &ExpressionUnary,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -725,14 +675,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_binary_operation<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         left_ty: &Type,
         operator: BinaryOperator,
         right_ty: &Type,
@@ -845,14 +791,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression_binary<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expression_binary: &ExpressionBinary,
     ) -> Option<PyTypeEval> {
         let mut effects = PyEffects::new();
@@ -881,14 +823,10 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn evaluate_expression<
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expression: &Expression,
     ) -> Option<PyTypeEval> {
         if let Some(expression_eval) = abstract_state
@@ -980,14 +918,10 @@ impl<'a> ExpressionEvaluator<'a> {
     pub fn evaluate_expressions<
         'e,
         's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
     >(
         &mut self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        abstract_state: &mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         expressions: impl IntoIterator<Item = &'e Expression>,
     ) -> Option<PyTypeEval> {
         let mut eval = PyTypeEval::never();
@@ -1000,28 +934,21 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 }
 
-pub struct ConstraintSolver<
-    's,
-    S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>>,
-> {
+pub struct ConstraintSolver<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>
+{
     pub namespace: &'s Namespace,
     pub constraint_graphs: &'s imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
-    pub program_evaluation:
-        &'s AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState<Expression>>>,
+    pub program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
     pub in_evaluation: imbl::OrdSet<&'s Namespace>,
 }
 
-impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>>>
+impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>
     ConstraintSolver<'s, S>
 {
     pub fn new(
         namespace: &'s Namespace,
         constraint_graphs: &'s imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
-        program_evaluation: &'s AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
+        program_evaluation: &'s AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
         in_evaluation: imbl::OrdSet<&'s Namespace>,
     ) -> Self {
         Self {
@@ -1041,11 +968,11 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expre
     }
 }
 
-impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq>
-    GraphAnalyser for ConstraintSolver<'s, S>
+impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq> GraphAnalyser
+    for ConstraintSolver<'s, S>
 {
     type Node = ConstraintNode;
-    type AbstractState = AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState<Expression>>>;
+    type AbstractState = AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>;
     type AnalysisState = SolverState<Self::Node, Self::AbstractState>;
     type Error = Infallible;
 
@@ -1448,17 +1375,13 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expre
 pub fn analyse_program_entity<
     'e,
     's: 'e,
-    S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+    S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq,
 >(
-    abstract_state: &'e mut AbstractStateProxy<
-        's,
-        S,
-        ProgramEvaluation<EvaluationState<Expression>>,
-    >,
+    abstract_state: &'e mut AbstractStateProxy<'s, S, ProgramEvaluation<EvaluationState>>,
     constraint_graphs: &imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     namespace: &'e Namespace,
     in_evaluation: imbl::OrdSet<&'e Namespace>,
-) -> Result<&'e mut EvaluationState<Expression>, Infallible> {
+) -> Result<&'e mut EvaluationState, Infallible> {
     let solver_state = analysis(
         &ConstraintSolver::new(namespace, constraint_graphs, abstract_state, in_evaluation),
         &mut DummyAnalysisObserver::default(),
@@ -1511,7 +1434,7 @@ impl<'a> ModuleConstraintSolver<'a> {
 
 impl GraphAnalyser for ModuleConstraintSolver<'_> {
     type Node = ModuleNode;
-    type AbstractState = ProgramEvaluation<EvaluationState<Expression>>;
+    type AbstractState = ProgramEvaluation<EvaluationState>;
     type AnalysisState = SolverState<Self::Node, Self::AbstractState>;
     type Error = Infallible;
 
