@@ -1925,7 +1925,7 @@ mod tests {
             #return = Never
         module[foo@{1:4}]:
             #raise = {Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)}
-            #return = Never
+            #return = NoReturn
         "##},
         indoc! {r##"
         module:
