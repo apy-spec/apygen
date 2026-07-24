@@ -1858,7 +1858,7 @@ mod tests {
         module[foo@{1:4}]:
             #variables = {}
             #raise = Inferred({Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)})
-            #return = Inferred(Never)
+            #return = Inferred(NoReturn)
         "##},
     )]
     #[case::forward_reference_function_call(
