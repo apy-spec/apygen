@@ -64,28 +64,24 @@ pub fn method_resolution_order(literal_class: &LiteralClass) -> Option<VecDeque<
 #[cfg(test)]
 mod tests {
     use crate::expressions::literal_class::method_resolution_order;
-    use crate::identifiers::NamedQualifiedLocation;
+    use crate::identifiers::{NamedQualifiedLocation, SmolStr};
     use crate::inference::{ClassType, LiteralClass};
-    use apy::v1::{Identifier, QualifiedName};
     use apygen_constraint_graph::expressions::{Location, Namespace};
     use std::collections::VecDeque;
     use std::sync::Arc;
 
     fn create_classes(classes: &[(&str, Vec<&str>)]) -> imbl::OrdMap<String, LiteralClass> {
-        let namespace = Arc::new(Namespace::Module(Arc::new(QualifiedName::parse(
-            "test_module",
-        ))));
+        let namespace = Arc::new(Namespace::Module(SmolStr::new_static("test_module")));
 
         let mut literal_classes: imbl::OrdMap<String, LiteralClass> = imbl::OrdMap::new();
 
         for (line, (name, bases)) in classes.iter().enumerate() {
-            let identifier = Arc::new(Identifier::parse(name));
             literal_classes.insert(
-                identifier.as_ref().as_ref().to_owned(),
+                String::from(*name),
                 LiteralClass {
                     value: Arc::new(ClassType {
                         program_entity: NamedQualifiedLocation::new(
-                            identifier,
+                            SmolStr::new(name),
                             Location::new(line, 0),
                             namespace.clone(),
                         ),
@@ -111,7 +107,7 @@ mod tests {
         assert_eq!(
             actual_mro
                 .iter()
-                .map(|literal_class| literal_class.value.program_entity.name.as_ref().as_ref())
+                .map(|literal_class| literal_class.value.program_entity.name.as_str())
                 .collect::<Vec<_>>(),
             expected_mro
         );

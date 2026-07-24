@@ -1,8 +1,3 @@
-pub use apygen_analysis as analysis;
-pub use apygen_cfg as cfg;
-pub use apygen_constraint_graph as constraint_graph;
-pub use apygen_finder as finder;
-
 use crate::analysis::lattice::{Join, OrdJoin};
 use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use crate::cfg::ast;
@@ -18,10 +13,8 @@ use crate::constraint_graph::expressions::{
     ExpressionImport, ExpressionOverride, ExpressionSubscript, ExpressionUnary, ExpressionVariable,
     KeywordArgument, UnaryOperator,
 };
-use crate::constraint_graph::identifiers::{
-    Identifier, Location, ModuleName, NamedQualifiedLocation, Namespace, OneOrMany,
-    ParseIdentifierError, QualifiedName, VariableName,
-};
+use crate::constraint_graph::identifiers::smol_str::SmolStrBuilder;
+use crate::constraint_graph::identifiers::{Location, NamedQualifiedLocation, Namespace, SmolStr};
 use crate::constraint_graph::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
@@ -32,7 +25,6 @@ use crate::constraint_graph::{
 };
 use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
 use crate::finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
-
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::collections::{BTreeSet, HashMap};
@@ -40,21 +32,24 @@ use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use thiserror::Error;
 
-pub const BUILTINS_MODULE: &str = "builtins";
+pub use apygen_analysis as analysis;
+pub use apygen_cfg as cfg;
+pub use apygen_constraint_graph as constraint_graph;
+pub use apygen_finder as finder;
+
+pub const BUILTINS_MODULE: SmolStr = SmolStr::new_static("builtins");
 
 #[derive(Debug, Error)]
 pub enum FromAssignmentTargetError {
-    #[error("the expression contains an invalid identifier")]
-    InvalidIdentifier(#[from] ParseIdentifierError),
     #[error("the expression is not a valid assignment target")]
     InvalidTarget,
 }
 
 pub enum AssignmentTarget<'e> {
-    Name(Identifier),
+    Name(SmolStr),
     Attribute {
         target: Box<AssignmentTarget<'e>>,
-        attr: Identifier,
+        attr: SmolStr,
     },
     Subscript {
         target: Box<AssignmentTarget<'e>>,
@@ -69,9 +64,7 @@ impl TryFrom<&ast::ExprName> for AssignmentTarget<'_> {
     type Error = FromAssignmentTargetError;
 
     fn try_from(value: &ast::ExprName) -> Result<Self, Self::Error> {
-        Ok(AssignmentTarget::Name(Identifier::try_parse(
-            value.id.as_ref(),
-        )?))
+        Ok(AssignmentTarget::Name(SmolStr::new(value.id.as_str())))
     }
 }
 
@@ -80,7 +73,7 @@ impl<'e> TryFrom<&'e ast::ExprAttribute> for AssignmentTarget<'e> {
 
     fn try_from(value: &'e ast::ExprAttribute) -> Result<Self, Self::Error> {
         Ok(AssignmentTarget::Attribute {
-            attr: Identifier::try_parse(value.attr.id.as_ref())?,
+            attr: SmolStr::new(value.attr.id.as_str()),
             target: Box::new(AssignmentTarget::try_from(value.value.as_ref())?),
         })
     }
@@ -183,11 +176,11 @@ pub struct ProgramEntityAbstractEnvironment {
     pub return_status: ReturnStatus,
     pub current_nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>,
     pub unknown_variables:
-        imbl::OrdMap<VariableName, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Location>>>,
-    pub variable_locations: imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
+        imbl::OrdMap<SmolStr, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Location>>>,
+    pub variable_locations: imbl::OrdMap<SmolStr, imbl::OrdSet<Location>>,
     pub nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
     pub edges: imbl::OrdMap<(ConstraintNode, ConstraintNode), imbl::OrdSet<Guard>>,
-    pub imports: imbl::OrdSet<ModuleName>,
+    pub imports: imbl::OrdSet<SmolStr>,
     pub sub_program_entities: imbl::OrdMap<ProgramEntity, CfgAnalysis>,
 }
 
@@ -224,11 +217,11 @@ impl Display for ProgramEntityAnalysisState {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct UsedVariables {
-    pub names: imbl::OrdMap<VariableName, imbl::OrdSet<Location>>,
+    pub names: imbl::OrdMap<SmolStr, imbl::OrdSet<Location>>,
 }
 
 impl UsedVariables {
-    pub fn new(names: imbl::OrdMap<VariableName, imbl::OrdSet<Location>>) -> Self {
+    pub fn new(names: imbl::OrdMap<SmolStr, imbl::OrdSet<Location>>) -> Self {
         Self { names }
     }
 
@@ -318,7 +311,7 @@ impl<'a> ProgramEntityAbstractParentState<'a> {
 
     pub fn previous_locations(
         &self,
-        variable_name: &VariableName,
+        variable_name: &SmolStr,
     ) -> Option<(&Arc<Namespace>, &imbl::OrdSet<Location>)> {
         if let Some(locations) = self.state.variable_locations.get(variable_name) {
             return Some((&self.entity.namespace, locations));
@@ -425,7 +418,7 @@ impl<'a> ConstraintsBuilder<'a> {
     pub fn previous_locations<'l>(
         &'l self,
         abstract_environment: &'l ProgramEntityAbstractEnvironment,
-        variable_name: &VariableName,
+        variable_name: &SmolStr,
     ) -> Option<(&'l Arc<Namespace>, &'l imbl::OrdSet<Location>)> {
         if let Some(previous_locations) = abstract_environment.variable_locations.get(variable_name)
         {
@@ -506,7 +499,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let empty_constraint_node = ConstraintNode::Constraint {
             location: Some(location.clone()),
-            id: Some(Arc::new("#empty".to_owned())),
+            id: Some(SmolStr::new_static("#empty")),
         };
         for (from, guards) in &abstract_environment.current_nodes {
             let from = if guards.is_empty() {
@@ -584,7 +577,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let current_empty_constraint = ConstraintNode::Constraint {
             location: Some(location.clone()),
-            id: Some(Arc::new("#empty".to_owned())),
+            id: Some(SmolStr::new_static("#empty")),
         };
 
         for (from, guards) in &abstract_environment.current_nodes {
@@ -620,7 +613,7 @@ impl<'a> ConstraintsBuilder<'a> {
         &self,
         abstract_environment: &mut ProgramEntityAbstractEnvironment,
         location: Location,
-        variable_name: VariableName,
+        variable_name: SmolStr,
         type_expression: Arc<Expression>,
         sub_cfg_analysis: Option<&CfgAnalysis>,
     ) {
@@ -663,7 +656,7 @@ impl<'a> ConstraintsBuilder<'a> {
         {
             let unknown_variable_node = ConstraintNode::Constraint {
                 location: Some(location.clone()),
-                id: Some(Arc::new(variable_name.as_ref().as_ref().to_owned())),
+                id: Some(variable_name.clone()),
             };
             for (original_node, unknown_variable_locations) in variable_nodes {
                 abstract_environment.nodes.insert(
@@ -743,32 +736,6 @@ impl<'a> ConstraintsBuilder<'a> {
         abstract_environment.current_nodes = current_nodes.update(node, new_guards);
     }
 
-    pub fn gen_module_name(
-        &self,
-        identifier: &ast::Identifier,
-    ) -> Result<ModuleName, ConstraintsBuilderError> {
-        match QualifiedName::try_from(identifier.id.as_str()) {
-            Ok(module_name) => Ok(Arc::new(module_name)),
-            Err(_) => Err(ConstraintsBuilderError::InvalidModule {
-                location: self.gen_location(&identifier),
-                name: identifier.id.to_owned(),
-            }),
-        }
-    }
-
-    pub fn gen_variable_name(
-        &self,
-        identifier: &ast::Identifier,
-    ) -> Result<VariableName, ConstraintsBuilderError> {
-        match Identifier::try_from(identifier.id.as_str()) {
-            Ok(identifier_name) => Ok(Arc::new(identifier_name)),
-            Err(_) => Err(ConstraintsBuilderError::InvalidIdentifier {
-                location: self.gen_location(&identifier),
-                name: identifier.id.to_owned(),
-            }),
-        }
-    }
-
     pub fn gen_location(&self, ranged: &impl Ranged) -> Location {
         let program_point_location =
             convert_text_size_to_location(self.line_index, ranged.start()).unwrap();
@@ -783,7 +750,7 @@ impl<'a> ConstraintsBuilder<'a> {
         parameter: &ast::Parameter,
     ) -> Result<(ExpressionVariable, Option<ExpressionEval<Expression>>), ConstraintsBuilderError>
     {
-        let parameter_name = self.gen_variable_name(&parameter.name)?;
+        let parameter_name = SmolStr::new(&parameter.name);
 
         let annotation = if let Some(annotation) = &parameter.annotation {
             Some(
@@ -1075,7 +1042,7 @@ impl<'a> ConstraintsBuilder<'a> {
         let mut keyword_arguments: imbl::Vector<KeywordArgument> = imbl::Vector::new();
         for keyword_argument in &expr_call.arguments.keywords {
             let keyword_name = match &keyword_argument.arg {
-                Some(identifier) => Some(self.gen_variable_name(&identifier)?),
+                Some(identifier) => Some(SmolStr::new(&identifier)),
                 None => None,
             };
             keyword_arguments.push_back(KeywordArgument {
@@ -1175,7 +1142,7 @@ impl<'a> ConstraintsBuilder<'a> {
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
         let value_eval =
             self.evaluate_expr(namespace, abstract_environment, &expr_attribute.value)?;
-        let attribute = self.gen_variable_name(&expr_attribute.attr)?;
+        let attribute = SmolStr::new(&expr_attribute.attr);
 
         Ok(value_eval.map(|value| {
             Expression::Attribute(ExpressionAttribute {
@@ -1211,14 +1178,7 @@ impl<'a> ConstraintsBuilder<'a> {
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
         let location = self.gen_location(expr_name);
 
-        let Ok(identifier) = Identifier::try_from(expr_name.id.as_str()) else {
-            return Err(ConstraintsBuilderError::InvalidIdentifier {
-                location,
-                name: expr_name.id.to_owned(),
-            });
-        };
-
-        let variable_name = Arc::new(identifier);
+        let variable_name = SmolStr::new(&expr_name.id);
 
         Ok(ExpressionEval::new(
             if let Some(_) = self.previous_locations(abstract_environment, &variable_name) {
@@ -1355,7 +1315,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let location = self.gen_location(&stmt_function_def.name);
 
-        let variable_name = self.gen_variable_name(&stmt_function_def.name)?;
+        let variable_name = SmolStr::new(&stmt_function_def.name);
 
         let function_qualified_location = NamedQualifiedLocation::new(
             variable_name.clone(),
@@ -1443,7 +1403,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let location = self.gen_location(&stmt_class_def.name);
 
-        let variable_name = self.gen_variable_name(&stmt_class_def.name)?;
+        let variable_name = SmolStr::new(&stmt_class_def.name);
 
         let class_qualified_location = NamedQualifiedLocation::new(
             variable_name.clone(),
@@ -1557,20 +1517,28 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let mut current_nodes = imbl::OrdSet::default();
         for alias in &stmt_import.names {
-            let module_name = self.gen_module_name(&alias.name)?;
-
             if let Some(as_name) = &alias.asname {
+                let module_name = SmolStr::new(&alias.name);
                 self.assign_variable(
                     &mut target_abstract_environment,
                     self.gen_location(as_name),
-                    self.gen_variable_name(&as_name)?,
+                    SmolStr::new(&as_name),
                     Arc::new(Expression::Import(ExpressionImport::new(
                         module_name.clone(),
                     ))),
                     None,
                 );
+                target_abstract_environment.imports.insert(module_name);
             } else {
-                let identifier = Arc::new(module_name.identifiers.first().clone());
+                let identifiers = alias.name.split('.').collect::<Vec<_>>();
+
+                let identifier = SmolStr::new(
+                    identifiers
+                        .first()
+                        .cloned()
+                        .expect("Module name should not be empty"),
+                );
+
                 let mut location = self.gen_location(&alias.name);
 
                 target_abstract_environment
@@ -1579,7 +1547,7 @@ impl<'a> ConstraintsBuilder<'a> {
 
                 let mut expression_option = Some(Arc::new(Expression::Variable(
                     ExpressionVariable::new(NamedQualifiedLocation::new(
-                        identifier,
+                        identifier.clone(),
                         location.clone(),
                         self.program_entity.namespace.clone(),
                     )),
@@ -1587,10 +1555,20 @@ impl<'a> ConstraintsBuilder<'a> {
 
                 let mut i = 1;
                 while let Some(expression) = expression_option {
-                    let (module_identifiers, attribute_identifiers) =
-                        module_name.identifiers.split_at(i);
+                    let (module_identifiers, attribute_identifiers) = identifiers.split_at(i);
                     let attribute_option = attribute_identifiers.first().cloned();
-                    let identifier = Arc::new(module_identifiers[0].clone());
+                    let identifier = SmolStr::new(module_identifiers[0]);
+                    let mut module_name_builder = SmolStrBuilder::new();
+                    for (i, module_identifier) in module_identifiers.iter().enumerate() {
+                        if i > 0 {
+                            module_name_builder.push('.');
+                        }
+                        module_name_builder.push_str(module_identifier);
+                    }
+                    let module_name = module_name_builder.finish();
+                    target_abstract_environment
+                        .imports
+                        .insert(module_name.clone());
 
                     self.create_include_constraint(
                         &mut target_abstract_environment,
@@ -1602,9 +1580,7 @@ impl<'a> ConstraintsBuilder<'a> {
                                 self.program_entity.namespace.clone(),
                             ),
                         ))),
-                        Arc::new(Expression::Import(ExpressionImport::new(Arc::new(
-                            QualifiedName::new(OneOrMany::many(Vec::from(module_identifiers))),
-                        )))),
+                        Arc::new(Expression::Import(ExpressionImport::new(module_name))),
                         expression.clone(),
                     );
 
@@ -1613,7 +1589,7 @@ impl<'a> ConstraintsBuilder<'a> {
                         expression_option =
                             Some(Arc::new(Expression::Attribute(ExpressionAttribute {
                                 value: expression,
-                                attribute: Arc::new(attribute),
+                                attribute: SmolStr::new(attribute),
                             })));
                     } else {
                         expression_option = None;
@@ -1643,10 +1619,6 @@ impl<'a> ConstraintsBuilder<'a> {
                         .any(|guard| matches!(guard, Guard::Raise { .. }))
                 },
             ));
-
-            target_abstract_environment
-                .imports
-                .insert(module_name.clone());
         }
 
         target_abstract_environment
@@ -1687,7 +1659,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     self.assign_variable(
                         &mut target_abstract_environment,
                         self.gen_location(target_expr),
-                        Arc::new(target_name),
+                        target_name,
                         type_expression.clone(),
                         None,
                     );
@@ -1748,7 +1720,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 self.assign_variable(
                     &mut target_abstract_environment,
                     self.gen_location(stmt_ann_assign.target.as_ref()),
-                    Arc::new(target_name),
+                    target_name,
                     type_expression.clone(),
                     None,
                 );
@@ -2173,7 +2145,7 @@ impl Display for ProgramEntityNode {
 pub trait ModuleLoader {
     type Error;
 
-    fn load(&self, module_name: &ModuleName) -> Result<String, Self::Error>;
+    fn load(&self, module_name: &SmolStr) -> Result<String, Self::Error>;
 }
 
 #[derive(Debug, Error)]
@@ -2187,19 +2159,25 @@ pub enum LoadModuleError {
 }
 
 pub struct SpecModuleLoader<F: Filesystem> {
-    pub specs: HashMap<Identifier, FinderSpec<Identifier, F>>,
+    pub specs: HashMap<SmolStr, FinderSpec<SmolStr, F>>,
 }
 
 impl<F: Filesystem> ModuleLoader for SpecModuleLoader<F> {
     type Error = LoadModuleError;
 
-    fn load(&self, module_name: &ModuleName) -> Result<String, Self::Error> {
+    fn load(&self, module_name: &SmolStr) -> Result<String, Self::Error> {
+        let mut identifiers = module_name.split('.');
+
+        let Some(identifier) = identifiers.next() else {
+            return Err(LoadModuleError::ModuleNotFound);
+        };
+
         let mut finder_spec = self
             .specs
-            .get(module_name.identifiers.first())
+            .get(identifier)
             .ok_or(LoadModuleError::ModuleNotFound)?;
 
-        for identifier in module_name.identifiers.iter().skip(1) {
+        for identifier in identifiers {
             finder_spec = finder_spec
                 .submodules
                 .get(identifier)
@@ -2278,7 +2256,7 @@ pub fn analyse_cfg<'a>(
 pub fn analyse_module<'a>(
     module_loader: &impl ModuleLoader<Error: Debug>,
     parent_state: Option<&ProgramEntityAbstractParentState>,
-    module_name: &ModuleName,
+    module_name: &SmolStr,
 ) -> Option<imbl::OrdMap<ProgramEntity, CfgAnalysis>> {
     let source = module_loader.load(&module_name).ok()?;
     let module = parse_module(&source).ok()?;
@@ -2298,9 +2276,7 @@ pub fn analyse_module<'a>(
     Some(imbl::OrdMap::unit(program_entity, cfg_analysis))
 }
 
-pub fn get_imports(
-    cfg_analyses: &imbl::OrdMap<ProgramEntity, CfgAnalysis>,
-) -> BTreeSet<ModuleName> {
+pub fn get_imports(cfg_analyses: &imbl::OrdMap<ProgramEntity, CfgAnalysis>) -> BTreeSet<SmolStr> {
     cfg_analyses
         .values()
         .flat_map(|cfg_analysis| {
@@ -2337,16 +2313,14 @@ pub fn create_constraint_graphs(
 
 pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
     module_loader: &C,
-    initial_modules: impl Iterator<Item = ModuleName>,
+    initial_modules: impl Iterator<Item = SmolStr>,
 ) -> ModuleDependentGraph {
-    let builtins_module_name = Arc::new(QualifiedName::parse(BUILTINS_MODULE));
-
-    let builtins_cfg_analyses = analyse_module(module_loader, None, &builtins_module_name)
+    let builtins_cfg_analyses = analyse_module(module_loader, None, &BUILTINS_MODULE)
         .expect("builtins module should be analysable");
 
-    let builtins_module_node = ModuleNode::Module(builtins_module_name.clone());
+    let builtins_module_node = ModuleNode::Module(BUILTINS_MODULE);
     let builtins_entity = ProgramEntity::new(
-        Arc::new(Namespace::Module(builtins_module_name.clone())),
+        Arc::new(Namespace::Module(BUILTINS_MODULE)),
         ProgramEntityKind::Module,
     );
 
@@ -2371,7 +2345,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
 
     let mut worklist = initial_modules
         .chain(builtins_imports)
-        .filter(|import| *import != builtins_module_name)
+        .filter(|import| *import != BUILTINS_MODULE)
         .collect::<BTreeSet<_>>();
 
     while !worklist.is_empty() {
@@ -2395,7 +2369,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
             }
 
             for import in imports {
-                if import == builtins_module_name {
+                if import == BUILTINS_MODULE {
                     continue;
                 }
                 let import_module_node = ModuleNode::Module(import.clone());
@@ -2429,13 +2403,17 @@ mod tests {
     use std::convert::Infallible;
 
     pub struct TestModuleLoader {
-        pub modules: HashMap<ModuleName, String>,
+        pub modules: HashMap<SmolStr, String>,
     }
 
     impl ModuleLoader for TestModuleLoader {
         type Error = Infallible;
-        fn load(&self, module_name: &ModuleName) -> Result<String, Self::Error> {
-            Ok(self.modules.get(module_name).cloned().unwrap())
+        fn load(&self, module_name: &SmolStr) -> Result<String, Self::Error> {
+            Ok(self
+                .modules
+                .get(module_name)
+                .cloned()
+                .expect(&format!("{module_name} should exists")))
         }
     }
 
@@ -2490,10 +2468,7 @@ mod tests {
         "##};
 
         let module_loader = TestModuleLoader {
-            modules: HashMap::from_iter([(
-                Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                TEST_BUILTINS.to_owned(),
-            )]),
+            modules: HashMap::from_iter([(BUILTINS_MODULE, TEST_BUILTINS.to_owned())]),
         };
         let dependent_graph = analyse_program(&module_loader, [].into_iter());
 
@@ -2576,11 +2551,14 @@ mod tests {
         digraph "DependentGraph" {
             "Module(builtins)";
             "Module(module)";
+            "Module(some_module)";
             "Module(some_module.submodule)";
             "Entry" -> "Module(builtins)";
             "Module(builtins)" -> "Module(module)";
+            "Module(builtins)" -> "Module(some_module)";
             "Module(builtins)" -> "Module(some_module.submodule)";
             "Module(module)" -> "Exit";
+            "Module(some_module)" -> "Module(module)";
             "Module(some_module.submodule)" -> "Module(module)";
         }
         specification "module":
@@ -3642,24 +3620,15 @@ mod tests {
         "##},
     )]
     fn test_program_analysis(#[case] source: &str, #[case] expected_constraints: &str) {
-        let module_name = Arc::new(QualifiedName::parse("module"));
+        let module_name = SmolStr::new_static("module");
 
         let module_loader = TestModuleLoader {
             modules: HashMap::from_iter([
                 (module_name.clone(), source.to_string()),
-                (Arc::new(QualifiedName::parse("some_module")), String::new()),
-                (
-                    Arc::new(QualifiedName::parse("some_module.submodule")),
-                    String::new(),
-                ),
-                (
-                    Arc::new(QualifiedName::parse("another_module")),
-                    String::new(),
-                ),
-                (
-                    Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                    TEST_BUILTINS.to_owned(),
-                ),
+                (SmolStr::new_static("some_module"), String::new()),
+                (SmolStr::new_static("some_module.submodule"), String::new()),
+                (SmolStr::new_static("another_module"), String::new()),
+                (BUILTINS_MODULE, TEST_BUILTINS.to_owned()),
             ]),
         };
         let dependent_graph = analyse_program(&module_loader, std::iter::once(module_name.clone()));

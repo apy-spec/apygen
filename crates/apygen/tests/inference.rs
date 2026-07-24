@@ -1,5 +1,5 @@
-use apygen::constraint_builder::constraint_graph::expressions::{Identifier, QualifiedName};
 use apygen::constraint_builder::constraint_graph::graph::dot::ToDot;
+use apygen::constraint_builder::constraint_graph::identifiers::SmolStr;
 use apygen::constraint_builder::constraint_graph::{ModuleDependentGraph, ModuleNode};
 use apygen::constraint_builder::{SpecModuleLoader, analyse_program};
 use apygen::constraint_solver::ModuleConstraintSolver;
@@ -37,7 +37,7 @@ fn typeshed_dir() -> AbsolutePathBuf {
 
 pub fn analyse_directory(
     directory: AbsolutePathBuf,
-    target_module: Arc<QualifiedName>,
+    target_module: SmolStr,
 ) -> (ModuleDependentGraph, apy::Apy) {
     let finder = PathFinder::new(
         Arc::new(LocalFilesystem),
@@ -47,7 +47,7 @@ pub fn analyse_directory(
         Some(typeshed_dir()),
     );
 
-    let specs: HashMap<Identifier, _> = finder.get_specs();
+    let specs: HashMap<SmolStr, _> = finder.get_specs();
 
     let module_loader = SpecModuleLoader { specs };
 
@@ -86,18 +86,18 @@ pub fn analyse_directory(
 fn test_inference(#[case] module_name: String) {
     init_logger();
 
+    let module_name = SmolStr::from(module_name);
+
     let absolute_manifest_dir = absolute_manifest_dir();
     let modules_dir = absolute_manifest_dir.join("tests/data/modules");
 
-    let module_qualified_name = Arc::new(QualifiedName::parse(&module_name));
-
     let (actual_dependent_graph, actual_apy) =
-        analyse_directory(modules_dir, module_qualified_name.clone());
+        analyse_directory(modules_dir, module_name.clone());
 
     let mut actual_dot = actual_dependent_graph.dot("DependentGraph");
     for constraint_graphs in actual_dependent_graph.nodes.values() {
         for (namespace, constraint_graph) in constraint_graphs {
-            if *namespace.module_name() != module_qualified_name {
+            if *namespace.module_name() != module_name {
                 continue;
             }
             actual_dot.push_str(&constraint_graph.dot(&namespace.to_string()));

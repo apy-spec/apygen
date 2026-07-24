@@ -1,8 +1,7 @@
-use apygen_constraint_builder::constraint_graph::expressions::Identifier;
+use apygen_constraint_builder::constraint_graph::identifiers::SmolStr;
 use apygen_constraint_builder::finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
 use apygen_constraint_builder::finder::pathfinder::PathFinder;
 use apygen_constraint_builder::{SpecModuleLoader, analyse_program};
-
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -31,7 +30,7 @@ fn bench_constraint_builder(criterion: &mut Criterion) {
         Some(typeshed_dir()),
     );
 
-    let specs: HashMap<Identifier, _> = finder.get_specs();
+    let specs: HashMap<SmolStr, _> = finder.get_specs();
 
     let module_loader = SpecModuleLoader { specs };
 

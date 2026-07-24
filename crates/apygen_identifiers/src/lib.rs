@@ -1,11 +1,8 @@
-pub use apy;
-pub use apy::v1::{Identifier, ParseIdentifierError, ParseQualifiedNameError, QualifiedName};
-pub use apy::{EmptyCollectionError, OneOrMany};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
-pub type ModuleName = Arc<QualifiedName>;
-pub type VariableName = Arc<Identifier>;
+pub use crate::smol_str::SmolStr;
+pub use smol_str;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Location {
@@ -48,13 +45,13 @@ impl Display for QualifiedLocation {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NamedQualifiedLocation {
-    pub name: VariableName,
+    pub name: SmolStr,
     pub location: Location,
     pub namespace: Arc<Namespace>,
 }
 
 impl NamedQualifiedLocation {
-    pub fn new(name: VariableName, location: Location, namespace: Arc<Namespace>) -> Self {
+    pub fn new(name: SmolStr, location: Location, namespace: Arc<Namespace>) -> Self {
         Self {
             name,
             location,
@@ -71,7 +68,7 @@ impl Display for NamedQualifiedLocation {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Namespace {
-    Module(ModuleName),
+    Module(SmolStr),
     ProgramEntity(QualifiedLocation),
     NamedProgramEntity(NamedQualifiedLocation),
 }
@@ -87,7 +84,7 @@ impl Namespace {
         }
     }
 
-    pub fn module_name(&self) -> &ModuleName {
+    pub fn module_name(&self) -> &SmolStr {
         match self {
             Namespace::Module(module_name) => module_name,
             Namespace::ProgramEntity(qualified_location) => {

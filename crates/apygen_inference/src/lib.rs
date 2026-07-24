@@ -1,9 +1,6 @@
 use crate::analysis::fmt::fmt_display_wrapped;
 use crate::analysis::lattice::{Join, LatticeOrd, OrdJoin, OrdLatticeOrd};
-use crate::identifiers::{
-    Identifier, Location, ModuleName, NamedQualifiedLocation, Namespace, QualifiedName,
-    VariableName,
-};
+use crate::identifiers::{Location, NamedQualifiedLocation, Namespace, SmolStr};
 use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
@@ -20,11 +17,11 @@ pub use apygen_identifiers as identifiers;
 pub use apygen_primitives as primitives;
 pub use imbl;
 
-pub const BUILTINS_MODULE: &str = "builtins";
-pub const TYPES_MODULE: &str = "types";
-pub const TYPING_MODULE: &str = "typing";
-pub const TYPING_EXTENSIONS_MODULE: &str = "typing_extensions";
-pub const ABC_MODULE: &str = "abc";
+pub const BUILTINS_MODULE: SmolStr = SmolStr::new_static("builtins");
+pub const TYPES_MODULE: SmolStr = SmolStr::new_static("types");
+pub const TYPING_MODULE: SmolStr = SmolStr::new_static("typing");
+pub const TYPING_EXTENSIONS_MODULE: SmolStr = SmolStr::new_static("typing_extensions");
+pub const ABC_MODULE: SmolStr = SmolStr::new_static("abc");
 pub const DEPTH_LIMIT: usize = 20;
 pub const WIDTH_LIMIT: usize = 20;
 
@@ -177,7 +174,7 @@ impl<S: StructuralWidth + Ord> StructuralWidth for imbl::OrdSet<S> {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Parameter {
-    pub name: Arc<Identifier>,
+    pub name: SmolStr,
 
     pub kind: ParameterKind,
 
@@ -425,7 +422,7 @@ impl StructuralWidth for ClassType {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ImportedModuleType {
-    pub module: Arc<QualifiedName>,
+    pub module: SmolStr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -811,7 +808,7 @@ pub enum TypeLiteral {
 }
 
 impl TypeLiteral {
-    pub fn type_name(&self) -> (&str, &str) {
+    pub fn type_name(&self) -> (SmolStr, &'static str) {
         match self {
             TypeLiteral::Integer(_) => (BUILTINS_MODULE, "int"),
             TypeLiteral::Boolean(_) => (BUILTINS_MODULE, "bool"),
@@ -842,11 +839,11 @@ impl TypeLiteral {
         &self,
         program_evaluation: &impl AbstractState<Key = Namespace, AbstractValue = N>,
     ) -> Option<TypeInstance> {
-        let (module_name_str, class_name_str) = self.type_name();
+        let (module_name, class_name) = self.type_name();
         TypeInstance::from_qualified_name(
             program_evaluation,
-            &Arc::new(QualifiedName::parse(module_name_str)),
-            &Arc::new(Identifier::parse(class_name_str)),
+            &module_name,
+            &SmolStr::new_static(class_name),
         )
     }
 }
@@ -1014,12 +1011,12 @@ pub struct TypeInstance {
 impl TypeInstance {
     pub fn from_qualified_name<N: NamespaceEvaluation + Clone>(
         program_evaluation: &impl AbstractState<Key = Namespace, AbstractValue = N>,
-        module_name: &ModuleName,
-        variable_name: &VariableName,
+        module_name: &SmolStr,
+        variable_name: &SmolStr,
     ) -> Option<TypeInstance> {
         let namespace_evaluation =
             program_evaluation.get(&Namespace::Module(module_name.clone()))?;
-        let ty = namespace_evaluation.get_attribute(&variable_name)?;
+        let ty = namespace_evaluation.get_attribute(variable_name)?;
 
         let Type::Literal(type_literal) = &ty.as_value()?.data else {
             return None;
@@ -1185,8 +1182,8 @@ impl Join for Type {
                             if let Namespace::Module(module_name) =
                                 base_class.value.program_entity.namespace.as_ref()
                             {
-                                if *module_name.as_ref() == QualifiedName::parse(BUILTINS_MODULE)
-                                    && base_class.value.program_entity.name.as_ref() == "int"
+                                if *module_name == BUILTINS_MODULE
+                                    && base_class.value.program_entity.name == "int"
                                 {
                                     return Type::Instance(int_instance.clone());
                                 }
@@ -1422,7 +1419,7 @@ impl OrdJoin for Pureness {}
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct DefinedVariables {
-    pub names: imbl::OrdMap<VariableName, imbl::OrdSet<(Arc<Namespace>, Location)>>,
+    pub names: imbl::OrdMap<SmolStr, imbl::OrdSet<(Arc<Namespace>, Location)>>,
 }
 
 impl DefinedVariables {
@@ -1503,11 +1500,8 @@ pub trait NamespaceEvaluation {
 
     fn attributes(
         &self,
-    ) -> impl Iterator<Item = (&VariableName, Deferred<Sourced<Type>, Self::Expression>)>;
-    fn get_attribute(
-        &self,
-        name: &VariableName,
-    ) -> Option<Deferred<Sourced<Type>, Self::Expression>> {
+    ) -> impl Iterator<Item = (&SmolStr, Deferred<Sourced<Type>, Self::Expression>)>;
+    fn get_attribute(&self, name: &SmolStr) -> Option<Deferred<Sourced<Type>, Self::Expression>> {
         for (variable_name, ty) in self.attributes() {
             if variable_name == name {
                 return Some(ty);

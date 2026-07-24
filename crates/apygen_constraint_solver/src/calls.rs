@@ -1,6 +1,6 @@
 use crate::analysis::fmt::{fmt_display_iterator, fmt_iterator};
 use crate::analysis::lattice::Join;
-use crate::constraint_graph::expressions::{Identifier, ParameterKind};
+use crate::constraint_graph::expressions::{ParameterKind, SmolStr};
 use crate::inference::{LiteralTuple, Parameter, Sourced, Type, TypeLiteral};
 use crate::primitives::literals::LiteralStr;
 use imbl;
@@ -39,7 +39,7 @@ pub enum BindError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Arguments {
     pub positional: Vec<Arc<Type>>,
-    pub keyword: BTreeMap<Arc<Identifier>, Arc<Type>>,
+    pub keyword: BTreeMap<SmolStr, Arc<Type>>,
 }
 
 impl Arguments {
@@ -60,11 +60,7 @@ impl Arguments {
         self
     }
 
-    pub fn add_keyword_argument(
-        mut self,
-        identifier: Arc<Identifier>,
-        argument: Arc<Type>,
-    ) -> Self {
+    pub fn add_keyword_argument(mut self, identifier: SmolStr, argument: Arc<Type>) -> Self {
         self.keyword.insert(identifier, argument);
         self
     }

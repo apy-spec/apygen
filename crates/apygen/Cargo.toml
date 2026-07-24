@@ -11,7 +11,7 @@ apygen_finder = { workspace = true }
 apygen_constraint_builder = { workspace = true }
 apygen_constraint_solver = { workspace = true }
 apygen_converter = { workspace = true }
-apy = { workspace = true }
+apy = { workspace = true, features = ["yaml"] }
 env_logger = { workspace = true }
 log = { workspace = true }
 rayon = { workspace = true }

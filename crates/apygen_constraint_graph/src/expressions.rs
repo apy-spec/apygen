@@ -1,8 +1,5 @@
 use crate::analysis::fmt::fmt_display_sequence;
-pub use crate::identifiers::{
-    EmptyCollectionError, Identifier, Location, ModuleName, NamedQualifiedLocation, Namespace,
-    OneOrMany, ParseIdentifierError, ParseQualifiedNameError, QualifiedName, VariableName,
-};
+pub use crate::identifiers::{Location, NamedQualifiedLocation, Namespace, SmolStr};
 pub use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
@@ -39,16 +36,13 @@ impl Display for ExpressionVariable {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionForwardVariable {
-    pub name: VariableName,
+    pub name: SmolStr,
     pub location: Location,
 }
 
 impl ExpressionForwardVariable {
-    pub fn new(name: VariableName, location: Location) -> Self {
-        Self {
-            name,
-            location,
-        }
+    pub fn new(name: SmolStr, location: Location) -> Self {
+        Self { name, location }
     }
 }
 
@@ -138,11 +132,11 @@ impl Display for ExpressionClass {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionImport {
-    pub module: ModuleName,
+    pub module: SmolStr,
 }
 
 impl ExpressionImport {
-    pub fn new(module: ModuleName) -> Self {
+    pub fn new(module: SmolStr) -> Self {
         Self { module }
     }
 }
@@ -155,7 +149,7 @@ impl Display for ExpressionImport {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct KeywordArgument {
-    pub name: Option<VariableName>,
+    pub name: Option<SmolStr>,
     pub value: Arc<Expression>,
 }
 
@@ -191,7 +185,7 @@ impl Display for ExpressionCall {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionAttribute {
     pub value: Arc<Expression>,
-    pub attribute: VariableName,
+    pub attribute: SmolStr,
 }
 
 impl Display for ExpressionAttribute {
@@ -229,7 +223,7 @@ pub struct ExpressionGeneric {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Parameter {
-    pub name: VariableName,
+    pub name: SmolStr,
 
     pub kind: ParameterKind,
 
@@ -238,8 +232,8 @@ pub struct Parameter {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionImportFrom {
-    pub module: ModuleName,
-    pub attribute: VariableName,
+    pub module: SmolStr,
+    pub attribute: SmolStr,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -435,7 +429,9 @@ impl Display for Expression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Expression::Variable(expression_variable) => write!(f, "{}", expression_variable),
-            Expression::ForwardVariable(expression_forward_variable) => write!(f, "{}", expression_forward_variable),
+            Expression::ForwardVariable(expression_forward_variable) => {
+                write!(f, "{}", expression_forward_variable)
+            }
             Expression::Annotated(expression_annotated) => write!(f, "{}", expression_annotated),
             Expression::Override(expression_override) => write!(f, "{}", expression_override),
             Expression::Function(expression_function) => write!(f, "{}", expression_function),

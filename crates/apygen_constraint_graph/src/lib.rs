@@ -6,7 +6,7 @@ use crate::analysis::lattice::Join;
 use crate::expressions::{Expression, ExpressionVariable};
 use crate::graph::Graph;
 use crate::graph::dot::{DiGraphDot, escape_dot};
-use crate::identifiers::{Location, ModuleName, Namespace};
+use crate::identifiers::{Location, SmolStr, Namespace};
 pub use apygen_analysis as analysis;
 pub use apygen_graph as graph;
 pub use apygen_identifiers as identifiers;
@@ -107,7 +107,7 @@ pub enum ConstraintNode {
     Entry,
     Constraint {
         location: Option<Location>,
-        id: Option<Arc<String>>,
+        id: Option<SmolStr>,
     },
     TypeExit,
     ExceptionExit,
@@ -283,7 +283,7 @@ impl DiGraphDot for ConstraintGraph {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ModuleNode {
     Entry,
-    Module(ModuleName),
+    Module(SmolStr),
     Exit,
 }
 

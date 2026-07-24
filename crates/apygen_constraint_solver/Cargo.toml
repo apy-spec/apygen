@@ -17,7 +17,6 @@ imbl = { workspace = true }
 [dev-dependencies]
 apygen_constraint_builder = { workspace = true }
 env_logger = { workspace = true }
-apy = { workspace = true, features = ["yaml"] }
 rstest = { workspace = true }
 indoc = { workspace = true }
 criterion = { workspace = true }

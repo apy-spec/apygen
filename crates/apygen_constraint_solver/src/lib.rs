@@ -6,14 +6,14 @@ use crate::calls::Arguments;
 use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
     ExpressionCall, ExpressionClass, ExpressionForwardVariable, ExpressionFunction,
-    ExpressionSubscript, ExpressionUnary, ExpressionVariable, Identifier, ModuleName, Namespace,
-    QualifiedName, VariableName,
+    ExpressionSubscript, ExpressionUnary, ExpressionVariable, Namespace, SmolStr,
 };
 use crate::constraint_graph::{
     Constraint, ConstraintGraph, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode,
 };
 use crate::expressions::literal_class::method_resolution_order;
 use crate::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
+use crate::identifiers::smol_str::format_smolstr;
 use crate::identifiers::{Location, NamedQualifiedLocation};
 use crate::inference::{
     BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Exception, ExceptionOrigin, FunctionType,
@@ -48,7 +48,7 @@ pub struct EvaluationState<E: Ord> {
 impl EvaluationState<Expression> {
     pub fn get_variable_type(
         &self,
-        variable_name: &VariableName,
+        variable_name: &SmolStr,
         locations: &imbl::OrdSet<(Arc<Namespace>, Location)>,
     ) -> Option<Deferred<Sourced<Type>, Expression>> {
         let mut ty = None;
@@ -94,7 +94,7 @@ impl NamespaceEvaluation for EvaluationState<Expression> {
     type Expression = Expression;
     fn attributes(
         &self,
-    ) -> impl Iterator<Item = (&VariableName, Deferred<Sourced<Type>, Self::Expression>)> {
+    ) -> impl Iterator<Item = (&SmolStr, Deferred<Sourced<Type>, Self::Expression>)> {
         self.defined_variables
             .names
             .iter()
@@ -107,10 +107,7 @@ impl NamespaceEvaluation for EvaluationState<Expression> {
             })
     }
 
-    fn get_attribute(
-        &self,
-        name: &VariableName,
-    ) -> Option<Deferred<Sourced<Type>, Self::Expression>> {
+    fn get_attribute(&self, name: &SmolStr) -> Option<Deferred<Sourced<Type>, Self::Expression>> {
         self.defined_variables
             .names
             .get(name)
@@ -290,8 +287,8 @@ impl<'a> ExpressionEvaluator<'a> {
                     PyEffects::new().with_exceptions(RaisedExceptions::raise(Exception::new(
                         Arc::new(Type::Instance(TypeInstance::from_qualified_name(
                             abstract_state,
-                            &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                            &Arc::new(Identifier::parse("NameError")),
+                            &BUILTINS_MODULE,
+                            &SmolStr::new_static("NameError"),
                         )?)),
                         ExceptionOrigin::Specified, // TODO: fix origin
                     ))),
@@ -336,8 +333,8 @@ impl<'a> ExpressionEvaluator<'a> {
             PyEffects::new().with_exceptions(RaisedExceptions::raise(Exception::new(
                 Arc::new(Type::Instance(TypeInstance::from_qualified_name(
                     abstract_state,
-                    &Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                    &Arc::new(Identifier::parse("NameError")),
+                    &BUILTINS_MODULE,
+                    &SmolStr::new_static("NameError"),
                 )?)),
                 ExceptionOrigin::Specified, // TODO: fix origin
             ))),
@@ -448,7 +445,7 @@ impl<'a> ExpressionEvaluator<'a> {
             ProgramEvaluation<EvaluationState<Expression>>,
         >,
         value_ty: &Type,
-        name: &VariableName,
+        name: &SmolStr,
         instance_arguments: Option<&imbl::Vector<Arc<Type>>>,
     ) -> Option<PyTypeEval> {
         match value_ty {
@@ -595,7 +592,7 @@ impl<'a> ExpressionEvaluator<'a> {
         let get_item = self.evaluate_attributes(
             abstract_state,
             &value_ty,
-            &Arc::new(Identifier::parse("__getitem__")),
+            &SmolStr::new_static("__getitem__"),
             None,
         )?;
         let slice_ty = pytype_consume_or_return_option!(
@@ -785,10 +782,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     self.evaluate_attributes(
                         abstract_state,
                         left_ty,
-                        &Arc::new(Identifier::parse(&format!(
-                            "__{}__",
-                            operator.method_name()?
-                        ))),
+                        &format_smolstr!("__{}__", operator.method_name()?),
                         None
                     )?
                 );
@@ -812,10 +806,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     self.evaluate_attributes(
                         abstract_state,
                         right_ty,
-                        &Arc::new(Identifier::parse(&format!(
-                            "__r{}__",
-                            operator.method_name()?
-                        ))),
+                        &format_smolstr!("__r{}__", operator.method_name()?),
                         None
                     )?
                 );
@@ -1647,7 +1638,6 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 mod tests {
     use super::*;
     use crate::inference::BUILTINS_MODULE;
-    use apy::v1::QualifiedName;
     use apygen_analysis::analysis;
     use apygen_analysis::log::LogAnalysisObserver;
     use apygen_constraint_builder::{ModuleLoader, analyse_program};
@@ -1660,12 +1650,12 @@ mod tests {
     }
 
     pub struct TestModuleLoader {
-        pub modules: HashMap<ModuleName, String>,
+        pub modules: HashMap<SmolStr, String>,
     }
 
     impl ModuleLoader for TestModuleLoader {
         type Error = Infallible;
-        fn load(&self, module_name: &ModuleName) -> Result<String, Self::Error> {
+        fn load(&self, module_name: &SmolStr) -> Result<String, Self::Error> {
             Ok(self.modules.get(module_name).cloned().unwrap())
         }
     }
@@ -1867,14 +1857,11 @@ mod tests {
     fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
         init_logger();
 
-        let module_name = Arc::new(QualifiedName::parse("module"));
+        let module_name = SmolStr::new_static("module");
         let module_loader = TestModuleLoader {
             modules: HashMap::from_iter([
                 (module_name.clone(), source.to_string()),
-                (
-                    Arc::new(QualifiedName::parse(BUILTINS_MODULE)),
-                    TEST_BUILTINS.to_owned(),
-                ),
+                (BUILTINS_MODULE, TEST_BUILTINS.to_owned()),
             ]),
         };
 

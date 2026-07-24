@@ -1,6 +1,6 @@
 use crate::apy;
 use crate::inference::analysis::abstract_state::AbstractState;
-use crate::inference::identifiers::{ModuleName, Namespace, QualifiedName};
+use crate::inference::identifiers::{Namespace, SmolStr};
 use crate::inference::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
@@ -10,6 +10,7 @@ use crate::inference::{
     ProgramEvaluation, RaisedExceptions, TYPES_MODULE, TYPING_MODULE, Type, TypeInstance,
     TypeLiteral, TypeUnion, Visibility,
 };
+use apy::v1::{Identifier, QualifiedName};
 use log::debug;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
@@ -28,10 +29,9 @@ pub fn is_internal_mangled_name(name: &str) -> bool {
     name.starts_with("__") && !name.ends_with("__")
 }
 
-pub fn visibility_from_name(name: &QualifiedName) -> Visibility {
+pub fn visibility_from_name(name: &SmolStr) -> Visibility {
     if name
-        .identifiers
-        .iter()
+        .split('.')
         .any(|component| is_internal_mangled_name(component))
     {
         Visibility::Internal
@@ -53,7 +53,7 @@ pub fn visibility_from_class_name(name: &str) -> Visibility {
 pub fn new_literal(arguments: Vec<apy::v1::TypeArgument>) -> apy::v1::TypeInstance {
     apy::v1::TypeInstance::new(
         apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("Literal"))
-            .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE))),
+            .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE.as_str()))),
     )
     .with_arguments(arguments)
 }
@@ -149,7 +149,7 @@ pub fn convert_literal_function<N: NamespaceEvaluation + Clone>(
     for parameter in &literal_function.value.parameters {
         parameters.push(
             apy::v1::Parameter::new(
-                parameter.name.as_ref().clone(),
+                Identifier::parse(parameter.name.as_ref()),
                 parameter.kind,
                 convert_type(program_evaluation, &Arc::new(Type::Any))?,
             )
@@ -188,17 +188,12 @@ pub fn convert_literal_class<N: NamespaceEvaluation + Clone>(
                     .iter()
                     .map(|base| {
                         apy::v1::Type::Reference(
-                            apy::v1::TypeReference::new(QualifiedName::from(
-                                base.value.program_entity.name.as_ref().clone(),
+                            apy::v1::TypeReference::new(QualifiedName::parse(
+                                base.value.program_entity.name.as_ref(),
                             ))
-                            .with_module(Some(
-                                base.value
-                                    .program_entity
-                                    .namespace
-                                    .module_name()
-                                    .as_ref()
-                                    .clone(),
-                            )),
+                            .with_module(Some(QualifiedName::parse(
+                                base.value.program_entity.namespace.module_name(),
+                            ))),
                         )
                     })
                     .collect::<Vec<_>>(),
@@ -235,9 +230,9 @@ pub fn convert_literal_imported_module<N: NamespaceEvaluation + Clone>(
     program_evaluation: &ProgramEvaluation<N>,
     literal_imported_module: &LiteralImportedModule,
 ) -> Option<apy::v1::ImportedModule> {
-    Some(apy::v1::ImportedModule::new(
-        literal_imported_module.value.module.as_ref().clone(),
-    ))
+    Some(apy::v1::ImportedModule::new(QualifiedName::parse(
+        literal_imported_module.value.module.as_ref(),
+    )))
 }
 
 pub enum ConvertedTypeLiteral {
@@ -315,21 +310,21 @@ pub fn convert_type_literal<N: NamespaceEvaluation + Clone>(
 pub fn convert_type_any() -> apy::v1::TypeInstance {
     apy::v1::TypeInstance::new(
         apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("Any"))
-            .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE))),
+            .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE.as_str()))),
     )
 }
 
 pub fn convert_type_never() -> apy::v1::TypeInstance {
     apy::v1::TypeInstance::new(
         apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("Never"))
-            .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE))),
+            .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE.as_str()))),
     )
 }
 
 pub fn convert_type_no_return() -> apy::v1::TypeInstance {
     apy::v1::TypeInstance::new(
         apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("NoReturn"))
-            .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE))),
+            .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE.as_str()))),
     )
 }
 
@@ -344,10 +339,10 @@ pub fn convert_type_instance<N: NamespaceEvaluation + Clone>(
     };
 
     let type_reference =
-        apy::v1::TypeReference::new(QualifiedName::from(program_entity.name.as_ref().clone()))
-            .with_module(Some(
-                program_entity.namespace.module_name().as_ref().clone(),
-            ));
+        apy::v1::TypeReference::new(QualifiedName::parse(program_entity.name.as_str()))
+            .with_module(Some(QualifiedName::parse(
+                program_entity.namespace.module_name().as_str(),
+            )));
 
     Some(
         apy::v1::TypeInstance::new(type_reference).with_arguments(
@@ -372,7 +367,7 @@ pub fn convert_type_union<N: NamespaceEvaluation + Clone>(
     Some(
         apy::v1::TypeInstance::new(
             apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("Union"))
-                .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE))),
+                .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE.as_str()))),
         )
         .with_arguments(
             type_union
@@ -392,7 +387,7 @@ pub fn convert_type_union<N: NamespaceEvaluation + Clone>(
 pub fn convert_type_intersection() -> apy::v1::TypeInstance {
     apy::v1::TypeInstance::new(
         apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("Intersection"))
-            .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE))),
+            .with_module(Some(apy::v1::QualifiedName::parse(TYPING_MODULE.as_str()))),
     )
 }
 
@@ -417,7 +412,9 @@ pub fn convert_type<N: NamespaceEvaluation + Clone>(
                     apy::v1::PythonValue::Other(apy::v1::OtherPythonValue::Ellipsis) => {
                         apy::v1::TypeInstance::new(
                             apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("ellipsis"))
-                                .with_module(Some(apy::v1::QualifiedName::parse(BUILTINS_MODULE))),
+                                .with_module(Some(apy::v1::QualifiedName::parse(
+                                    BUILTINS_MODULE.as_str(),
+                                ))),
                         )
                     }
                     _ => {
@@ -426,23 +423,26 @@ pub fn convert_type<N: NamespaceEvaluation + Clone>(
                 },
                 ConvertedTypeLiteral::Function(_) => apy::v1::TypeInstance::new(
                     apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("FunctionType"))
-                        .with_module(Some(apy::v1::QualifiedName::parse(TYPES_MODULE))),
+                        .with_module(Some(apy::v1::QualifiedName::parse(TYPES_MODULE.as_str()))),
                 ),
                 ConvertedTypeLiteral::Class(_) => apy::v1::TypeInstance::new(
-                    apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("type"))
-                        .with_module(Some(apy::v1::QualifiedName::parse(BUILTINS_MODULE))),
+                    apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("type")).with_module(
+                        Some(apy::v1::QualifiedName::parse(BUILTINS_MODULE.as_str())),
+                    ),
                 ),
                 ConvertedTypeLiteral::TypeAlias(_) => apy::v1::TypeInstance::new(
-                    apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("type"))
-                        .with_module(Some(apy::v1::QualifiedName::parse(BUILTINS_MODULE))),
+                    apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("type")).with_module(
+                        Some(apy::v1::QualifiedName::parse(BUILTINS_MODULE.as_str())),
+                    ),
                 ),
                 ConvertedTypeLiteral::Generic(_) => apy::v1::TypeInstance::new(
-                    apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("type"))
-                        .with_module(Some(apy::v1::QualifiedName::parse(BUILTINS_MODULE))),
+                    apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("type")).with_module(
+                        Some(apy::v1::QualifiedName::parse(BUILTINS_MODULE.as_str())),
+                    ),
                 ),
                 ConvertedTypeLiteral::ImportedModule(_) => apy::v1::TypeInstance::new(
                     apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("ModuleType"))
-                        .with_module(Some(apy::v1::QualifiedName::parse(TYPES_MODULE))),
+                        .with_module(Some(apy::v1::QualifiedName::parse(TYPES_MODULE.as_str()))),
                 ),
             }
         }
@@ -488,7 +488,9 @@ pub fn convert_attribute<N: NamespaceEvaluation + Clone>(
                     apy::v1::PythonValue::Other(apy::v1::OtherPythonValue::Ellipsis) => {
                         apy::v1::Type::Reference(
                             apy::v1::TypeReference::new(apy::v1::QualifiedName::parse("ellipsis"))
-                                .with_module(Some(apy::v1::QualifiedName::parse(BUILTINS_MODULE))),
+                                .with_module(Some(apy::v1::QualifiedName::parse(
+                                    BUILTINS_MODULE.as_str(),
+                                ))),
                         )
                     }
                     _ => {
@@ -533,7 +535,7 @@ pub fn convert_abstract_environment<N: NamespaceEvaluation + Clone>(
             continue;
         };
         attributes.insert(
-            attribute_name.as_ref().clone(),
+            Identifier::parse(attribute_name.as_str()),
             apy::OneOrMany::one(attribute),
         );
     }
@@ -543,7 +545,7 @@ pub fn convert_abstract_environment<N: NamespaceEvaluation + Clone>(
 
 pub fn convert_module<N: NamespaceEvaluation + Clone>(
     program_evaluation: &ProgramEvaluation<N>,
-    module: &ModuleName,
+    module: &SmolStr,
 ) -> Option<apy::v1::Module> {
     let namespace_evaluation = program_evaluation.get(&Namespace::Module(module.clone()))?;
 
@@ -562,14 +564,14 @@ pub fn convert_module<N: NamespaceEvaluation + Clone>(
 
 pub fn convert_apy_v1<'a, N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
-    target_modules: impl IntoParallelIterator<Item = &'a Arc<QualifiedName>>,
+    target_modules: impl IntoParallelIterator<Item = &'a SmolStr>,
 ) -> apy::v1::ApyV1 {
     apy::v1::ApyV1::new().with_modules(
         target_modules
             .into_par_iter()
             .filter_map(|module_name| {
                 Some((
-                    module_name.as_ref().clone(),
+                    QualifiedName::parse(module_name.as_str()),
                     convert_module(program_evaluation, &module_name)?,
                 ))
             })
