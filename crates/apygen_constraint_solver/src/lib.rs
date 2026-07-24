@@ -6,7 +6,7 @@ use crate::calls::Arguments;
 use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
     ExpressionCall, ExpressionClass, ExpressionForwardVariable, ExpressionFunction,
-    ExpressionSubscript, ExpressionUnary, ExpressionVariable, Namespace, SmolStr,
+    ExpressionImport, ExpressionSubscript, ExpressionUnary, ExpressionVariable, Namespace, SmolStr,
 };
 use crate::constraint_graph::{
     Constraint, ConstraintGraph, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode,
@@ -16,11 +16,12 @@ use crate::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
 use crate::identifiers::smol_str::format_smolstr;
 use crate::identifiers::{Location, NamedQualifiedLocation};
 use crate::inference::{
-    BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Exception, ExceptionOrigin, FunctionType,
-    LiteralClass, LiteralFunction, LiteralMethod, RaisedExceptions, Source, Sourced,
-    StructuralDepth, StructuralWidth, Type, TypeInstance, TypeLiteral, WIDTH_LIMIT,
+    BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Deferred, DefinedVariables, Exception,
+    ExceptionOrigin, FunctionType, ImportedModuleType, LiteralClass, LiteralFunction,
+    LiteralImportedModule, LiteralMethod, NamespaceEvaluation, ProgramEvaluation, RaisedExceptions,
+    Source, Sourced, StructuralDepth, StructuralWidth, Type, TypeInstance, TypeLiteral,
+    WIDTH_LIMIT,
 };
-use crate::inference::{Deferred, DefinedVariables, NamespaceEvaluation, ProgramEvaluation};
 use imbl::ordmap::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
@@ -378,6 +379,35 @@ impl<'a> ExpressionEvaluator<'a> {
                 }),
             }),
         )))
+    }
+
+    pub fn evaluate_expression_import<
+        's,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
+    >(
+        &mut self,
+        abstract_state: &mut AbstractStateProxy<
+            's,
+            S,
+            ProgramEvaluation<EvaluationState<Expression>>,
+        >,
+        expression_import: &ExpressionImport,
+    ) -> Option<PyTypeEval> {
+        let namespace = Namespace::Module(expression_import.module.clone());
+
+        if abstract_state.contains(&namespace) {
+            Some(PyTypeEval::with_default_effects(Type::new_literal(
+                TypeLiteral::ImportedModule(LiteralImportedModule {
+                    value: Arc::new(ImportedModuleType {
+                        module: expression_import.module.clone(),
+                    }),
+                }),
+            )))
+        } else if self.constraint_graphs.contains_key(&namespace) {
+            None
+        } else {
+            None // TODO: Add import exception when possible
+        }
     }
 
     /// References: https://docs.python.org/3/howto/descriptor.html
@@ -910,7 +940,9 @@ impl<'a> ExpressionEvaluator<'a> {
             Expression::Class(expression_class) => {
                 self.evaluate_expression_class(abstract_state, expression_class)
             }
-            Expression::Import(_) => None,
+            Expression::Import(expression_import) => {
+                self.evaluate_expression_import(abstract_state, expression_import)
+            }
             Expression::Attribute(expression_attribute) => {
                 self.evaluate_expression_attribute(abstract_state, expression_attribute)
             }
