@@ -271,17 +271,14 @@ impl<'a> ExpressionEvaluator<'a> {
                 .evaluate_expression_forward_variable(abstract_state, expression_forward_variable);
         }
 
-        Some(PyTypeEval::new(
-            Type::Never,
-            PyEffects::new().with_exceptions(RaisedExceptions::raise(Exception::new(
-                Arc::new(Type::Instance(TypeInstance::from_qualified_name(
-                    abstract_state,
-                    &BUILTINS_MODULE,
-                    &SmolStr::new_static("NameError"),
-                )?)),
-                ExceptionOrigin::Specified, // TODO: fix origin
-            ))),
-        ))
+        Some(PyTypeEval::raise(Exception::new(
+            Arc::new(Type::Instance(TypeInstance::from_qualified_name(
+                abstract_state,
+                &BUILTINS_MODULE,
+                &SmolStr::new_static("NameError"),
+            )?)),
+            ExceptionOrigin::Specified, // TODO: fix origin
+        )))
     }
 
     pub fn evaluate_expression_annotated<
