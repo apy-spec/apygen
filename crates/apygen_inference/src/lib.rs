@@ -1095,33 +1095,21 @@ impl TypeUnion {
 
     pub fn insert(&mut self, ty: Type) {
         match ty {
-            Type::Any => {
-                self.types = imbl::OrdSet::unit(Type::Any);
-            }
-            Type::Never => {}
             Type::Union(other_type_union) => {
                 for other_ty in other_type_union.types {
                     self.insert(other_ty);
                 }
             }
-            Type::Instance(int_instance) if int_instance.is_int() => {
-                self.types = self
-                    .types
-                    .iter()
-                    .filter(|int_literal| {
-                        if let Type::Literal(type_literal) = &int_literal {
-                            !matches!(type_literal.as_ref(), TypeLiteral::Integer(_))
-                        } else {
-                            true
-                        }
-                    })
-                    .cloned()
-                    .chain(std::iter::once(Type::Instance(int_instance.clone())))
-                    .collect()
-            }
+            Type::Never | Type::NoReturn => {}
             _ => {
-                if !self.types.contains(&Type::Any) {
-                    self.types.insert(ty.clone());
+                if !self.types.iter().any(|self_type| ty.leq(&self_type)) {
+                    self.types = self
+                        .types
+                        .iter()
+                        .filter(|self_type| !self_type.leq(&ty))
+                        .cloned()
+                        .chain(std::iter::once(ty.clone()))
+                        .collect();
                 }
             }
         };
@@ -1135,6 +1123,14 @@ impl TypeUnion {
         } else {
             Type::Union(self)
         }
+    }
+}
+
+impl LatticeOrd for TypeUnion {
+    fn leq(&self, other: &Self) -> bool {
+        self.types
+            .iter()
+            .all(|self_ty| other.types.iter().any(|other_ty| self_ty.leq(&other_ty)))
     }
 }
 
@@ -1232,26 +1228,35 @@ impl LatticeOrd for Type {
         if self == other {
             return true;
         }
-        match other {
-            Type::Any => true,
-            Type::Never => false,
-            Type::NoReturn => false,
-            Type::Instance(_) => true,
-            Type::Union(other_type_union) => {
-                if let Type::Union(self_type_union) = self {
-                    self_type_union.types.leq(&other_type_union.types)
+        match (self, other) {
+            (Type::Never, _) | (_, Type::Any) => true,
+            (Type::Any, _) | (_, Type::Never) => false,
+            (Type::Union(self_union), Type::Union(other_union)) => self_union.leq(other_union),
+            (Type::Union(self_union), _) => {
+                self_union.types.iter().all(|self_ty| self_ty.leq(other))
+            }
+            (_, Type::Union(other_union)) => {
+                other_union.types.iter().all(|other_ty| self.leq(&other_ty))
+            }
+            (Type::Literal(self_literal), Type::Instance(other_instance)) => {
+                if matches!(self_literal.as_ref(), TypeLiteral::Integer(_))
+                    && other_instance.is_int()
+                {
+                    true
                 } else {
-                    other_type_union.types.contains(self)
+                    false
                 }
             }
-            Type::Intersection(other_type_intersection) => {
-                if let Type::Intersection(self_type_intersection) = self {
-                    self_type_intersection.leq(other_type_intersection)
+            (Type::Instance(self_instance), Type::Literal(other_literal)) => {
+                if matches!(other_literal.as_ref(), TypeLiteral::Integer(_))
+                    && self_instance.is_int()
+                {
+                    false
                 } else {
-                    other_type_intersection.contains(self)
+                    true
                 }
             }
-            Type::Literal(_) => false,
+            _ => false,
         }
     }
 }
