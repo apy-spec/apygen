@@ -1643,9 +1643,20 @@ mod tests {
         "##},
         indoc! {r##"
         module:
+            a = 42
+            b = 42
+            x = True
+            #raise = {}
+            #return = None
+        "##},
+        indoc! {r##"
+        module:
             a@{module[4:4]} = Inferred(42)
+            a@{module[8:4]} = Inferred(42)
             b@{module[8:0]} = Inferred(42)
             x@{module[1:0]} = Inferred(True)
+            x@{module[3:3]} = Inferred(True)
+            #variables = {a: {module[4:4]}, b: {module[8:0]}, x: {module[1:0]}}
             #raise = Inferred({})
             #return = Inferred(None)
         "##},
@@ -1661,9 +1672,20 @@ mod tests {
         "##},
         indoc! {r##"
         module:
+            a = @class(builtins[int@{1:6}])
+            b = @class(builtins[int@{1:6}])
+            #raise = {Exception(type=Any, origin=Unknown)}
+            #return = None
+        "##},
+        indoc! {r##"
+        module:
             a@{module[1:0]} = Inferred(0)
+            a@{module[3:6]} = Inferred(@class(builtins[int@{1:6}]))
             a@{module[4:4]} = Inferred(@class(builtins[int@{1:6}]))
+            a@{module[4:8]} = Inferred(@class(builtins[int@{1:6}]))
+            a@{module[6:4]} = Inferred(@class(builtins[int@{1:6}]))
             b@{module[6:0]} = Inferred(@class(builtins[int@{1:6}]))
+            #variables = {a: {module[1:0], module[4:4]}, b: {module[6:0]}}
             #raise = Inferred({Exception(type=Any, origin=Unknown)}) ⊔ #deferred{(a@{module[3:6]}) < (5)}
             #return = Inferred(None)
         "##},
@@ -1677,13 +1699,33 @@ mod tests {
         "##},
         indoc! {r##"
         module:
+            add_two = function(module[add_two@{1:4}])
+            result = @class(builtins[int@{1:6}])
+            #raise = {}
+            #return = None
+        module[add_two@{1:4}]:
+            a = @class(builtins[int@{1:6}])
+            b = @class(builtins[int@{1:6}])
+            #raise = {}
+            #return = @class(builtins[int@{1:6}])
+        "##},
+        indoc! {r##"
+        module:
             add_two@{module[1:4]} = Inferred(function(module[add_two@{1:4}]))
+            add_two@{module[4:9]} = Inferred(function(module[add_two@{1:4}]))
+            int@{module[1:15]} = Inferred(class(builtins[int@{1:6}]))
+            int@{module[1:23]} = Inferred(class(builtins[int@{1:6}]))
+            int@{module[1:31]} = Inferred(class(builtins[int@{1:6}]))
             result@{module[4:0]} = Inferred(@class(builtins[int@{1:6}]))
+            #variables = {add_two: {module[1:4]}, result: {module[4:0]}}
             #raise = Inferred({})
             #return = Inferred(None)
         module[add_two@{1:4}]:
             a@{module[add_two@{1:4}][1:12]} = Specified(@class(builtins[int@{1:6}]))
+            a@{module[add_two@{1:4}][2:11]} = Inferred(@class(builtins[int@{1:6}]))
             b@{module[add_two@{1:4}][1:20]} = Specified(@class(builtins[int@{1:6}]))
+            b@{module[add_two@{1:4}][2:15]} = Inferred(@class(builtins[int@{1:6}]))
+            #variables = {a: {module[add_two@{1:4}][1:12]}, b: {module[add_two@{1:4}][1:20]}}
             #raise = Inferred({})
             #return = Specified(@class(builtins[int@{1:6}]))
         "##},
@@ -1697,12 +1739,26 @@ mod tests {
         "##},
         indoc! {r##"
         module:
+            A = class(module[A@{1:6}])
+            result = 5
+            #raise = {}
+            #return = None
+        module[A@{1:6}]:
+            b = 5
+            #raise = {}
+            #return = None
+        "##},
+        indoc! {r##"
+        module:
             A@{module[1:6]} = Inferred(class(module[A@{1:6}]))
+            A@{module[4:9]} = Inferred(class(module[A@{1:6}]))
             result@{module[4:0]} = Inferred(5)
+            #variables = {A: {module[1:6]}, result: {module[4:0]}}
             #raise = Inferred({})
             #return = Inferred(None)
         module[A@{1:6}]:
             b@{module[A@{1:6}][2:4]} = Inferred(5)
+            #variables = {b: {module[A@{1:6}][2:4]}}
             #raise = Inferred({})
             #return = Inferred(None)
         "##},
@@ -1717,13 +1773,29 @@ mod tests {
         "##},
         indoc! {r##"
         module:
+            A = class(module[A@{1:6}])
+            a = @class(module[A@{1:6}])
+            result = 5
+            #raise = {}
+            #return = None
+        module[A@{1:6}]:
+            b = 5
+            #raise = {}
+            #return = None
+        "##},
+        indoc! {r##"
+        module:
             A@{module[1:6]} = Inferred(class(module[A@{1:6}]))
+            A@{module[4:4]} = Inferred(class(module[A@{1:6}]))
             a@{module[4:0]} = Inferred(@class(module[A@{1:6}]))
+            a@{module[5:9]} = Inferred(@class(module[A@{1:6}]))
             result@{module[5:0]} = Inferred(5)
+            #variables = {A: {module[1:6]}, a: {module[4:0]}, result: {module[5:0]}}
             #raise = Inferred({})
             #return = Inferred(None)
         module[A@{1:6}]:
             b@{module[A@{1:6}][2:4]} = Inferred(5)
+            #variables = {b: {module[A@{1:6}][2:4]}}
             #raise = Inferred({})
             #return = Inferred(None)
         "##},
@@ -1738,15 +1810,33 @@ mod tests {
         "##},
         indoc! {r##"
         module:
+            A = class(module[A@{1:6}])
+            result = function(module[A@{1:6}][foo@{2:8}])
+            #raise = {}
+            #return = None
+        module[A@{1:6}]:
+            foo = function(module[A@{1:6}][foo@{2:8}])
+            #raise = {}
+            #return = None
+        module[A@{1:6}][foo@{2:8}]:
+            #raise = {}
+            #return = 5
+        "##},
+        indoc! {r##"
+        module:
             A@{module[1:6]} = Inferred(class(module[A@{1:6}]))
+            A@{module[5:9]} = Inferred(class(module[A@{1:6}]))
             result@{module[5:0]} = Inferred(function(module[A@{1:6}][foo@{2:8}]))
+            #variables = {A: {module[1:6]}, result: {module[5:0]}}
             #raise = Inferred({})
             #return = Inferred(None)
         module[A@{1:6}]:
             foo@{module[A@{1:6}][2:8]} = Inferred(function(module[A@{1:6}][foo@{2:8}]))
+            #variables = {foo: {module[A@{1:6}][2:8]}}
             #raise = Inferred({})
             #return = Inferred(None)
         module[A@{1:6}][foo@{2:8}]:
+            #variables = {}
             #raise = Inferred({})
             #return = Inferred(5)
         "##},
@@ -1762,20 +1852,40 @@ mod tests {
         "##},
         indoc! {r##"
         module:
+            A = class(module[A@{1:6}])
+            a = @class(module[A@{1:6}])
+            result = method(class(module[A@{1:6}])[], function(module[A@{1:6}][foo@{2:8}]))
+            #raise = {}
+            #return = None
+        module[A@{1:6}]:
+            foo = function(module[A@{1:6}][foo@{2:8}])
+            #raise = {}
+            #return = None
+        module[A@{1:6}][foo@{2:8}]:
+            #raise = {}
+            #return = 5
+        "##},
+        indoc! {r##"
+        module:
             A@{module[1:6]} = Inferred(class(module[A@{1:6}]))
+            A@{module[5:4]} = Inferred(class(module[A@{1:6}]))
             a@{module[5:0]} = Inferred(@class(module[A@{1:6}]))
+            a@{module[6:9]} = Inferred(@class(module[A@{1:6}]))
             result@{module[6:0]} = Inferred(method(class(module[A@{1:6}])[], function(module[A@{1:6}][foo@{2:8}])))
+            #variables = {A: {module[1:6]}, a: {module[5:0]}, result: {module[6:0]}}
             #raise = Inferred({})
             #return = Inferred(None)
         module[A@{1:6}]:
             foo@{module[A@{1:6}][2:8]} = Inferred(function(module[A@{1:6}][foo@{2:8}]))
+            #variables = {foo: {module[A@{1:6}][2:8]}}
             #raise = Inferred({})
             #return = Inferred(None)
         module[A@{1:6}][foo@{2:8}]:
+            #variables = {}
             #raise = Inferred({})
             #return = Inferred(5)
         "##},
-    )]
+        )]
     #[case::hard_function_call(
         indoc! {r##"
         def foo():
@@ -1787,9 +1897,19 @@ mod tests {
         "##},
         indoc! {r##"
         module:
+            #raise = {Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)}
+            #return = Never
+        module[foo@{1:4}]:
+            #raise = {Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)}
+            #return = Never
+        "##},
+        indoc! {r##"
+        module:
+            #variables = {}
             #raise = Inferred({Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)})
             #return = Inferred(Never)
         module[foo@{1:4}]:
+            #variables = {}
             #raise = Inferred({Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)})
             #return = Inferred(Never)
         "##},
@@ -1805,17 +1925,36 @@ mod tests {
         "##},
         indoc! {r##"
         module:
+            CONST = 5
+            foo = function(module[foo@{1:4}])
+            result = 5
+            #raise = {}
+            #return = None
+        module[foo@{1:4}]:
+            #raise = {}
+            #return = 5
+        "##},
+        indoc! {r##"
+        module:
             CONST@{module[4:0]} = Inferred(5)
             foo@{module[1:4]} = Inferred(function(module[foo@{1:4}]))
+            foo@{module[6:9]} = Inferred(function(module[foo@{1:4}]))
             result@{module[6:0]} = Inferred(5)
+            CONST@{2:11} = Inferred(5)
+            #variables = {CONST: {module[4:0]}, foo: {module[1:4]}, result: {module[6:0]}}
             #raise = Inferred({})
             #return = Inferred(None)
         module[foo@{1:4}]:
+            #variables = {}
             #raise = Inferred({})
             #return = Inferred(5)
         "##},
     )]
-    fn test_constraints_solving(#[case] source: &str, #[case] expected_types: &str) {
+    fn test_constraints_solving(
+        #[case] source: &str,
+        #[case] expected_types: &str,
+        #[case] expected_expressions: &str,
+    ) {
         init_logger();
 
         let module_name = SmolStr::new_static("module");
@@ -1836,36 +1975,57 @@ mod tests {
             .clone();
 
         let mut actual_types = String::new();
+        let mut actual_expressions = String::new();
         for (qualified_location, abstract_state) in &program_evaluation.states {
             if *qualified_location.module_name() != module_name {
                 continue;
             }
             actual_types.push_str(&format!("{}:\n", qualified_location));
-            for (variable_name, variable_locations) in &abstract_state.defined_variables.names {
-                for (variable_namespace, variable_location) in variable_locations {
-                    let expression_variable = ExpressionVariable::new(NamedQualifiedLocation::new(
-                        variable_name.clone(),
-                        variable_location.clone(),
-                        variable_namespace.clone(),
-                    ));
-                    let variable_type = abstract_state
-                        .types
-                        .get(&Expression::Variable(expression_variable.clone()))
-                        .cloned()
-                        .unwrap_or_default();
-                    actual_types.push_str(&format!(
-                        "    {} = {}\n",
-                        expression_variable, variable_type
-                    ));
-                }
+            for (variable_name, variable_type) in abstract_state.attributes() {
+                actual_types.push_str(&format!(
+                    "    {} = {}\n",
+                    variable_name,
+                    variable_type.to_value().map_or(Type::Any, |ty| ty.data)
+                ));
             }
             actual_types.push_str(&format!(
                 "    #raise = {}\n",
+                abstract_state.raised_exceptions.as_value().map_or(
+                    RaisedExceptions::raise(Exception::new(
+                        Arc::new(Type::Any),
+                        ExceptionOrigin::Unknown
+                    )),
+                    |raised_exceptions| { raised_exceptions.data.clone() }
+                )
+            ));
+            actual_types.push_str(&format!(
+                "    #return = {}\n",
+                abstract_state
+                    .return_value
+                    .as_value()
+                    .map_or(Type::Any, |ty| ty.data.clone())
+            ));
+
+            actual_expressions.push_str(&format!("{}:\n", qualified_location));
+            for (expression, eval) in &abstract_state.types {
+                actual_expressions.push_str(&format!("    {} = {}\n", expression, eval))
+            }
+            actual_expressions.push_str(&format!(
+                "    #variables = {}\n",
+                abstract_state.defined_variables
+            ));
+            actual_expressions.push_str(&format!(
+                "    #raise = {}\n",
                 abstract_state.raised_exceptions
             ));
-            actual_types.push_str(&format!("    #return = {}\n", abstract_state.return_value));
+            actual_expressions
+                .push_str(&format!("    #return = {}\n", abstract_state.return_value));
         }
 
         assert_eq!(expected_types, actual_types, "{actual_types}");
+        assert_eq!(
+            expected_expressions, actual_expressions,
+            "{actual_expressions}"
+        );
     }
 }
