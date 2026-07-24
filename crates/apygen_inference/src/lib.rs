@@ -1036,6 +1036,20 @@ impl TypeInstance {
             arguments: imbl::Vector::new(),
         })
     }
+
+    pub fn is_int(&self) -> bool {
+        if let Base::Class(base_class) = &self.base {
+            if let Namespace::Module(module_name) =
+                base_class.value.program_entity.namespace.as_ref()
+            {
+                if *module_name == BUILTINS_MODULE && base_class.value.program_entity.name == "int"
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 impl StructuralDepth for TypeInstance {
@@ -1077,6 +1091,50 @@ pub struct TypeUnion {
 impl TypeUnion {
     pub fn new(types: imbl::OrdSet<Type>) -> TypeUnion {
         TypeUnion { types }
+    }
+
+    pub fn insert(&mut self, ty: Type) {
+        match ty {
+            Type::Any => {
+                self.types = imbl::OrdSet::unit(Type::Any);
+            }
+            Type::Never => {}
+            Type::Union(other_type_union) => {
+                for other_ty in other_type_union.types {
+                    self.insert(other_ty);
+                }
+            }
+            Type::Instance(int_instance) if int_instance.is_int() => {
+                self.types = self
+                    .types
+                    .iter()
+                    .filter(|int_literal| {
+                        if let Type::Literal(type_literal) = &int_literal {
+                            !matches!(type_literal.as_ref(), TypeLiteral::Integer(_))
+                        } else {
+                            true
+                        }
+                    })
+                    .cloned()
+                    .chain(std::iter::once(Type::Instance(int_instance.clone())))
+                    .collect()
+            }
+            _ => {
+                if !self.types.contains(&Type::Any) {
+                    self.types.insert(ty.clone());
+                }
+            }
+        };
+    }
+
+    pub fn simplify(mut self) -> Type {
+        if self.types.is_empty() {
+            Type::Never
+        } else if self.types.len() == 1 {
+            self.types.remove_min().expect("min should exists")
+        } else {
+            Type::Union(self)
+        }
     }
 }
 
@@ -1162,42 +1220,10 @@ impl Join for Type {
         if self == other {
             return self.clone();
         }
-
-        match (self, other) {
-            (Type::Any, _) | (_, Type::Any) => return Type::Any,
-            (Type::Never, ty) | (ty, Type::Never) => return ty.clone(),
-            (Type::Union(left_union), Type::Union(right_union)) => {
-                return Type::Union(left_union.join(&right_union));
-            }
-            (Type::Union(union), ty) | (ty, Type::Union(union)) => {
-                let mut new_union = union.clone();
-                new_union.types.insert(ty.clone());
-                return Type::Union(new_union);
-            }
-            (Type::Instance(int_instance), int_literal)
-            | (int_literal, Type::Instance(int_instance)) => {
-                if let Type::Literal(type_literal) = &int_literal {
-                    if let TypeLiteral::Integer(_) = type_literal.as_ref() {
-                        if let Base::Class(base_class) = &int_instance.base {
-                            if let Namespace::Module(module_name) =
-                                base_class.value.program_entity.namespace.as_ref()
-                            {
-                                if *module_name == BUILTINS_MODULE
-                                    && base_class.value.program_entity.name == "int"
-                                {
-                                    return Type::Instance(int_instance.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        };
-
-        Type::Union(TypeUnion::new(
-            imbl::OrdSet::unit(self.clone()).update(other.clone()),
-        ))
+        let mut type_union = TypeUnion::default();
+        type_union.insert(self.clone());
+        type_union.insert(other.clone());
+        type_union.simplify()
     }
 }
 

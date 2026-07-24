@@ -1662,11 +1662,11 @@ mod tests {
         indoc! {r##"
         module:
             a@{module[1:0]} = Inferred(0)
-            a@{module[4:4]} = Inferred(Union[@class(builtins[int@{1:6}]), 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
-            b@{module[6:0]} = Inferred(Union[@class(builtins[int@{1:6}]), 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20])
+            a@{module[4:4]} = Inferred(@class(builtins[int@{1:6}]))
+            b@{module[6:0]} = Inferred(@class(builtins[int@{1:6}]))
             #raise = Inferred({Exception(type=Any, origin=Unknown)}) ⊔ #deferred{(a@{module[3:6]}) < (5)}
             #return = Inferred(None)
-        "##},  // TODO: fix this when operations are implemented
+        "##},
     )]
     #[case::simple_function_definition(
         indoc! {r##"
