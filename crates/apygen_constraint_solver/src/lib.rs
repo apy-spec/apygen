@@ -182,6 +182,7 @@ pub struct ExpressionEvaluator<'a> {
     pub namespace: &'a Namespace,
     pub constraint_graphs: &'a imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     pub in_evaluation: &'a imbl::OrdSet<&'a Namespace>,
+    pub current_expression: Option<Expression>,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
@@ -194,6 +195,7 @@ impl<'a> ExpressionEvaluator<'a> {
             namespace,
             constraint_graphs,
             in_evaluation,
+            current_expression: None,
         }
     }
 
@@ -201,66 +203,11 @@ impl<'a> ExpressionEvaluator<'a> {
         Self::new(namespace, self.constraint_graphs, self.in_evaluation)
     }
 
-    pub fn simplify<
-        's,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
-    >(
-        &self,
-        abstract_state: &mut AbstractStateProxy<
-            's,
-            S,
-            ProgramEvaluation<EvaluationState<Expression>>,
-        >,
-    ) -> Option<()> {
-        let mut types = abstract_state.get(&self.namespace)?.types.clone();
-
-        loop {
-            let mut changed = false;
-
-            types = types
-                .into_iter()
-                .map(|(expression, evaluation)| {
-                    if evaluation.expressions.is_empty() {
-                        return (expression, evaluation);
-                    }
-
-                    let mut ty = Deferred::new(evaluation.value.clone(), imbl::OrdSet::default());
-
-                    for expression in &evaluation.expressions {
-                        match self.evaluate_expression(abstract_state, &expression) {
-                            Some(type_eval) => {
-                                ty.value = ty.value.join(&Sourced::inferred(type_eval.value));
-                                changed = true;
-                            }
-                            None => {
-                                ty.expressions.insert(expression.clone());
-                            }
-                        }
-                    }
-
-                    (expression, ty)
-                })
-                .collect();
-
-            let evaluation_state = abstract_state
-                .get_mut(&self.namespace)
-                .expect("evaluation_state should exists");
-
-            evaluation_state.types = types.clone();
-
-            if !changed {
-                break;
-            }
-        }
-
-        Some(())
-    }
-
     pub fn evaluate_expression_variable<
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -305,7 +252,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -345,7 +292,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -381,7 +328,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -405,7 +352,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -438,7 +385,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -548,7 +495,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -575,7 +522,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -616,7 +563,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -680,7 +627,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -725,7 +672,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -758,7 +705,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -878,7 +825,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -914,7 +861,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -925,9 +872,25 @@ impl<'a> ExpressionEvaluator<'a> {
         if let Some(expression_eval) = abstract_state
             .get(self.namespace)
             .and_then(|state| state.types.get(expression))
+            .cloned()
         {
-            return Some(PyTypeEval::with_default_effects(
-                expression_eval.as_value()?.data.clone(),
+            if let Some(current_expression) = &self.current_expression {
+                if current_expression == expression && !expression_eval.expressions.is_empty() {
+                    return None;
+                }
+            }
+            self.current_expression = Some(expression.clone());
+            let eval = self.evaluate_expressions(
+                abstract_state,
+                expression_eval
+                    .expressions
+                    .iter()
+                    .map(|expression| expression.as_ref()),
+            )?;
+            self.current_expression = None;
+            return Some(PyTypeEval::new(
+                expression_eval.value.data.join(&eval.value),
+                eval.effects,
             ));
         }
 
@@ -995,7 +958,7 @@ impl<'a> ExpressionEvaluator<'a> {
         's,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expression>> + Eq,
     >(
-        &self,
+        &mut self,
         abstract_state: &mut AbstractStateProxy<
             's,
             S,
@@ -1411,8 +1374,6 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expre
             self.program_evaluation.abstract_state,
             left.proxy.join(&right.proxy),
         );
-
-        self.evaluator().simplify(&mut new_abstract_state);
 
         if let Some(evaluation_state) = new_abstract_state.get(&self.namespace) {
             let new_evaluations = evaluation_state
