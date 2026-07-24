@@ -404,7 +404,7 @@ impl<'a> ExpressionEvaluator<'a> {
             ),
             Type::Union(type_union) => {
                 let mut eval = PyTypeEval::never();
-                for ty in &type_union.types {
+                for ty in type_union.types() {
                     eval = eval.join(&self.evaluate_attributes(abstract_state, ty, name, None)?);
                 }
                 Some(eval)
@@ -771,7 +771,7 @@ impl<'a> ExpressionEvaluator<'a> {
             }
             (Type::Union(left_type_union), Type::Union(right_type_union)) => {
                 let mut type_eval = PyTypeEval::never();
-                for ty in &left_type_union.types {
+                for ty in left_type_union.types() {
                     type_eval = type_eval.join(&self.evaluate_binary_operation(
                         abstract_state,
                         ty,
@@ -779,7 +779,7 @@ impl<'a> ExpressionEvaluator<'a> {
                         right_ty,
                     )?);
                 }
-                for ty in &right_type_union.types {
+                for ty in right_type_union.types() {
                     type_eval = type_eval.join(&self.evaluate_binary_operation(
                         abstract_state,
                         left_ty,
@@ -791,7 +791,7 @@ impl<'a> ExpressionEvaluator<'a> {
             }
             (Type::Union(left_type_union), _) => {
                 let mut type_eval = PyTypeEval::never();
-                for ty in &left_type_union.types {
+                for ty in left_type_union.types() {
                     type_eval = type_eval.join(&self.evaluate_binary_operation(
                         abstract_state,
                         ty,
@@ -803,7 +803,7 @@ impl<'a> ExpressionEvaluator<'a> {
             }
             (_, Type::Union(right_type_union)) => {
                 let mut type_eval = PyTypeEval::never();
-                for ty in &right_type_union.types {
+                for ty in right_type_union.types() {
                     type_eval = type_eval.join(&self.evaluate_binary_operation(
                         abstract_state,
                         left_ty,
@@ -1385,7 +1385,7 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState<Expre
                         eval.value = match eval.value.data {
                             Type::Union(type_union) => {
                                 let mut new_ty = Type::Never;
-                                for ty in type_union.types {
+                                for ty in type_union.into_types() {
                                     new_ty = new_ty.join(&if let Type::Literal(type_literal) = &ty {
                                         type_literal
                                             .as_type_instance(&new_abstract_state)

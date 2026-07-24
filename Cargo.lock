@@ -251,6 +251,7 @@ dependencies = [
  "apygen_identifiers",
  "apygen_primitives",
  "imbl",
+ "thiserror",
 ]
 
 [[package]]

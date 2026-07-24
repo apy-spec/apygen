@@ -371,7 +371,7 @@ pub fn convert_type_union<N: NamespaceEvaluation + Clone>(
         )
         .with_arguments(
             type_union
-                .types
+                .types()
                 .iter()
                 .map(|ty| {
                     Some(apy::v1::TypeArgument::Type(convert_type(

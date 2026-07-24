@@ -11,6 +11,7 @@ use imbl::ordmap::Entry;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 use std::sync::Arc;
+use thiserror::Error;
 
 pub use apy::v1::{GenericKind, ParameterKind};
 pub use apygen_identifiers as identifiers;
@@ -1083,14 +1084,51 @@ impl Display for TypeInstance {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
+#[derive(Debug, Clone, Error)]
+pub enum TryFromUnionError {
+    #[error("union is empty")]
+    EmptyUnion,
+    #[error("union is a single type: {0}")]
+    SingleTypeUnion(Type),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
 pub struct TypeUnion {
-    pub types: imbl::OrdSet<Type>,
+    types: imbl::OrdSet<Type>,
 }
 
 impl TypeUnion {
-    pub fn new(types: imbl::OrdSet<Type>) -> TypeUnion {
-        TypeUnion { types }
+    pub fn try_from_iter(
+        types: impl IntoIterator<Item = Type>,
+    ) -> Result<TypeUnion, TryFromUnionError> {
+        let mut type_union = Self {
+            types: imbl::OrdSet::new(),
+        };
+
+        for ty in types {
+            type_union.insert(ty);
+        }
+
+        if type_union.types.is_empty() {
+            Err(TryFromUnionError::EmptyUnion)
+        } else if type_union.types.len() == 1 {
+            Err(TryFromUnionError::SingleTypeUnion(
+                type_union
+                    .types
+                    .remove_min()
+                    .expect("min type should exist"),
+            ))
+        } else {
+            Ok(type_union)
+        }
+    }
+
+    pub fn types(&self) -> &imbl::OrdSet<Type> {
+        &self.types
+    }
+
+    pub fn into_types(self) -> imbl::OrdSet<Type> {
+        self.types
     }
 
     pub fn insert(&mut self, ty: Type) {
@@ -1113,16 +1151,6 @@ impl TypeUnion {
                 }
             }
         };
-    }
-
-    pub fn simplify(mut self) -> Type {
-        if self.types.is_empty() {
-            Type::Never
-        } else if self.types.len() == 1 {
-            self.types.remove_min().expect("min should exists")
-        } else {
-            Type::Union(self)
-        }
     }
 }
 
@@ -1216,10 +1244,11 @@ impl Join for Type {
         if self == other {
             return self.clone();
         }
-        let mut type_union = TypeUnion::default();
-        type_union.insert(self.clone());
-        type_union.insert(other.clone());
-        type_union.simplify()
+        match TypeUnion::try_from_iter([self.clone(), other.clone()]) {
+            Ok(type_union) => Type::Union(type_union),
+            Err(TryFromUnionError::EmptyUnion) => Type::Never,
+            Err(TryFromUnionError::SingleTypeUnion(ty)) => ty,
+        }
     }
 }
 
@@ -1233,11 +1262,12 @@ impl LatticeOrd for Type {
             (Type::Any, _) | (_, Type::Never) => false,
             (Type::Union(self_union), Type::Union(other_union)) => self_union.leq(other_union),
             (Type::Union(self_union), _) => {
-                self_union.types.iter().all(|self_ty| self_ty.leq(other))
+                self_union.types().iter().all(|self_ty| self_ty.leq(other))
             }
-            (_, Type::Union(other_union)) => {
-                other_union.types.iter().all(|other_ty| self.leq(&other_ty))
-            }
+            (_, Type::Union(other_union)) => other_union
+                .types()
+                .iter()
+                .all(|other_ty| self.leq(&other_ty)),
             (Type::Literal(self_literal), Type::Instance(other_instance)) => {
                 if matches!(self_literal.as_ref(), TypeLiteral::Integer(_))
                     && other_instance.is_int()
