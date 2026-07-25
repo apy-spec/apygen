@@ -1053,8 +1053,9 @@ impl<'s, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Eq
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
-        let mut program_evaluation =
-            analysis_state.get_clone_or_else(node, || self.program_evaluation.clone());
+        let mut program_evaluation = analysis_state
+            .get_clone(node)
+            .unwrap_or_else(|| self.program_evaluation.clone());
 
         match &node {
             ConstraintNode::Entry => {
@@ -1534,7 +1535,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
             imbl::OrdSet::new(),
         )?;
 
-        new_analysis_state.extend(proxy.proxy.states);
+        new_analysis_state.extend(Box::new(proxy.proxy.states.into_iter()));
 
         for other_namespace in program_entity_constraints.keys() {
             if **other_namespace != namespace {
@@ -1547,7 +1548,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
                     imbl::OrdSet::new(),
                 )?;
 
-                new_analysis_state.extend(proxy.proxy.states);
+                new_analysis_state.extend(Box::new(proxy.proxy.states.into_iter()));
             }
         }
 
