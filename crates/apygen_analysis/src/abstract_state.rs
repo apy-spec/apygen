@@ -18,28 +18,34 @@ pub trait AbstractState {
     {
         self.get_or_insert(key, Self::AbstractValue::default())
     }
+    fn get_clone(&self, key: &Self::Key) -> Option<Self::AbstractValue>
+    where
+        Self::AbstractValue: Clone,
+    {
+        self.get(key).cloned()
+    }
     fn get_clone_or_else(
         &self,
         key: &Self::Key,
-        f: impl FnOnce() -> Self::AbstractValue,
+        f: Box<dyn FnOnce() -> Self::AbstractValue>,
     ) -> Self::AbstractValue
     where
         Self::AbstractValue: Clone,
     {
-        self.get(key).cloned().unwrap_or_else(f)
+        self.get_clone(key).unwrap_or_else(f)
     }
     fn get_clone_or_default(&self, key: &Self::Key) -> Self::AbstractValue
     where
         Self::AbstractValue: Default + Clone,
     {
-        self.get_clone_or_else(key, Self::AbstractValue::default)
+        self.get_clone(key).unwrap_or_default()
     }
     fn insert(
         &mut self,
         key: Self::Key,
         abstract_value: Self::AbstractValue,
     ) -> &mut Self::AbstractValue;
-    fn extend(&mut self, iterator: impl IntoIterator<Item = (Self::Key, Self::AbstractValue)>) {
+    fn extend(&mut self, iterator: Box<dyn Iterator<Item = (Self::Key, Self::AbstractValue)>>) {
         for (key, abstract_value) in iterator {
             self.insert(key, abstract_value);
         }
@@ -117,5 +123,14 @@ impl<
         abstract_value: Self::AbstractValue,
     ) -> &mut Self::AbstractValue {
         self.proxy.insert(key, abstract_value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn test_abstract_state_dyn_compatibility(
+        _: Box<dyn AbstractState<Key = String, AbstractValue = i32>>,
+    ) {
     }
 }
