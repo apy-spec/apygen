@@ -1,13 +1,12 @@
 use crate::analysis::fmt::fmt_display_sequence;
+use std::fmt::{Display, Formatter};
+use std::sync::Arc;
+
 pub use crate::identifiers::{Location, NamedQualifiedLocation, Namespace, SmolStr};
 pub use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
-
 pub use apy::v1::{GenericKind, ParameterKind};
-
-use std::fmt::{Display, Formatter};
-use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionVariable {
@@ -20,6 +19,18 @@ impl ExpressionVariable {
             named_qualified_location,
         }
     }
+
+    pub fn name(&self) -> &str {
+        &self.named_qualified_location.name
+    }
+
+    pub fn location(&self) -> Location {
+        self.named_qualified_location.location
+    }
+
+    pub fn namespace(&self) -> &Namespace {
+        &self.named_qualified_location.namespace
+    }
 }
 
 impl Display for ExpressionVariable {
@@ -27,9 +38,9 @@ impl Display for ExpressionVariable {
         write!(
             f,
             "{}@{{{}[{}]}}",
-            self.named_qualified_location.name,
-            self.named_qualified_location.namespace,
-            self.named_qualified_location.location
+            self.name(),
+            self.namespace(),
+            self.location()
         )
     }
 }

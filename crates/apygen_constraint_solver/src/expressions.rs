@@ -150,12 +150,12 @@ macro_rules! pytype_consume_or_return {
 }
 
 #[macro_export]
-macro_rules! pytype_consume_or_return_option {
+macro_rules! pytype_consume_or_return_ok {
     ($effects:expr, $eval:expr) => {{
         let ty = $effects.consume($eval);
 
         if is_type_unreachable!(ty) {
-            return Some(PyTypeEval::new(ty, $effects));
+            return Ok(PyTypeEval::new(ty, $effects));
         }
 
         ty
