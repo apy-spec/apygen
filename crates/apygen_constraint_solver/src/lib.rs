@@ -1535,7 +1535,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
             imbl::OrdSet::new(),
         )?;
 
-        new_analysis_state.extend(Box::new(proxy.proxy.states.into_iter()));
+        new_analysis_state.states.extend(proxy.proxy.states);
 
         for other_namespace in program_entity_constraints.keys() {
             if **other_namespace != namespace {
@@ -1548,7 +1548,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
                     imbl::OrdSet::new(),
                 )?;
 
-                new_analysis_state.extend(Box::new(proxy.proxy.states.into_iter()));
+                new_analysis_state.states.extend(proxy.proxy.states);
             }
         }
 
