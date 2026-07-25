@@ -27,7 +27,7 @@ pub trait AbstractState {
     fn get_clone_or_else(
         &self,
         key: &Self::Key,
-        f: Box<dyn FnOnce() -> Self::AbstractValue>,
+        f: &dyn Fn() -> Self::AbstractValue,
     ) -> Self::AbstractValue
     where
         Self::AbstractValue: Clone,
@@ -45,7 +45,7 @@ pub trait AbstractState {
         key: Self::Key,
         abstract_value: Self::AbstractValue,
     ) -> &mut Self::AbstractValue;
-    fn extend(&mut self, iterator: Box<dyn Iterator<Item = (Self::Key, Self::AbstractValue)>>) {
+    fn extend(&mut self, iterator: &mut dyn Iterator<Item = (Self::Key, Self::AbstractValue)>) {
         for (key, abstract_value) in iterator {
             self.insert(key, abstract_value);
         }
