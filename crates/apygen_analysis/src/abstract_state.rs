@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 pub trait AbstractState {
     type Key;
     type AbstractValue;
@@ -52,20 +54,24 @@ pub trait AbstractState {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct AbstractStateProxy<'a, S: AbstractState, P: AbstractState> {
-    pub abstract_state: &'a S,
+pub struct AbstractStateProxy<'a, K, A, P: AbstractState<Key = K, AbstractValue = A>> {
+    pub abstract_state: &'a dyn AbstractState<Key = K, AbstractValue = A>,
     pub proxy: P,
 }
 
-impl<'a, S: AbstractState, P: AbstractState> AbstractStateProxy<'a, S, P> {
-    pub fn new(abstract_state: &'a S, proxy: P) -> Self {
+impl<'a, K, A, P: AbstractState<Key = K, AbstractValue = A>> AbstractStateProxy<'a, K, A, P> {
+    pub fn new(
+        abstract_state: &'a dyn AbstractState<Key = K, AbstractValue = A>,
+        proxy: P,
+    ) -> Self {
         Self {
             abstract_state,
             proxy,
         }
     }
-    pub fn with_default_proxy(abstract_state: &'a S) -> Self
+    pub fn with_default_proxy(
+        abstract_state: &'a dyn AbstractState<Key = K, AbstractValue = A>,
+    ) -> Self
     where
         P: Default,
     {
@@ -73,18 +79,43 @@ impl<'a, S: AbstractState, P: AbstractState> AbstractStateProxy<'a, S, P> {
     }
 }
 
-impl<S: AbstractState, P: AbstractState + Clone> Clone for AbstractStateProxy<'_, S, P> {
+impl<'a, K, A, P: AbstractState<Key = K, AbstractValue = A> + PartialEq> PartialEq
+    for AbstractStateProxy<'a, K, A, P>
+{
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::addr_eq(self.abstract_state, other.abstract_state) && self.proxy == other.proxy
+    }
+}
+
+impl<'a, K, A, P: AbstractState<Key = K, AbstractValue = A> + PartialEq> Eq
+    for AbstractStateProxy<'a, K, A, P>
+{
+}
+
+impl<'a, K, A, P: AbstractState<Key = K, AbstractValue = A> + Clone> Clone
+    for AbstractStateProxy<'_, K, A, P>
+{
     fn clone(&self) -> Self {
         Self::new(self.abstract_state, self.proxy.clone())
     }
 }
 
-impl<
-    K: Clone,
-    A: Clone,
-    S: AbstractState<Key = K, AbstractValue = A>,
-    P: AbstractState<Key = K, AbstractValue = A>,
-> AbstractState for AbstractStateProxy<'_, S, P>
+impl<'a, K, A, P: AbstractState<Key = K, AbstractValue = A> + Debug> Debug
+    for AbstractStateProxy<'a, K, A, P>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AbstractStateProxy")
+            .field(
+                "abstract_state",
+                &(self.abstract_state as *const dyn AbstractState<Key = K, AbstractValue = A>),
+            )
+            .field("proxy", &self.proxy)
+            .finish()
+    }
+}
+
+impl<K: Clone, A: Clone, P: AbstractState<Key = K, AbstractValue = A>> AbstractState
+    for AbstractStateProxy<'_, K, A, P>
 {
     type Key = K;
     type AbstractValue = A;

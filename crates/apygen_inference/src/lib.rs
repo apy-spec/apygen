@@ -838,7 +838,7 @@ impl TypeLiteral {
 
     pub fn as_type_instance<N: NamespaceEvaluation + Clone>(
         &self,
-        program_evaluation: &impl AbstractState<Key = Namespace, AbstractValue = N>,
+        program_evaluation: &dyn AbstractState<Key = Namespace, AbstractValue = N>,
     ) -> Option<TypeInstance> {
         let (module_name, class_name) = self.type_name();
         TypeInstance::from_qualified_name(
@@ -1011,7 +1011,7 @@ pub struct TypeInstance {
 
 impl TypeInstance {
     pub fn from_qualified_name<N: NamespaceEvaluation + Clone>(
-        program_evaluation: &impl AbstractState<Key = Namespace, AbstractValue = N>,
+        program_evaluation: &dyn AbstractState<Key = Namespace, AbstractValue = N>,
         module_name: &SmolStr,
         variable_name: &SmolStr,
     ) -> Option<TypeInstance> {
