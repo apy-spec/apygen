@@ -179,6 +179,12 @@ impl<N: Clone + Ord, S: AbstractState<Key = Namespace, AbstractValue = Evaluatio
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub enum EvaluatorMode {
+    Normal,
+    Annotation,
+}
+
 #[derive(Debug, Clone, Error)]
 pub enum EvaluationError {
     #[error("the expression uses a deferred expression")]
@@ -192,6 +198,7 @@ pub enum EvaluationError {
 }
 
 pub struct ExpressionEvaluator<'a> {
+    pub mode: EvaluatorMode,
     pub namespace: &'a Namespace,
     pub constraint_graphs: &'a imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     pub in_evaluation: &'a imbl::OrdSet<&'a Namespace>,
@@ -200,11 +207,13 @@ pub struct ExpressionEvaluator<'a> {
 
 impl<'a> ExpressionEvaluator<'a> {
     pub fn new(
+        mode: EvaluatorMode,
         namespace: &'a Namespace,
         constraint_graphs: &'a imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
         in_evaluation: &'a imbl::OrdSet<&'a Namespace>,
     ) -> Self {
         Self {
+            mode,
             namespace,
             constraint_graphs,
             in_evaluation,
@@ -213,7 +222,21 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     pub fn with_namespace(&self, namespace: &'a Namespace) -> Self {
-        Self::new(namespace, self.constraint_graphs, self.in_evaluation)
+        Self::new(
+            self.mode,
+            namespace,
+            self.constraint_graphs,
+            self.in_evaluation,
+        )
+    }
+
+    pub fn with_mode(&self, mode: EvaluatorMode) -> Self {
+        Self::new(
+            mode,
+            self.namespace,
+            self.constraint_graphs,
+            self.in_evaluation,
+        )
     }
 
     pub fn extract_deferred<T: Clone>(
@@ -338,8 +361,9 @@ impl<'a> ExpressionEvaluator<'a> {
         abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_annotated: &ExpressionAnnotated,
     ) -> Result<PyTypeEval, EvaluationError> {
-        let annotation_eval =
-            self.evaluate_expression(abstract_state, &expression_annotated.annotation)?;
+        let annotation_eval = self
+            .with_mode(EvaluatorMode::Annotation)
+            .evaluate_expression(abstract_state, &expression_annotated.annotation)?;
 
         let Type::Literal(type_literal) = annotation_eval.value else {
             return Err(EvaluationError::InvalidAnnotation);
@@ -610,6 +634,7 @@ impl<'a> ExpressionEvaluator<'a> {
                         )
                         .unwrap()
                     };
+                println!("return {}", evaluation_state.return_value);
                 Ok(PyTypeEval::new(
                     Self::extract_deferred(&evaluation_state.return_value)?,
                     PyEffects::new().with_exceptions(Self::extract_deferred(
@@ -991,8 +1016,13 @@ impl<'s> ConstraintSolver<'s> {
         self.constraint_graphs.get(self.namespace)
     }
 
-    pub fn evaluator(&self) -> ExpressionEvaluator<'_> {
-        ExpressionEvaluator::new(self.namespace, self.constraint_graphs, &self.in_evaluation)
+    pub fn evaluator(&self, mode: EvaluatorMode) -> ExpressionEvaluator<'_> {
+        ExpressionEvaluator::new(
+            mode,
+            self.namespace,
+            self.constraint_graphs,
+            &self.in_evaluation,
+        )
     }
 }
 
@@ -1042,7 +1072,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     .iter()
                     .map(|(variable, expressions)| {
                         let ty = if let Ok(eval) = self
-                            .evaluator()
+                            .evaluator(EvaluatorMode::Normal)
                             .evaluate_expressions(&mut program_evaluation, expressions)
                         {
                             Deferred::known(Sourced::specified(eval.value))
@@ -1063,7 +1093,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     .iter()
                     .map(|expression| {
                         if let Ok(eval) = self
-                            .evaluator()
+                            .evaluator(EvaluatorMode::Normal)
                             .evaluate_expression(&mut program_evaluation, expression)
                         {
                             Deferred::known(Sourced::specified(RaisedExceptions::raise(
@@ -1076,7 +1106,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     .collect();
 
                 let return_ty = if let Ok(eval) = self
-                    .evaluator()
+                    .evaluator(EvaluatorMode::Normal)
                     .evaluate_expressions(&mut program_evaluation, &specification.return_type)
                 {
                     Deferred::known(Sourced::specified(eval.value))
@@ -1124,26 +1154,27 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     for constraint in constraints {
                         match constraint {
                             Constraint::Type(type_constraint) => {
-                                let (ty, raised_exceptions) =
-                                    match self.evaluator().evaluate_expression(
+                                let (ty, raised_exceptions) = match self
+                                    .evaluator(EvaluatorMode::Normal)
+                                    .evaluate_expression(
                                         &mut program_evaluation,
                                         &type_constraint.left,
                                     ) {
-                                        Ok(type_eval) => (
-                                            Deferred::known(Sourced::inferred(type_eval.value)),
-                                            Deferred::known(Sourced::inferred(
-                                                type_eval.effects.exceptions,
-                                            )),
-                                        ),
-                                        Err(_) => (
-                                            Deferred::unknown(imbl::OrdSet::unit(
-                                                type_constraint.left.clone(),
-                                            )),
-                                            Deferred::unknown(imbl::OrdSet::unit(
-                                                type_constraint.left.clone(),
-                                            )),
-                                        ),
-                                    };
+                                    Ok(type_eval) => (
+                                        Deferred::known(Sourced::inferred(type_eval.value)),
+                                        Deferred::known(Sourced::inferred(
+                                            type_eval.effects.exceptions,
+                                        )),
+                                    ),
+                                    Err(_) => (
+                                        Deferred::unknown(imbl::OrdSet::unit(
+                                            type_constraint.left.clone(),
+                                        )),
+                                        Deferred::unknown(imbl::OrdSet::unit(
+                                            type_constraint.left.clone(),
+                                        )),
+                                    ),
+                                };
 
                                 let evaluation_state = program_evaluation
                                     .get_or_insert_default(self.namespace.clone());
@@ -1159,26 +1190,27 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                     evaluation_state.raised_exceptions.join(&raised_exceptions);
                             }
                             Constraint::Return(return_constraint) => {
-                                let (ty, raised_exceptions) =
-                                    match self.evaluator().evaluate_expression(
+                                let (ty, raised_exceptions) = match self
+                                    .evaluator(EvaluatorMode::Normal)
+                                    .evaluate_expression(
                                         &mut program_evaluation,
                                         &return_constraint.expression,
                                     ) {
-                                        Ok(type_eval) => (
-                                            Deferred::known(Sourced::inferred(type_eval.value)),
-                                            Deferred::known(Sourced::inferred(
-                                                type_eval.effects.exceptions,
-                                            )),
-                                        ),
-                                        Err(_) => (
-                                            Deferred::unknown(imbl::OrdSet::unit(
-                                                return_constraint.expression.clone(),
-                                            )),
-                                            Deferred::unknown(imbl::OrdSet::unit(
-                                                return_constraint.expression.clone(),
-                                            )),
-                                        ),
-                                    };
+                                    Ok(type_eval) => (
+                                        Deferred::known(Sourced::inferred(type_eval.value)),
+                                        Deferred::known(Sourced::inferred(
+                                            type_eval.effects.exceptions,
+                                        )),
+                                    ),
+                                    Err(_) => (
+                                        Deferred::unknown(imbl::OrdSet::unit(
+                                            return_constraint.expression.clone(),
+                                        )),
+                                        Deferred::unknown(imbl::OrdSet::unit(
+                                            return_constraint.expression.clone(),
+                                        )),
+                                    ),
+                                };
 
                                 let evaluation_state = program_evaluation
                                     .get_or_insert_default(self.namespace.clone());
@@ -1238,7 +1270,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
             match guard {
                 Guard::IsTrue(expression) => {
                     let eval = self
-                        .evaluator()
+                        .evaluator(EvaluatorMode::Normal)
                         .evaluate_expression(&mut new_abstract_state, expression);
 
                     if let Ok(type_eval) = eval {
@@ -1252,7 +1284,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 }
                 Guard::IsFalse(expression) => {
                     let eval = self
-                        .evaluator()
+                        .evaluator(EvaluatorMode::Normal)
                         .evaluate_expression(&mut new_abstract_state, expression);
 
                     if let Ok(type_eval) = eval {
@@ -1266,7 +1298,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 }
                 Guard::Succeed(expression) => {
                     let eval = self
-                        .evaluator()
+                        .evaluator(EvaluatorMode::Normal)
                         .evaluate_expression(&mut new_abstract_state, expression);
 
                     if let Ok(type_eval) = eval {
@@ -1278,7 +1310,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 }
                 Guard::Raise { expression, .. } => {
                     let eval = self
-                        .evaluator()
+                        .evaluator(EvaluatorMode::Normal)
                         .evaluate_expression(&mut new_abstract_state, expression);
 
                     let evaluation_state =
@@ -1590,6 +1622,120 @@ mod tests {
         class NameError:
             pass
     "##};
+
+    #[rstest]
+    fn test_builtins_constraints_solving() {
+        init_logger();
+
+        let expected_types = indoc! {r##"
+        builtins:
+            NameError = class(builtins[NameError@{4:6}])
+            int = class(builtins[int@{1:6}])
+            #raise = {}
+            #return = None
+        builtins[NameError@{4:6}]:
+            #raise = {}
+            #return = None
+        builtins[int@{1:6}][__add__@{2:8}]:
+            self = Never
+            value = Any
+            #raise = {}
+            #return = None
+        builtins[int@{1:6}]:
+            __add__ = function(builtins[int@{1:6}][__add__@{2:8}])
+            #raise = {}
+            #return = None
+        "##};
+        let expected_expressions = indoc! {r##"
+        builtins:
+            NameError@{builtins[4:6]} = Inferred(class(builtins[NameError@{4:6}]))
+            int@{builtins[1:6]} = Inferred(class(builtins[int@{1:6}]))
+            #variables = {NameError: {builtins[4:6]}, int: {builtins[1:6]}}
+            #raise = Inferred({})
+            #return = Inferred(None)
+        builtins[NameError@{4:6}]:
+            #variables = {}
+            #raise = Inferred({})
+            #return = Inferred(None)
+        builtins[int@{1:6}][__add__@{2:8}]:
+            self@{builtins[int@{1:6}][__add__@{2:8}][2:16]} = Specified(Never)
+            value@{builtins[int@{1:6}][__add__@{2:8}][2:22]} = Inferred(Never) ⊔ #deferred{#annotated(int)}
+            #variables = {self: {builtins[int@{1:6}][__add__@{2:8}][2:16]}, value: {builtins[int@{1:6}][__add__@{2:8}][2:22]}}
+            #raise = Inferred({})
+            #return = Inferred(None)
+        builtins[int@{1:6}]:
+            __add__@{builtins[int@{1:6}][2:8]} = Inferred(function(builtins[int@{1:6}][__add__@{2:8}]))
+            #variables = {__add__: {builtins[int@{1:6}][2:8]}}
+            #raise = Inferred({})
+            #return = Inferred(None)
+        "##};
+
+        let module_loader = TestModuleLoader {
+            modules: HashMap::from_iter([(
+                apygen_constraint_builder::BUILTINS_MODULE,
+                TEST_BUILTINS.to_owned(),
+            )]),
+        };
+        let dependent_graph = analyse_program(&module_loader, [].into_iter());
+
+        let solver = ModuleConstraintSolver::new(&dependent_graph);
+
+        let program_evaluation = analysis(&solver, &mut LogAnalysisObserver::default())
+            .expect("analysis should work")
+            .abstract_states[&ModuleNode::Exit]
+            .clone();
+
+        let mut actual_types = String::new();
+        let mut actual_expressions = String::new();
+        for (qualified_location, abstract_state) in &program_evaluation.states {
+            actual_types.push_str(&format!("{}:\n", qualified_location));
+            for (variable_name, variable_type) in abstract_state.attributes() {
+                actual_types.push_str(&format!(
+                    "    {} = {}\n",
+                    variable_name,
+                    variable_type.to_value().map_or(Type::Any, |ty| ty.data)
+                ));
+            }
+            actual_types.push_str(&format!(
+                "    #raise = {}\n",
+                abstract_state.raised_exceptions.as_value().map_or(
+                    RaisedExceptions::raise(Exception::new(
+                        Arc::new(Type::Any),
+                        ExceptionOrigin::Unknown
+                    )),
+                    |raised_exceptions| { raised_exceptions.data.clone() }
+                )
+            ));
+            actual_types.push_str(&format!(
+                "    #return = {}\n",
+                abstract_state
+                    .return_value
+                    .as_value()
+                    .map_or(Type::Any, |ty| ty.data.clone())
+            ));
+
+            actual_expressions.push_str(&format!("{}:\n", qualified_location));
+            for (expression, eval) in &abstract_state.types {
+                actual_expressions.push_str(&format!("    {} = {}\n", expression, eval))
+            }
+            actual_expressions.push_str(&format!(
+                "    #variables = {}\n",
+                abstract_state.defined_variables
+            ));
+            actual_expressions.push_str(&format!(
+                "    #raise = {}\n",
+                abstract_state.raised_exceptions
+            ));
+            actual_expressions
+                .push_str(&format!("    #return = {}\n", abstract_state.return_value));
+        }
+
+        assert_eq!(expected_types, actual_types, "{actual_types}");
+        assert_eq!(
+            expected_expressions, actual_expressions,
+            "{actual_expressions}"
+        );
+    }
 
     #[rstest]
     #[case::simple_if_statement(
