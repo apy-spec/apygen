@@ -1,19 +1,20 @@
-pub mod expressions;
+use imbl::ordmap::Entry;
+use std::fmt::{Debug, Display, Formatter};
+use std::sync::Arc;
 
 use crate::analysis::fmt::fmt_iterator;
 use crate::analysis::fmt::{fmt_display_iterator, fmt_display_set, fmt_set};
 use crate::analysis::lattice::Join;
-use crate::expressions::{Expression, ExpressionVariable};
+use crate::expressions::{Expression, ExpressionVariableDefinition};
 use crate::graph::Graph;
 use crate::graph::dot::{DiGraphDot, escape_dot};
-use crate::identifiers::{Location, SmolStr, Namespace};
+use crate::identifiers::{Location, Namespace, SmolStr};
 pub use apygen_analysis as analysis;
 pub use apygen_graph as graph;
 pub use apygen_identifiers as identifiers;
 pub use apygen_primitives as primitives;
-use imbl::ordmap::Entry;
-use std::fmt::{Debug, Display, Formatter};
-use std::sync::Arc;
+
+pub mod expressions;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Guard {
@@ -87,7 +88,7 @@ impl Display for ReturnConstraint {
 pub enum Constraint {
     Type(IncludeConstraint<Arc<Expression>>),
     Return(ReturnConstraint),
-    DefinedVariable(ExpressionVariable),
+    DefinedVariable(ExpressionVariableDefinition),
 }
 
 impl Display for Constraint {
@@ -137,7 +138,7 @@ impl Display for ConstraintNode {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ConstraintGraphSpecification {
-    pub arguments: imbl::OrdMap<ExpressionVariable, imbl::OrdSet<Expression>>,
+    pub arguments: imbl::OrdMap<ExpressionVariableDefinition, imbl::OrdSet<Expression>>,
     pub return_type: imbl::OrdSet<Expression>,
     pub exceptions: imbl::OrdSet<Expression>,
 }

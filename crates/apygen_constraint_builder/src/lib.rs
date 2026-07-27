@@ -9,9 +9,9 @@ use crate::cfg::text_size::Ranged;
 use crate::cfg::{Cfg, CfgEdge, CfgEdgeKind, CfgNode as StmtNode, ProgramPoint};
 use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
-    ExpressionCall, ExpressionClass, ExpressionForwardVariable, ExpressionFunction,
-    ExpressionImport, ExpressionOverride, ExpressionSubscript, ExpressionUnary, ExpressionVariable,
-    KeywordArgument, UnaryOperator,
+    ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionImport, ExpressionOverride,
+    ExpressionSubscript, ExpressionUnary, ExpressionVariableDefinition,
+    ExpressionVariableReference, KeywordArgument, UnaryOperator,
 };
 use crate::constraint_graph::identifiers::smol_str::SmolStrBuilder;
 use crate::constraint_graph::identifiers::{Location, NamedQualifiedLocation, Namespace, SmolStr};
@@ -175,8 +175,6 @@ impl OrdJoin for ReturnStatus {}
 pub struct ProgramEntityAbstractEnvironment {
     pub return_status: ReturnStatus,
     pub current_nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>,
-    pub unknown_variables:
-        imbl::OrdMap<SmolStr, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Location>>>,
     pub variable_locations: imbl::OrdMap<SmolStr, imbl::OrdSet<Location>>,
     pub nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
     pub edges: imbl::OrdMap<(ConstraintNode, ConstraintNode), imbl::OrdSet<Guard>>,
@@ -215,35 +213,19 @@ impl Display for ProgramEntityAnalysisState {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
-pub struct UsedVariables {
-    pub names: imbl::OrdMap<SmolStr, imbl::OrdSet<Location>>,
-}
-
-impl UsedVariables {
-    pub fn new(names: imbl::OrdMap<SmolStr, imbl::OrdSet<Location>>) -> Self {
-        Self { names }
-    }
-
-    pub fn consume<T>(&mut self, eval: ExpressionEval<T>) -> T {
-        self.names = self.names.join(&eval.variables.names);
-        eval.value
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionEval<T> {
     pub value: T,
-    pub variables: UsedVariables,
+    pub variables: imbl::OrdSet<SmolStr>,
 }
 
 impl<T> ExpressionEval<T> {
-    pub fn new(value: T, variables: UsedVariables) -> Self {
+    pub fn new(value: T, variables: imbl::OrdSet<SmolStr>) -> Self {
         Self { value, variables }
     }
 
     pub fn only_value(value: T) -> Self {
-        Self::new(value, UsedVariables::default())
+        Self::new(value, imbl::OrdSet::default())
     }
 
     pub fn map(self, f: impl FnOnce(T) -> T) -> Self {
@@ -432,111 +414,6 @@ impl<'a> ConstraintsBuilder<'a> {
         None
     }
 
-    pub fn create_used_variables_constraints(
-        &self,
-        abstract_environment: &mut ProgramEntityAbstractEnvironment,
-        location: Location,
-        used_variables: UsedVariables,
-    ) {
-        if used_variables.names.is_empty() {
-            return;
-        }
-
-        let node = ConstraintNode::Constraint {
-            location: Some(location.clone()),
-            id: None,
-        };
-
-        let mut constraints = imbl::OrdSet::new();
-        let mut previous_expression_variables = imbl::OrdSet::new();
-        for (used_variable_name, used_locations) in used_variables.names.as_ref() {
-            if let Some((previous_program_entity, previous_locations)) =
-                self.previous_locations(&abstract_environment, used_variable_name)
-            {
-                for previous_location in previous_locations {
-                    for used_location in used_locations {
-                        let previous_expression_variable = Arc::new(Expression::Variable(
-                            ExpressionVariable::new(NamedQualifiedLocation::new(
-                                used_variable_name.clone(),
-                                previous_location.clone(),
-                                previous_program_entity.clone(),
-                            )),
-                        ));
-                        constraints.insert(Constraint::Type(IncludeConstraint::new(
-                            previous_expression_variable.clone(),
-                            Arc::new(Expression::Variable(ExpressionVariable::new(
-                                NamedQualifiedLocation::new(
-                                    used_variable_name.clone(),
-                                    used_location.clone(),
-                                    self.program_entity.namespace.clone(),
-                                ),
-                            ))),
-                        )));
-                        previous_expression_variables.insert(previous_expression_variable);
-                    }
-                }
-            } else {
-                abstract_environment.unknown_variables = abstract_environment
-                    .unknown_variables
-                    .join(&imbl::OrdMap::unit(
-                        used_variable_name.clone(),
-                        imbl::OrdMap::unit(node.clone(), used_locations.clone()),
-                    ));
-            }
-        }
-
-        if constraints.is_empty() {
-            return;
-        }
-
-        let mut current_nodes = drain(&mut abstract_environment.current_nodes, |(_, guards)| {
-            guards
-                .iter()
-                .any(|guard| matches!(guard, Guard::Raise { .. }))
-        });
-
-        abstract_environment.nodes.insert(node.clone(), constraints);
-
-        let empty_constraint_node = ConstraintNode::Constraint {
-            location: Some(location.clone()),
-            id: Some(SmolStr::new_static("#empty")),
-        };
-        for (from, guards) in &abstract_environment.current_nodes {
-            let from = if guards.is_empty() {
-                &from
-            } else {
-                abstract_environment.edges.insert(
-                    (from.clone(), empty_constraint_node.clone()),
-                    guards.clone(),
-                );
-                &empty_constraint_node
-            };
-            abstract_environment.edges.insert(
-                (from.clone(), node.clone()),
-                previous_expression_variables
-                    .iter()
-                    .map(|previous_expression_variable| {
-                        Guard::Succeed(previous_expression_variable.clone())
-                    })
-                    .collect(),
-            );
-            current_nodes.insert(
-                from.clone(),
-                previous_expression_variables
-                    .iter()
-                    .map(|previous_expression_variable| Guard::Raise {
-                        expression: previous_expression_variable.clone(),
-                        exception: None,
-                    })
-                    .collect(),
-            );
-        }
-
-        current_nodes.insert(node, imbl::OrdSet::default());
-
-        abstract_environment.current_nodes = current_nodes;
-    }
-
     pub fn create_include_constraint(
         &self,
         abstract_environment: &mut ProgramEntityAbstractEnvironment,
@@ -615,83 +492,20 @@ impl<'a> ConstraintsBuilder<'a> {
         location: Location,
         variable_name: SmolStr,
         type_expression: Arc<Expression>,
-        sub_cfg_analysis: Option<&CfgAnalysis>,
     ) {
-        let expression_variable = ExpressionVariable::new(NamedQualifiedLocation::new(
+        let expression_variable = ExpressionVariableDefinition::new(NamedQualifiedLocation::new(
             variable_name.clone(),
             location.clone(),
             self.program_entity.namespace.clone(),
         ));
 
-        let node = self.create_include_constraint(
+        self.create_include_constraint(
             abstract_environment,
             location.clone(),
             imbl::OrdSet::unit(Constraint::DefinedVariable(expression_variable.clone())),
             type_expression,
-            Arc::new(Expression::Variable(expression_variable)),
+            Arc::new(Expression::VariableDefinition(expression_variable)),
         );
-
-        if let Some(sub_cfg_analysis) = sub_cfg_analysis {
-            for (unknown_variable, variable_nodes) in
-                &sub_cfg_analysis.environment.unknown_variables
-            {
-                abstract_environment.unknown_variables = abstract_environment
-                    .unknown_variables
-                    .join(&imbl::OrdMap::unit(
-                        unknown_variable.clone(),
-                        imbl::OrdMap::unit(
-                            node.clone(),
-                            variable_nodes
-                                .iter()
-                                .flat_map(|(_, locations)| locations.clone())
-                                .collect(),
-                        ),
-                    ));
-            }
-        }
-
-        if let Some(variable_nodes) = abstract_environment
-            .unknown_variables
-            .remove(&variable_name)
-        {
-            let unknown_variable_node = ConstraintNode::Constraint {
-                location: Some(location.clone()),
-                id: Some(variable_name.clone()),
-            };
-            for (original_node, unknown_variable_locations) in variable_nodes {
-                abstract_environment.nodes.insert(
-                    unknown_variable_node.clone(),
-                    unknown_variable_locations
-                        .into_iter()
-                        .map(|unknown_variable_location| {
-                            Constraint::Type(IncludeConstraint::new(
-                                Arc::new(Expression::Variable(ExpressionVariable::new(
-                                    NamedQualifiedLocation::new(
-                                        variable_name.clone(),
-                                        location.clone(),
-                                        self.program_entity.namespace.clone(),
-                                    ),
-                                ))),
-                                Arc::new(Expression::ForwardVariable(
-                                    ExpressionForwardVariable::new(
-                                        variable_name.clone(),
-                                        unknown_variable_location,
-                                    ),
-                                )),
-                            ))
-                        })
-                        .collect(),
-                );
-                abstract_environment.edges.insert(
-                    (node.clone(), unknown_variable_node.clone()),
-                    imbl::OrdSet::default(),
-                );
-                abstract_environment.edges.insert(
-                    (unknown_variable_node.clone(), original_node),
-                    imbl::OrdSet::default(),
-                );
-            }
-        }
 
         abstract_environment
             .variable_locations
@@ -703,6 +517,7 @@ impl<'a> ConstraintsBuilder<'a> {
         abstract_environment: &mut ProgramEntityAbstractEnvironment,
         location: Location,
         new_guards: imbl::OrdSet<Guard>,
+        allow_simplify: bool,
     ) {
         let current_nodes = drain(&mut abstract_environment.current_nodes, |(_, guards)| {
             guards
@@ -715,7 +530,9 @@ impl<'a> ConstraintsBuilder<'a> {
                 .current_nodes
                 .get_min()
                 .filter(|(_, guards)| {
-                    abstract_environment.current_nodes.len() == 1 && guards.is_empty()
+                    abstract_environment.current_nodes.len() == 1
+                        && guards.is_empty()
+                        && allow_simplify
                 }) {
             from.clone()
         } else {
@@ -748,8 +565,13 @@ impl<'a> ConstraintsBuilder<'a> {
         abstract_environment: &ProgramEntityAbstractEnvironment,
         function_namespace: &Arc<Namespace>,
         parameter: &ast::Parameter,
-    ) -> Result<(ExpressionVariable, Option<ExpressionEval<Expression>>), ConstraintsBuilderError>
-    {
+    ) -> Result<
+        (
+            ExpressionVariableDefinition,
+            Option<ExpressionEval<Expression>>,
+        ),
+        ConstraintsBuilderError,
+    > {
         let parameter_name = SmolStr::new(&parameter.name);
 
         let annotation = if let Some(annotation) = &parameter.annotation {
@@ -764,7 +586,7 @@ impl<'a> ConstraintsBuilder<'a> {
         };
 
         Ok((
-            ExpressionVariable::new(NamedQualifiedLocation::new(
+            ExpressionVariableDefinition::new(NamedQualifiedLocation::new(
                 parameter_name,
                 self.gen_location(parameter),
                 function_namespace.clone(),
@@ -779,8 +601,13 @@ impl<'a> ConstraintsBuilder<'a> {
         abstract_environment: &ProgramEntityAbstractEnvironment,
         function_namespace: &Arc<Namespace>,
         parameter_with_default: &ast::ParameterWithDefault,
-    ) -> Result<(ExpressionVariable, Option<ExpressionEval<Expression>>), ConstraintsBuilderError>
-    {
+    ) -> Result<
+        (
+            ExpressionVariableDefinition,
+            Option<ExpressionEval<Expression>>,
+        ),
+        ConstraintsBuilderError,
+    > {
         let (parameter_name, annotation_eval_option) = self.evaluate_parameter(
             namespace,
             abstract_environment,
@@ -815,7 +642,7 @@ impl<'a> ConstraintsBuilder<'a> {
         function_namespace: &Arc<Namespace>,
         parameters: &ast::Parameters,
     ) -> Result<
-        ExpressionEval<imbl::OrdMap<ExpressionVariable, imbl::OrdSet<Expression>>>,
+        ExpressionEval<imbl::OrdMap<ExpressionVariableDefinition, imbl::OrdSet<Expression>>>,
         ConstraintsBuilderError,
     > {
         let positional_only_parameters = parameters.posonlyargs.iter().map(|parameter| {
@@ -864,16 +691,22 @@ impl<'a> ConstraintsBuilder<'a> {
             .chain(var_positional_parameters)
             .chain(keyword_only_parameters)
             .chain(var_keyword_parameters)
-            .collect::<Result<Vec<(ExpressionVariable, Option<ExpressionEval<Expression>>)>, _>>(
-            )?;
+            .collect::<Result<
+                Vec<(
+                    ExpressionVariableDefinition,
+                    Option<ExpressionEval<Expression>>,
+                )>,
+                _,
+            >>()?;
 
-        let mut used_variables = UsedVariables::default();
+        let mut used_variables = imbl::OrdSet::default();
 
         let mut arguments = imbl::OrdMap::default();
 
         for (variable_name, parameter_eval_option) in parameter_evals {
             let parameter_type_expression = if let Some(parameter_eval) = parameter_eval_option {
-                imbl::OrdSet::unit(used_variables.consume(parameter_eval))
+                used_variables.extend(parameter_eval.variables);
+                imbl::OrdSet::unit(parameter_eval.value)
             } else {
                 imbl::OrdSet::default()
             };
@@ -1034,9 +867,12 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let mut positional_arguments: imbl::Vector<Arc<Expression>> = imbl::Vector::new();
         for positional_argument in &expr_call.arguments.args {
-            positional_arguments.push_back(Arc::new(func_eval.variables.consume(
-                self.evaluate_expr(namespace, abstract_environment, &positional_argument)?,
-            )));
+            positional_arguments.push_back(Arc::new({
+                let argument_eval =
+                    self.evaluate_expr(namespace, abstract_environment, &positional_argument)?;
+                func_eval.variables.extend(argument_eval.variables);
+                argument_eval.value
+            }));
         }
 
         let mut keyword_arguments: imbl::Vector<KeywordArgument> = imbl::Vector::new();
@@ -1047,11 +883,15 @@ impl<'a> ConstraintsBuilder<'a> {
             };
             keyword_arguments.push_back(KeywordArgument {
                 name: keyword_name,
-                value: Arc::new(func_eval.variables.consume(self.evaluate_expr(
-                    namespace,
-                    abstract_environment,
-                    &keyword_argument.value,
-                )?)),
+                value: Arc::new({
+                    let argument_eval = self.evaluate_expr(
+                        namespace,
+                        abstract_environment,
+                        &keyword_argument.value,
+                    )?;
+                    func_eval.variables.extend(argument_eval.variables);
+                    argument_eval.value
+                }),
             });
         }
 
@@ -1176,27 +1016,11 @@ impl<'a> ConstraintsBuilder<'a> {
         abstract_environment: &ProgramEntityAbstractEnvironment,
         expr_name: &ast::ExprName,
     ) -> Result<ExpressionEval<Expression>, ConstraintsBuilderError> {
-        let location = self.gen_location(expr_name);
-
         let variable_name = SmolStr::new(&expr_name.id);
 
         Ok(ExpressionEval::new(
-            if let Some(_) = self.previous_locations(abstract_environment, &variable_name) {
-                Expression::Variable(ExpressionVariable::new(NamedQualifiedLocation::new(
-                    variable_name.clone(),
-                    location.clone(),
-                    self.program_entity.namespace.clone(),
-                )))
-            } else {
-                Expression::ForwardVariable(ExpressionForwardVariable::new(
-                    variable_name.clone(),
-                    location.clone(),
-                ))
-            },
-            UsedVariables::new(imbl::OrdMap::unit(
-                variable_name,
-                imbl::OrdSet::unit(location),
-            )),
+            Expression::VariableReference(ExpressionVariableReference::new(variable_name.clone())),
+            imbl::OrdSet::unit(variable_name),
         ))
     }
 
@@ -1343,7 +1167,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 return_eval.variables,
             )
         } else {
-            (imbl::OrdSet::default(), UsedVariables::default())
+            (imbl::OrdSet::default(), imbl::OrdSet::default())
         };
 
         let function_program_entity =
@@ -1368,12 +1192,6 @@ impl<'a> ConstraintsBuilder<'a> {
             )),
         );
 
-        self.create_used_variables_constraints(
-            &mut target_abstract_environment,
-            self.gen_location(stmt_function_def.parameters.as_ref()),
-            parameters.variables.join(&return_variables),
-        );
-
         self.assign_variable(
             &mut target_abstract_environment,
             location,
@@ -1382,7 +1200,6 @@ impl<'a> ConstraintsBuilder<'a> {
                 function_qualified_location,
                 stmt_function_def.is_async,
             ))),
-            Some(&sub_cfg_analysis),
         );
 
         target_abstract_environment
@@ -1439,7 +1256,6 @@ impl<'a> ConstraintsBuilder<'a> {
             Arc::new(Expression::Class(ExpressionClass::new(
                 class_qualified_location.clone(),
             ))),
-            Some(&sub_cfg_analysis),
         );
 
         target_abstract_environment
@@ -1462,15 +1278,9 @@ impl<'a> ConstraintsBuilder<'a> {
             let value_eval =
                 self.evaluate_expr(namespace, &target_abstract_environment, value.as_ref())?;
 
-            self.create_used_variables_constraints(
-                &mut target_abstract_environment,
-                self.gen_location(value.as_ref()),
-                value_eval.variables,
-            );
-
-            value_eval.value
+            Arc::new(value_eval.value)
         } else {
-            Expression::LiteralNone
+            Arc::new(Expression::LiteralNone)
         };
 
         let node = ConstraintNode::Constraint {
@@ -1478,13 +1288,13 @@ impl<'a> ConstraintsBuilder<'a> {
             id: None,
         };
 
-        let constraint = Constraint::Return(ReturnConstraint::new(Arc::new(expression), None));
+        let constraint = Constraint::Return(ReturnConstraint::new(expression.clone(), None));
 
         target_abstract_environment
             .nodes
             .insert(node.clone(), imbl::OrdSet::unit(constraint));
 
-        let current_nodes = drain(
+        let mut current_nodes = drain(
             &mut target_abstract_environment.current_nodes,
             |(_, guards)| {
                 guards
@@ -1493,10 +1303,33 @@ impl<'a> ConstraintsBuilder<'a> {
             },
         );
 
+        let current_empty_constraint = ConstraintNode::Constraint {
+            location: Some(self.gen_location(stmt_return)),
+            id: Some(SmolStr::new_static("#empty")),
+        };
+
         for (from, guards) in target_abstract_environment.current_nodes.as_ref() {
-            target_abstract_environment
-                .edges
-                .insert((from.clone(), node.clone()), guards.clone());
+            let from = if guards.is_empty() {
+                &from
+            } else {
+                target_abstract_environment.edges.insert(
+                    (from.clone(), current_empty_constraint.clone()),
+                    guards.clone(),
+                );
+                &current_empty_constraint
+            };
+
+            target_abstract_environment.edges.insert(
+                (from.clone(), node.clone()),
+                imbl::OrdSet::unit(Guard::Succeed(expression.clone())),
+            );
+            current_nodes.insert(
+                from.clone(),
+                imbl::OrdSet::unit(Guard::Raise {
+                    expression: expression.clone(),
+                    exception: None,
+                }),
+            );
         }
 
         target_abstract_environment.current_nodes =
@@ -1526,7 +1359,6 @@ impl<'a> ConstraintsBuilder<'a> {
                     Arc::new(Expression::Import(ExpressionImport::new(
                         module_name.clone(),
                     ))),
-                    None,
                 );
                 target_abstract_environment.imports.insert(module_name);
             } else {
@@ -1545,8 +1377,8 @@ impl<'a> ConstraintsBuilder<'a> {
                     .variable_locations
                     .insert(identifier.clone(), imbl::OrdSet::unit(location.clone()));
 
-                let mut expression_option = Some(Arc::new(Expression::Variable(
-                    ExpressionVariable::new(NamedQualifiedLocation::new(
+                let mut expression_option = Some(Arc::new(Expression::VariableDefinition(
+                    ExpressionVariableDefinition::new(NamedQualifiedLocation::new(
                         identifier.clone(),
                         location.clone(),
                         self.program_entity.namespace.clone(),
@@ -1573,13 +1405,13 @@ impl<'a> ConstraintsBuilder<'a> {
                     self.create_include_constraint(
                         &mut target_abstract_environment,
                         location.clone(),
-                        imbl::OrdSet::unit(Constraint::DefinedVariable(ExpressionVariable::new(
-                            NamedQualifiedLocation::new(
+                        imbl::OrdSet::unit(Constraint::DefinedVariable(
+                            ExpressionVariableDefinition::new(NamedQualifiedLocation::new(
                                 identifier.clone(),
                                 location.clone(),
                                 self.program_entity.namespace.clone(),
-                            ),
-                        ))),
+                            )),
+                        )),
                         Arc::new(Expression::Import(ExpressionImport::new(module_name))),
                         expression.clone(),
                     );
@@ -1640,12 +1472,6 @@ impl<'a> ConstraintsBuilder<'a> {
         let eval =
             self.evaluate_expr(namespace, &target_abstract_environment, &stmt_assign.value)?;
 
-        self.create_used_variables_constraints(
-            &mut target_abstract_environment,
-            self.gen_location(stmt_assign.value.as_ref()),
-            eval.variables,
-        );
-
         let type_expression = Arc::new(eval.value);
 
         let mut current_nodes = imbl::OrdSet::default();
@@ -1661,7 +1487,6 @@ impl<'a> ConstraintsBuilder<'a> {
                         self.gen_location(target_expr),
                         target_name,
                         type_expression.clone(),
-                        None,
                     );
                 }
                 AssignmentTarget::Attribute { .. } => {}
@@ -1707,12 +1532,6 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let eval = self.evaluate_expr(namespace, &target_abstract_environment, value)?;
 
-        self.create_used_variables_constraints(
-            &mut target_abstract_environment,
-            self.gen_location(value.as_ref()),
-            eval.variables,
-        );
-
         let type_expression = Arc::new(eval.value);
 
         match target {
@@ -1722,7 +1541,6 @@ impl<'a> ConstraintsBuilder<'a> {
                     self.gen_location(stmt_ann_assign.target.as_ref()),
                     target_name,
                     type_expression.clone(),
-                    None,
                 );
             }
             AssignmentTarget::Attribute { .. } => {}
@@ -1747,12 +1565,6 @@ impl<'a> ConstraintsBuilder<'a> {
         let condition_eval =
             self.evaluate_expr(namespace, &target_abstract_environment, &stmt_while.test)?;
 
-        self.create_used_variables_constraints(
-            &mut target_abstract_environment,
-            self.gen_location(stmt_while.test.as_ref()),
-            condition_eval.variables,
-        );
-
         let condition_expression = Arc::new(condition_eval.value);
 
         self.assign_empty_constraint(
@@ -1766,6 +1578,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     exception: None,
                 },
             ]),
+            false,
         );
 
         Ok(target_abstract_environment)
@@ -1783,12 +1596,6 @@ impl<'a> ConstraintsBuilder<'a> {
         let condition_eval =
             self.evaluate_expr(namespace, &target_abstract_environment, &stmt_if.test)?;
 
-        self.create_used_variables_constraints(
-            &mut target_abstract_environment,
-            self.gen_location(stmt_if.test.as_ref()),
-            condition_eval.variables,
-        );
-
         let condition_expression = Arc::new(condition_eval.value);
 
         self.assign_empty_constraint(
@@ -1802,6 +1609,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     exception: None,
                 },
             ]),
+            true,
         );
 
         Ok(target_abstract_environment)
@@ -1822,12 +1630,6 @@ impl<'a> ConstraintsBuilder<'a> {
 
         let condition_eval = self.evaluate_expr(namespace, &target_abstract_environment, &test)?;
 
-        self.create_used_variables_constraints(
-            &mut target_abstract_environment,
-            self.gen_location(test),
-            condition_eval.variables,
-        );
-
         let condition_expression = Arc::new(condition_eval.value);
 
         self.assign_empty_constraint(
@@ -1841,6 +1643,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     exception: None,
                 },
             ]),
+            true,
         );
 
         Ok(target_abstract_environment)
@@ -2019,7 +1822,6 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                 .all(|edge_kind| matches!(edge_kind, CfgEdgeKind::UnhandledException));
 
             if are_all_exceptions {
-                target_abstract_environment.unknown_variables.clear();
                 target_abstract_environment.variable_locations.clear();
                 target_abstract_environment.nodes.clear();
                 target_abstract_environment.edges.clear();
@@ -2435,18 +2237,15 @@ mod tests {
         digraph "builtins" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:6)" [label="#class(identifier=builtins[int@{1:6}]) ⊑ int@{builtins[1:6]} ∧ #defined(int@{builtins[1:6]})"];
-            "Constraint(location=1:6, id=int)" [label="int@{builtins[1:6]} ⊑ int@{2:29} ∧ int@{builtins[1:6]} ⊑ int@{2:40}"];
             "Entry" -> "Constraint(location=1:6)" [label="#succeed(#class(identifier=builtins[int@{1:6}]))"];
             "Entry" -> "ExceptionExit" [label="#raise(#class(identifier=builtins[int@{1:6}]))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:6)" -> "Constraint()";
-            "Constraint(location=1:6)" -> "Constraint(location=1:6, id=int)";
-            "Constraint(location=1:6, id=int)" -> "Constraint(location=1:6)";
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
         specification "builtins[int@{1:6}][__add__@{2:8}]":
-            {arguments: {self@{builtins[int@{1:6}][__add__@{2:8}][2:16]}: , value@{builtins[int@{1:6}][__add__@{2:8}][2:22]}: #annotated(int@{2:29})}, return_type: {#annotated(int@{2:40})}, exceptions: {}}
+            {arguments: {self@{builtins[int@{1:6}][__add__@{2:8}][2:16]}: , value@{builtins[int@{1:6}][__add__@{2:8}][2:22]}: #annotated(int)}, return_type: {#annotated(int)}, exceptions: {}}
         digraph "builtins[int@{1:6}][__add__@{2:8}]" {
             "Constraint()" [label="#return(None)"];
             "Entry" -> "Constraint()";
@@ -3343,15 +3142,12 @@ mod tests {
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="4 ⊑ a@{module[1:0]} ∧ #defined(a@{module[1:0]})"];
-            "Constraint(location=3:0)" [label="(a@{module[3:4]}) + (a@{module[3:8]}) ⊑ b@{module[3:0]} ∧ #defined(b@{module[3:0]})"];
-            "Constraint(location=3:4)" [label="a@{module[1:0]} ⊑ a@{module[3:4]} ∧ a@{module[1:0]} ⊑ a@{module[3:8]}"];
+            "Constraint(location=3:0)" [label="(a) + (a) ⊑ b@{module[3:0]} ∧ #defined(b@{module[3:0]})"];
             "Entry" -> "Constraint(location=1:0)";
             "Constraint()" -> "TypeExit";
-            "Constraint(location=1:0)" -> "Constraint(location=3:4)" [label="#succeed(a@{module[1:0]})"];
-            "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(a@{module[1:0]})"];
+            "Constraint(location=1:0)" -> "Constraint(location=3:0)" [label="#succeed((a) + (a))"];
+            "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise((a) + (a))"];
             "Constraint(location=3:0)" -> "Constraint()";
-            "Constraint(location=3:4)" -> "Constraint(location=3:0)" [label="#succeed((a@{module[3:4]}) + (a@{module[3:8]}))"];
-            "Constraint(location=3:4)" -> "ExceptionExit" [label="#raise((a@{module[3:4]}) + (a@{module[3:8]}))"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -3381,29 +3177,19 @@ mod tests {
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="True ⊑ x@{module[1:0]} ∧ #defined(x@{module[1:0]})"];
-            "Constraint(location=3:3)" [label="x@{module[1:0]} ⊑ x@{module[3:3]}"];
             "Constraint(location=4:4)" [label="42 ⊑ a@{module[4:4]} ∧ #defined(a@{module[4:4]})"];
             "Constraint(location=6:4)" [label="67 ⊑ a@{module[6:4]} ∧ #defined(a@{module[6:4]})"];
-            "Constraint(location=8:0)" [label="a@{module[8:4]} ⊑ b@{module[8:0]} ∧ #defined(b@{module[8:0]})"];
-            "Constraint(location=8:4)" [label="a@{module[4:4]} ⊑ a@{module[8:4]} ∧ a@{module[6:4]} ⊑ a@{module[8:4]}"];
+            "Constraint(location=8:0)" [label="a ⊑ b@{module[8:0]} ∧ #defined(b@{module[8:0]})"];
             "Entry" -> "Constraint(location=1:0)";
             "Constraint()" -> "TypeExit";
-            "Constraint(location=1:0)" -> "Constraint(location=3:3)" [label="#succeed(x@{module[1:0]})"];
-            "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(x@{module[1:0]})"];
-            "Constraint(location=3:3)" -> "Constraint(location=4:4)" [label="#is_true(x@{module[3:3]})"];
-            "Constraint(location=3:3)" -> "Constraint(location=6:4)" [label="#is_false(x@{module[3:3]})"];
-            "Constraint(location=3:3)" -> "ExceptionExit" [label="#raise(x@{module[3:3]})"];
-            "Constraint(location=4:4)" -> "Constraint(location=8:4)" [label="#succeed(a@{module[4:4]})"];
-            "Constraint(location=4:4)" -> "Constraint(location=8:4)" [label="#succeed(a@{module[6:4]})"];
-            "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
-            "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[6:4]})"];
-            "Constraint(location=6:4)" -> "Constraint(location=8:4)" [label="#succeed(a@{module[4:4]})"];
-            "Constraint(location=6:4)" -> "Constraint(location=8:4)" [label="#succeed(a@{module[6:4]})"];
-            "Constraint(location=6:4)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
-            "Constraint(location=6:4)" -> "ExceptionExit" [label="#raise(a@{module[6:4]})"];
+            "Constraint(location=1:0)" -> "Constraint(location=4:4)" [label="#is_true(x)"];
+            "Constraint(location=1:0)" -> "Constraint(location=6:4)" [label="#is_false(x)"];
+            "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(x)"];
+            "Constraint(location=4:4)" -> "Constraint(location=8:0)" [label="#succeed(a)"];
+            "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a)"];
+            "Constraint(location=6:4)" -> "Constraint(location=8:0)" [label="#succeed(a)"];
+            "Constraint(location=6:4)" -> "ExceptionExit" [label="#raise(a)"];
             "Constraint(location=8:0)" -> "Constraint()";
-            "Constraint(location=8:4)" -> "Constraint(location=8:0)" [label="#succeed(a@{module[8:4]})"];
-            "Constraint(location=8:4)" -> "ExceptionExit" [label="#raise(a@{module[8:4]})"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -3431,37 +3217,20 @@ mod tests {
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:0)" [label="0 ⊑ a@{module[1:0]} ∧ #defined(a@{module[1:0]})"];
-            "Constraint(location=3:6)" [label="a@{module[1:0]} ⊑ a@{module[3:6]} ∧ a@{module[4:4]} ⊑ a@{module[3:6]}"];
-            "Constraint(location=4:4)" [label="(a@{module[4:8]}) + (1) ⊑ a@{module[4:4]} ∧ #defined(a@{module[4:4]})"];
-            "Constraint(location=4:8)" [label="a@{module[1:0]} ⊑ a@{module[4:8]} ∧ a@{module[4:4]} ⊑ a@{module[4:8]}"];
-            "Constraint(location=6:0)" [label="a@{module[6:4]} ⊑ b@{module[6:0]} ∧ #defined(b@{module[6:0]})"];
-            "Constraint(location=6:4)" [label="a@{module[1:0]} ⊑ a@{module[6:4]} ∧ a@{module[4:4]} ⊑ a@{module[6:4]}"];
+            "Constraint(location=4:4)" [label="(a) + (1) ⊑ a@{module[4:4]} ∧ #defined(a@{module[4:4]})"];
+            "Constraint(location=6:0)" [label="a ⊑ b@{module[6:0]} ∧ #defined(b@{module[6:0]})"];
             "Entry" -> "Constraint(location=1:0)";
             "Constraint()" -> "TypeExit";
-            "Constraint(location=1:0)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[1:0]})"];
-            "Constraint(location=1:0)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[4:4]})"];
-            "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(a@{module[1:0]})"];
-            "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
-            "Constraint(location=3:6)" -> "Constraint(location=4:8, id=#empty)" [label="#is_true((a@{module[3:6]}) < (5))"];
-            "Constraint(location=3:6)" -> "Constraint(location=6:4, id=#empty)" [label="#is_false((a@{module[3:6]}) < (5))"];
-            "Constraint(location=3:6)" -> "ExceptionExit" [label="#raise((a@{module[3:6]}) < (5))"];
-            "Constraint(location=4:4)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[1:0]})"];
-            "Constraint(location=4:4)" -> "Constraint(location=3:6)" [label="#succeed(a@{module[4:4]})"];
-            "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[1:0]})"];
-            "Constraint(location=4:4)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
-            "Constraint(location=4:8)" -> "Constraint(location=4:4)" [label="#succeed((a@{module[4:8]}) + (1))"];
-            "Constraint(location=4:8)" -> "ExceptionExit" [label="#raise((a@{module[4:8]}) + (1))"];
-            "Constraint(location=4:8, id=#empty)" -> "Constraint(location=4:8)" [label="#succeed(a@{module[1:0]})"];
-            "Constraint(location=4:8, id=#empty)" -> "Constraint(location=4:8)" [label="#succeed(a@{module[4:4]})"];
-            "Constraint(location=4:8, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[1:0]})"];
-            "Constraint(location=4:8, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
+            "Constraint(location=1:0)" -> "Constraint(location=3:0)";
+            "Constraint(location=3:0)" -> "Constraint(location=4:4, id=#empty)" [label="#is_true((a) < (5))"];
+            "Constraint(location=3:0)" -> "Constraint(location=6:0, id=#empty)" [label="#is_false((a) < (5))"];
+            "Constraint(location=3:0)" -> "ExceptionExit" [label="#raise((a) < (5))"];
+            "Constraint(location=4:4)" -> "Constraint(location=3:0)";
+            "Constraint(location=4:4, id=#empty)" -> "Constraint(location=4:4)" [label="#succeed((a) + (1))"];
+            "Constraint(location=4:4, id=#empty)" -> "ExceptionExit" [label="#raise((a) + (1))"];
             "Constraint(location=6:0)" -> "Constraint()";
-            "Constraint(location=6:4)" -> "Constraint(location=6:0)" [label="#succeed(a@{module[6:4]})"];
-            "Constraint(location=6:4)" -> "ExceptionExit" [label="#raise(a@{module[6:4]})"];
-            "Constraint(location=6:4, id=#empty)" -> "Constraint(location=6:4)" [label="#succeed(a@{module[1:0]})"];
-            "Constraint(location=6:4, id=#empty)" -> "Constraint(location=6:4)" [label="#succeed(a@{module[4:4]})"];
-            "Constraint(location=6:4, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[1:0]})"];
-            "Constraint(location=6:4, id=#empty)" -> "ExceptionExit" [label="#raise(a@{module[4:4]})"];
+            "Constraint(location=6:0, id=#empty)" -> "Constraint(location=6:0)" [label="#succeed(a)"];
+            "Constraint(location=6:0, id=#empty)" -> "ExceptionExit" [label="#raise(a)"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -3487,33 +3256,23 @@ mod tests {
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:4)" [label="#function(identifier=module[add_two@{1:4}], async=false) ⊑ add_two@{module[1:4]} ∧ #defined(add_two@{module[1:4]})"];
-            "Constraint(location=1:11)" [label="int@{builtins[1:6]} ⊑ int@{module[1:15]} ∧ int@{builtins[1:6]} ⊑ int@{module[1:23]} ∧ int@{builtins[1:6]} ⊑ int@{module[1:31]}"];
-            "Constraint(location=4:0)" [label="(add_two@{module[4:9]})(42, 67) ⊑ result@{module[4:0]} ∧ #defined(result@{module[4:0]})"];
-            "Constraint(location=4:9)" [label="add_two@{module[1:4]} ⊑ add_two@{module[4:9]}"];
-            "Entry" -> "Constraint(location=1:11)" [label="#succeed(int@{builtins[1:6]})"];
-            "Entry" -> "ExceptionExit" [label="#raise(int@{builtins[1:6]})"];
+            "Constraint(location=4:0)" [label="(add_two)(42, 67) ⊑ result@{module[4:0]} ∧ #defined(result@{module[4:0]})"];
+            "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=module[add_two@{1:4}], async=false))"];
+            "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=module[add_two@{1:4}], async=false))"];
             "Constraint()" -> "TypeExit";
-            "Constraint(location=1:4)" -> "Constraint(location=4:9)" [label="#succeed(add_two@{module[1:4]})"];
-            "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise(add_two@{module[1:4]})"];
-            "Constraint(location=1:11)" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=module[add_two@{1:4}], async=false))"];
-            "Constraint(location=1:11)" -> "ExceptionExit" [label="#raise(#function(identifier=module[add_two@{1:4}], async=false))"];
+            "Constraint(location=1:4)" -> "Constraint(location=4:0)" [label="#succeed((add_two)(42, 67))"];
+            "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise((add_two)(42, 67))"];
             "Constraint(location=4:0)" -> "Constraint()";
-            "Constraint(location=4:9)" -> "Constraint(location=4:0)" [label="#succeed((add_two@{module[4:9]})(42, 67))"];
-            "Constraint(location=4:9)" -> "ExceptionExit" [label="#raise((add_two@{module[4:9]})(42, 67))"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
         specification "module[add_two@{1:4}]":
-            {arguments: {a@{module[add_two@{1:4}][1:12]}: #annotated(int@{module[1:15]}), b@{module[add_two@{1:4}][1:20]}: #annotated(int@{module[1:23]})}, return_type: {#annotated(int@{module[1:31]})}, exceptions: {}}
+            {arguments: {a@{module[add_two@{1:4}][1:12]}: #annotated(int), b@{module[add_two@{1:4}][1:20]}: #annotated(int)}, return_type: {#annotated(int)}, exceptions: {}}
         digraph "module[add_two@{1:4}]" {
-            "Constraint(location=2:4)" [label="#return((a@{module[add_two@{1:4}][2:11]}) + (b@{module[add_two@{1:4}][2:15]}))"];
-            "Constraint(location=2:11)" [label="a@{module[add_two@{1:4}][1:12]} ⊑ a@{module[add_two@{1:4}][2:11]} ∧ b@{module[add_two@{1:4}][1:20]} ⊑ b@{module[add_two@{1:4}][2:15]}"];
-            "Entry" -> "Constraint(location=2:11)" [label="#succeed(a@{module[add_two@{1:4}][1:12]})"];
-            "Entry" -> "Constraint(location=2:11)" [label="#succeed(b@{module[add_two@{1:4}][1:20]})"];
-            "Entry" -> "ExceptionExit" [label="#raise(a@{module[add_two@{1:4}][1:12]})"];
-            "Entry" -> "ExceptionExit" [label="#raise(b@{module[add_two@{1:4}][1:20]})"];
+            "Constraint(location=2:4)" [label="#return((a) + (b))"];
+            "Entry" -> "Constraint(location=2:4)" [label="#succeed((a) + (b))"];
+            "Entry" -> "ExceptionExit" [label="#raise((a) + (b))"];
             "Constraint(location=2:4)" -> "TypeExit";
-            "Constraint(location=2:11)" -> "Constraint(location=2:4)";
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -3541,31 +3300,27 @@ mod tests {
         digraph "module" {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:4)" [label="#function(identifier=module[foo@{1:4}], async=false) ⊑ foo@{module[1:4]} ∧ #defined(foo@{module[1:4]})"];
-            "Constraint(location=4:0)" [label="(foo@{module[4:9]})() ⊑ result@{module[4:0]} ∧ #defined(result@{module[4:0]})"];
-            "Constraint(location=4:9)" [label="foo@{module[1:4]} ⊑ foo@{module[4:9]}"];
+            "Constraint(location=4:0)" [label="(foo)() ⊑ result@{module[4:0]} ∧ #defined(result@{module[4:0]})"];
             "Constraint(location=6:0)" [label="5 ⊑ CONST@{module[6:0]} ∧ #defined(CONST@{module[6:0]})"];
-            "Constraint(location=6:0, id=CONST)" [label="CONST@{module[6:0]} ⊑ CONST@{2:11}"];
             "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=module[foo@{1:4}], async=false))"];
             "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=module[foo@{1:4}], async=false))"];
             "Constraint()" -> "TypeExit";
-            "Constraint(location=1:4)" -> "Constraint(location=4:9)" [label="#succeed(foo@{module[1:4]})"];
-            "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise(foo@{module[1:4]})"];
+            "Constraint(location=1:4)" -> "Constraint(location=4:0)" [label="#succeed((foo)())"];
+            "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise((foo)())"];
             "Constraint(location=4:0)" -> "Constraint(location=6:0)";
-            "Constraint(location=4:9)" -> "Constraint(location=4:0)" [label="#succeed((foo@{module[4:9]})())"];
-            "Constraint(location=4:9)" -> "ExceptionExit" [label="#raise((foo@{module[4:9]})())"];
             "Constraint(location=6:0)" -> "Constraint()";
-            "Constraint(location=6:0)" -> "Constraint(location=6:0, id=CONST)";
-            "Constraint(location=6:0, id=CONST)" -> "Constraint(location=1:4)";
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
         specification "module[foo@{1:4}]":
             {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module[foo@{1:4}]" {
-            "Constraint(location=2:4)" [label="#return(CONST@{2:11})"];
-            "Entry" -> "Constraint(location=2:4)";
+            "Constraint(location=2:4)" [label="#return(CONST)"];
+            "Entry" -> "Constraint(location=2:4)" [label="#succeed(CONST)"];
+            "Entry" -> "ExceptionExit" [label="#raise(CONST)"];
             "Constraint(location=2:4)" -> "TypeExit";
             "TypeExit" -> "Exit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]
@@ -3592,30 +3347,26 @@ mod tests {
             "Constraint()" [label="#return(None)"];
             "Constraint(location=1:4)" [label="#function(identifier=module[foo@{1:4}], async=false) ⊑ foo@{module[1:4]} ∧ #defined(foo@{module[1:4]})"];
             "Constraint(location=4:0)" [label="5 ⊑ CONST@{module[4:0]} ∧ #defined(CONST@{module[4:0]})"];
-            "Constraint(location=4:0, id=CONST)" [label="CONST@{module[4:0]} ⊑ CONST@{2:11}"];
-            "Constraint(location=6:0)" [label="(foo@{module[6:9]})() ⊑ result@{module[6:0]} ∧ #defined(result@{module[6:0]})"];
-            "Constraint(location=6:9)" [label="foo@{module[1:4]} ⊑ foo@{module[6:9]}"];
+            "Constraint(location=6:0)" [label="(foo)() ⊑ result@{module[6:0]} ∧ #defined(result@{module[6:0]})"];
             "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=module[foo@{1:4}], async=false))"];
             "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=module[foo@{1:4}], async=false))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:4)" -> "Constraint(location=4:0)";
-            "Constraint(location=4:0)" -> "Constraint(location=4:0, id=CONST)";
-            "Constraint(location=4:0)" -> "Constraint(location=6:9)" [label="#succeed(foo@{module[1:4]})"];
-            "Constraint(location=4:0)" -> "ExceptionExit" [label="#raise(foo@{module[1:4]})"];
-            "Constraint(location=4:0, id=CONST)" -> "Constraint(location=1:4)";
+            "Constraint(location=4:0)" -> "Constraint(location=6:0)" [label="#succeed((foo)())"];
+            "Constraint(location=4:0)" -> "ExceptionExit" [label="#raise((foo)())"];
             "Constraint(location=6:0)" -> "Constraint()";
-            "Constraint(location=6:9)" -> "Constraint(location=6:0)" [label="#succeed((foo@{module[6:9]})())"];
-            "Constraint(location=6:9)" -> "ExceptionExit" [label="#raise((foo@{module[6:9]})())"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
         specification "module[foo@{1:4}]":
             {arguments: {}, return_type: {}, exceptions: {}}
         digraph "module[foo@{1:4}]" {
-            "Constraint(location=2:4)" [label="#return(CONST@{2:11})"];
-            "Entry" -> "Constraint(location=2:4)";
+            "Constraint(location=2:4)" [label="#return(CONST)"];
+            "Entry" -> "Constraint(location=2:4)" [label="#succeed(CONST)"];
+            "Entry" -> "ExceptionExit" [label="#raise(CONST)"];
             "Constraint(location=2:4)" -> "TypeExit";
             "TypeExit" -> "Exit";
+            "ExceptionExit" -> "Exit";
         }
         "##},
     )]

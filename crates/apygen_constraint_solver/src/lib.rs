@@ -5,8 +5,8 @@ use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use crate::calls::Arguments;
 use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
-    ExpressionCall, ExpressionClass, ExpressionForwardVariable, ExpressionFunction,
-    ExpressionImport, ExpressionSubscript, ExpressionUnary, ExpressionVariable, Namespace, SmolStr,
+    ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionImport, ExpressionSubscript,
+    ExpressionUnary, ExpressionVariableDefinition, ExpressionVariableReference, Namespace, SmolStr,
 };
 use crate::constraint_graph::{
     Constraint, ConstraintGraph, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode,
@@ -55,12 +55,13 @@ impl EvaluationState {
     ) -> Option<Deferred<Sourced<Type>, Expression>> {
         let mut ty = None;
         for (namespace, location) in locations {
-            let variable =
-                Expression::Variable(ExpressionVariable::new(NamedQualifiedLocation::new(
+            let variable = Expression::VariableDefinition(ExpressionVariableDefinition::new(
+                NamedQualifiedLocation::new(
                     variable_name.clone(),
                     location.clone(),
                     namespace.clone(),
-                )));
+                ),
+            ));
             ty = ty.join(&self.types.get(&variable).cloned());
         }
         ty
@@ -238,30 +239,41 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    pub fn evaluate_expression_variable(
+    pub fn evaluate_expression_variable_definition(
         &mut self,
         abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
-        expression_variable: &ExpressionVariable,
+        expression_variable_definition: &ExpressionVariableDefinition,
     ) -> Result<PyTypeEval, EvaluationError> {
-        let namespace = expression_variable.namespace();
+        let namespace = expression_variable_definition.namespace();
 
         let Some(evaluation_state) = abstract_state.get(namespace) else {
-            return Err(EvaluationError::NamespaceReferenceError(namespace.clone()));
+            return Err(EvaluationError::NamespaceReferenceError(
+                namespace.as_ref().clone(),
+            ));
         };
 
-        if let Some(deferred_ty) = evaluation_state
-            .types
-            .get(&Expression::Variable(expression_variable.clone()))
-        {
-            Ok(PyTypeEval::with_default_effects(Self::extract_deferred(
-                deferred_ty,
-            )?))
-        } else if evaluation_state
+        let exists = evaluation_state
             .defined_variables
             .names
-            .contains_key(expression_variable.name())
-        {
-            Ok(PyTypeEval::with_default_effects(Type::Never))
+            .get(expression_variable_definition.name())
+            .map(|locations| {
+                locations.contains(&(
+                    namespace.clone(),
+                    expression_variable_definition.location().clone(),
+                ))
+            })
+            .unwrap_or(false);
+
+        if exists {
+            Ok(PyTypeEval::with_default_effects(Self::extract_deferred(
+                &evaluation_state
+                    .types
+                    .get(&Expression::VariableDefinition(
+                        expression_variable_definition.clone(),
+                    ))
+                    .cloned()
+                    .unwrap_or_default(),
+            )?))
         } else {
             Ok(PyTypeEval::raise(Exception::new(
                 Arc::new(Self::find_type(
@@ -274,24 +286,41 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    pub fn evaluate_expression_forward_variable(
+    pub fn evaluate_expression_variable_reference(
         &mut self,
         abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
-        expression_forward_variable: &ExpressionForwardVariable,
+        expression_variable_reference: &ExpressionVariableReference,
     ) -> Result<PyTypeEval, EvaluationError> {
-        if let Some(program_evaluation) = abstract_state.get(self.namespace) {
-            if let Some(deferred_ty) = program_evaluation.types.get(&Expression::ForwardVariable(
-                expression_forward_variable.clone(),
-            )) {
-                return Ok(PyTypeEval::with_default_effects(Self::extract_deferred(
-                    deferred_ty,
-                )?));
-            }
+        let Some(evaluation_state) = abstract_state.get(self.namespace) else {
+            return Err(EvaluationError::NamespaceReferenceError(
+                self.namespace.clone(),
+            ));
+        };
+
+        if let Some(deferred_ty) =
+            evaluation_state.get_attribute(&expression_variable_reference.name)
+        {
+            return Ok(PyTypeEval::with_default_effects(Self::extract_deferred(
+                &deferred_ty,
+            )?));
         }
+
         if let Some(parent_namespace) = self.namespace.parent() {
             return self
                 .with_namespace(parent_namespace.as_ref())
-                .evaluate_expression_forward_variable(abstract_state, expression_forward_variable);
+                .evaluate_expression_variable_reference(
+                    abstract_state,
+                    expression_variable_reference,
+                );
+        }
+
+        if *self.namespace.module_name() != BUILTINS_MODULE {
+            return self
+                .with_namespace(&Namespace::Module(BUILTINS_MODULE))
+                .evaluate_expression_variable_reference(
+                    abstract_state,
+                    expression_variable_reference,
+                );
         }
 
         Ok(PyTypeEval::raise(Exception::new(
@@ -858,11 +887,14 @@ impl<'a> ExpressionEvaluator<'a> {
         }
 
         match expression {
-            Expression::Variable(expression_variable) => {
-                self.evaluate_expression_variable(abstract_state, expression_variable)
+            Expression::VariableDefinition(expression_variable) => {
+                self.evaluate_expression_variable_definition(abstract_state, expression_variable)
             }
-            Expression::ForwardVariable(expression_forward_variable) => self
-                .evaluate_expression_forward_variable(abstract_state, expression_forward_variable),
+            Expression::VariableReference(expression_forward_variable) => self
+                .evaluate_expression_variable_reference(
+                    abstract_state,
+                    expression_forward_variable,
+                ),
             Expression::Annotated(expression_annotated) => {
                 self.evaluate_expression_annotated(abstract_state, expression_annotated)
             }
@@ -1070,9 +1102,10 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                         )),
                     );
 
-                    evaluation_state
-                        .types
-                        .insert(Arc::new(Expression::Variable(variable.clone())), ty);
+                    evaluation_state.types.insert(
+                        Arc::new(Expression::VariableDefinition(variable.clone())),
+                        ty,
+                    );
                 }
 
                 if !specification.exceptions.is_empty() {
@@ -1581,10 +1614,8 @@ mod tests {
         indoc! {r##"
         module:
             a@{module[4:4]} = Inferred(42)
-            a@{module[8:4]} = Inferred(42)
             b@{module[8:0]} = Inferred(42)
             x@{module[1:0]} = Inferred(True)
-            x@{module[3:3]} = Inferred(True)
             #variables = {a: {module[4:4]}, b: {module[8:0]}, x: {module[1:0]}}
             #raise = Inferred({})
             #return = Inferred(None)
@@ -1601,21 +1632,18 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            a = @class(builtins[int@{1:6}])
-            b = @class(builtins[int@{1:6}])
+            a = Any
+            b = Any
             #raise = {Exception(type=Any, origin=Unknown)}
             #return = None
         "##},
         indoc! {r##"
         module:
             a@{module[1:0]} = Inferred(0)
-            a@{module[3:6]} = Inferred(@class(builtins[int@{1:6}]))
-            a@{module[4:4]} = Inferred(@class(builtins[int@{1:6}]))
-            a@{module[4:8]} = Inferred(@class(builtins[int@{1:6}]))
-            a@{module[6:4]} = Inferred(@class(builtins[int@{1:6}]))
-            b@{module[6:0]} = Inferred(@class(builtins[int@{1:6}]))
+            a@{module[4:4]} = Inferred(Any)
+            b@{module[6:0]} = Inferred(Any)
             #variables = {a: {module[1:0], module[4:4]}, b: {module[6:0]}}
-            #raise = Inferred({Exception(type=Any, origin=Unknown)}) ⊔ #deferred{(a@{module[3:6]}) < (5)}
+            #raise = Inferred({Exception(type=Any, origin=Unknown)}) ⊔ #deferred{(a) < (5)}
             #return = Inferred(None)
         "##},
     )]
@@ -1629,33 +1657,27 @@ mod tests {
         indoc! {r##"
         module:
             add_two = function(module[add_two@{1:4}])
-            result = @class(builtins[int@{1:6}])
-            #raise = {}
+            result = Any
+            #raise = {Exception(type=Any, origin=Unknown)}
             #return = None
         module[add_two@{1:4}]:
             a = @class(builtins[int@{1:6}])
             b = @class(builtins[int@{1:6}])
-            #raise = {}
+            #raise = {Exception(type=Any, origin=Unknown)}
             #return = @class(builtins[int@{1:6}])
         "##},
         indoc! {r##"
         module:
             add_two@{module[1:4]} = Inferred(function(module[add_two@{1:4}]))
-            add_two@{module[4:9]} = Inferred(function(module[add_two@{1:4}]))
-            int@{module[1:15]} = Inferred(class(builtins[int@{1:6}]))
-            int@{module[1:23]} = Inferred(class(builtins[int@{1:6}]))
-            int@{module[1:31]} = Inferred(class(builtins[int@{1:6}]))
-            result@{module[4:0]} = Inferred(@class(builtins[int@{1:6}]))
+            result@{module[4:0]} = Inferred(Never) ⊔ #deferred{(add_two)(42, 67)}
             #variables = {add_two: {module[1:4]}, result: {module[4:0]}}
-            #raise = Inferred({})
+            #raise = Inferred({}) ⊔ #deferred{(add_two)(42, 67)}
             #return = Inferred(None)
         module[add_two@{1:4}]:
             a@{module[add_two@{1:4}][1:12]} = Specified(@class(builtins[int@{1:6}]))
-            a@{module[add_two@{1:4}][2:11]} = Inferred(@class(builtins[int@{1:6}]))
             b@{module[add_two@{1:4}][1:20]} = Specified(@class(builtins[int@{1:6}]))
-            b@{module[add_two@{1:4}][2:15]} = Inferred(@class(builtins[int@{1:6}]))
             #variables = {a: {module[add_two@{1:4}][1:12]}, b: {module[add_two@{1:4}][1:20]}}
-            #raise = Inferred({})
+            #raise = Inferred({}) ⊔ #deferred{(a) + (b)}
             #return = Specified(@class(builtins[int@{1:6}]))
         "##},
     )]
@@ -1680,7 +1702,6 @@ mod tests {
         indoc! {r##"
         module:
             A@{module[1:6]} = Inferred(class(module[A@{1:6}]))
-            A@{module[4:9]} = Inferred(class(module[A@{1:6}]))
             result@{module[4:0]} = Inferred(5)
             #variables = {A: {module[1:6]}, result: {module[4:0]}}
             #raise = Inferred({})
@@ -1715,9 +1736,7 @@ mod tests {
         indoc! {r##"
         module:
             A@{module[1:6]} = Inferred(class(module[A@{1:6}]))
-            A@{module[4:4]} = Inferred(class(module[A@{1:6}]))
             a@{module[4:0]} = Inferred(@class(module[A@{1:6}]))
-            a@{module[5:9]} = Inferred(@class(module[A@{1:6}]))
             result@{module[5:0]} = Inferred(5)
             #variables = {A: {module[1:6]}, a: {module[4:0]}, result: {module[5:0]}}
             #raise = Inferred({})
@@ -1754,7 +1773,6 @@ mod tests {
         indoc! {r##"
         module:
             A@{module[1:6]} = Inferred(class(module[A@{1:6}]))
-            A@{module[5:9]} = Inferred(class(module[A@{1:6}]))
             result@{module[5:0]} = Inferred(function(module[A@{1:6}][foo@{2:8}]))
             #variables = {A: {module[1:6]}, result: {module[5:0]}}
             #raise = Inferred({})
@@ -1797,9 +1815,7 @@ mod tests {
         indoc! {r##"
         module:
             A@{module[1:6]} = Inferred(class(module[A@{1:6}]))
-            A@{module[5:4]} = Inferred(class(module[A@{1:6}]))
             a@{module[5:0]} = Inferred(@class(module[A@{1:6}]))
-            a@{module[6:9]} = Inferred(@class(module[A@{1:6}]))
             result@{module[6:0]} = Inferred(method(class(module[A@{1:6}])[], function(module[A@{1:6}][foo@{2:8}])))
             #variables = {A: {module[1:6]}, a: {module[5:0]}, result: {module[6:0]}}
             #raise = Inferred({})
@@ -1830,7 +1846,7 @@ mod tests {
             #return = Never
         module[foo@{1:4}]:
             #raise = {Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)}
-            #return = NoReturn
+            #return = Never
         "##},
         indoc! {r##"
         module:
@@ -1840,7 +1856,7 @@ mod tests {
         module[foo@{1:4}]:
             #variables = {}
             #raise = Inferred({Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)})
-            #return = Inferred(NoReturn)
+            #return = Inferred(Never)
         "##},
     )]
     #[case::forward_reference_function_call(
@@ -1867,9 +1883,7 @@ mod tests {
         module:
             CONST@{module[4:0]} = Inferred(5)
             foo@{module[1:4]} = Inferred(function(module[foo@{1:4}]))
-            foo@{module[6:9]} = Inferred(function(module[foo@{1:4}]))
             result@{module[6:0]} = Inferred(5)
-            CONST@{2:11} = Inferred(5)
             #variables = {CONST: {module[4:0]}, foo: {module[1:4]}, result: {module[6:0]}}
             #raise = Inferred({})
             #return = Inferred(None)

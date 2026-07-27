@@ -9,11 +9,11 @@ pub use crate::primitives::literals::{
 pub use apy::v1::{GenericKind, ParameterKind};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ExpressionVariable {
+pub struct ExpressionVariableDefinition {
     pub named_qualified_location: NamedQualifiedLocation,
 }
 
-impl ExpressionVariable {
+impl ExpressionVariableDefinition {
     pub fn new(named_qualified_location: NamedQualifiedLocation) -> Self {
         Self {
             named_qualified_location,
@@ -28,12 +28,12 @@ impl ExpressionVariable {
         self.named_qualified_location.location
     }
 
-    pub fn namespace(&self) -> &Namespace {
+    pub fn namespace(&self) -> &Arc<Namespace> {
         &self.named_qualified_location.namespace
     }
 }
 
-impl Display for ExpressionVariable {
+impl Display for ExpressionVariableDefinition {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -46,20 +46,19 @@ impl Display for ExpressionVariable {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ExpressionForwardVariable {
+pub struct ExpressionVariableReference {
     pub name: SmolStr,
-    pub location: Location,
 }
 
-impl ExpressionForwardVariable {
-    pub fn new(name: SmolStr, location: Location) -> Self {
-        Self { name, location }
+impl ExpressionVariableReference {
+    pub fn new(name: SmolStr) -> Self {
+        Self { name }
     }
 }
 
-impl Display for ExpressionForwardVariable {
+impl Display for ExpressionVariableReference {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}@{{{}}}", self.name, self.location)
+        write!(f, "{}", self.name)
     }
 }
 
@@ -398,8 +397,8 @@ impl Display for ExpressionUnary {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Expression {
-    Variable(ExpressionVariable),
-    ForwardVariable(ExpressionForwardVariable),
+    VariableDefinition(ExpressionVariableDefinition),
+    VariableReference(ExpressionVariableReference),
     Annotated(ExpressionAnnotated),
     Override(ExpressionOverride),
     Function(ExpressionFunction),
@@ -439,9 +438,11 @@ impl Expression {
 impl Display for Expression {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expression::Variable(expression_variable) => write!(f, "{}", expression_variable),
-            Expression::ForwardVariable(expression_forward_variable) => {
-                write!(f, "{}", expression_forward_variable)
+            Expression::VariableDefinition(expression_variable) => {
+                write!(f, "{}", expression_variable)
+            }
+            Expression::VariableReference(expression_variable) => {
+                write!(f, "{}", expression_variable)
             }
             Expression::Annotated(expression_annotated) => write!(f, "{}", expression_annotated),
             Expression::Override(expression_override) => write!(f, "{}", expression_override),
