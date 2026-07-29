@@ -1583,11 +1583,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     type Node = NamespaceNode;
 
     type InputState = BTreeMap<ExpressionVariableDefinition, Deferred<Sourced<Type>, Expression>>;
-    type OutputState = (
-        EvaluationState,
-        BTreeSet<Deferred<Sourced<RaisedExceptions>, Expression>>,
-        Deferred<Sourced<Type>, Expression>,
-    );
+    type OutputState = EvaluationState;
     type AnalysisState = ModuleConstraintSolverAnalysisState;
     type Error = Infallible;
 
@@ -1866,70 +1862,17 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     ) -> Result<Option<Self::OutputState>, Self::Error> {
         let NamespaceNode::Namespace(namespace) = &node else {
             return if matches!(analysis_state.started, AnalysisStatus::Started) {
-                Ok(Some((
-                    Default::default(),
-                    Default::default(),
-                    Default::default(),
-                )))
+                Ok(Some(Default::default()))
             } else {
                 Ok(None)
             };
         };
-        let Some(constraint_graphs) = self
-            .graph
-            .nodes
-            .get(&ModuleNode::Module(namespace.module_name().clone()))
-        else {
-            return Ok(None);
-        };
-        let Some(constraint_graph) = constraint_graphs.get(namespace) else {
-            return Ok(None);
-        };
-        let mut program_evaluation: AbstractStateProxy<
-            '_,
-            _,
-            _,
-            ProgramEvaluation<EvaluationState>,
-        > = AbstractStateProxy::with_default_proxy(&analysis_state.program_evaluation);
-        let mut evaluator =
-            ExpressionEvaluator::new(EvaluatorMode::Normal, namespace, constraint_graphs);
 
-        Ok(Some((
+        Ok(Some(
             analysis_state
                 .program_evaluation
                 .get_clone_or_default(namespace),
-            constraint_graph
-                .specification
-                .exceptions
-                .iter()
-                .map(|expression| {
-                    if let Ok(eval) =
-                        evaluator.evaluate_expression(&mut program_evaluation, expression)
-                    {
-                        Deferred::known(Sourced::specified(RaisedExceptions::raise(
-                            Exception::new(Arc::new(eval.value), ExceptionOrigin::Specified),
-                        )))
-                    } else {
-                        Deferred::unknown(imbl::OrdSet::unit(Arc::new(expression.clone())))
-                    }
-                })
-                .collect(),
-            if let Ok(eval) = evaluator.evaluate_expressions(
-                &mut program_evaluation,
-                &constraint_graph.specification.return_type,
-            ) {
-                Deferred::known(Sourced::specified(eval.value))
-            } else {
-                Deferred::unknown(
-                    constraint_graph
-                        .specification
-                        .return_type
-                        .iter()
-                        .map(|expression| Arc::new(expression.clone()))
-                        .collect(),
-                )
-            },
-        )))
+        ))
     }
 }
 
