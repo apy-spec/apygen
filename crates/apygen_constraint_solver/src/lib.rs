@@ -382,7 +382,8 @@ impl<'a> ExpressionEvaluator<'a> {
                     is_async: expression_function.is_async,
                 }),
             })),
-            PyEffects::new().with_definitions(imbl::OrdSet::unit((Arc::new(function_namespace), false))),
+            PyEffects::new()
+                .with_definitions(imbl::OrdSet::unit((Arc::new(function_namespace), false))),
         ))
     }
 
@@ -404,7 +405,8 @@ impl<'a> ExpressionEvaluator<'a> {
                     is_abstract: false,
                 }),
             })),
-            PyEffects::new().with_definitions(imbl::OrdSet::unit((Arc::new(class_namespace), true))),
+            PyEffects::new()
+                .with_definitions(imbl::OrdSet::unit((Arc::new(class_namespace), true))),
         ))
     }
 
@@ -1759,16 +1761,19 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
             .get(&NamespaceNode::Namespace(namespace.clone()))
         {
             if namespace_data.dependents.is_empty() {
+                let target = if let Some(parent) = namespace.parent() {
+                    NamespaceNode::Namespace(parent.clone())
+                } else {
+                    NamespaceNode::Exit
+                };
+                new_analysis_state.removed_nodes.remove(&target);
                 new_analysis_state
                     .namespace_dependency_graph
                     .add_dependency(
                         NamespaceNode::Namespace(namespace.clone()),
-                        NamespaceNode::Exit,
+                        target,
                         imbl::OrdMap::default(),
                     );
-                new_analysis_state
-                    .removed_nodes
-                    .remove(&NamespaceNode::Exit);
             }
         }
 
