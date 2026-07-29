@@ -2059,7 +2059,7 @@ pub fn analyse_module<'a>(
     module_loader: &impl ModuleLoader<Error: Debug>,
     parent_state: Option<&ProgramEntityAbstractParentState>,
     module_name: &SmolStr,
-) -> Option<imbl::OrdMap<ProgramEntity, CfgAnalysis>> {
+) -> Option<(ProgramEntity, CfgAnalysis)> {
     let source = module_loader.load(&module_name).ok()?;
     let module = parse_module(&source).ok()?;
     let line_index = LineIndex::from_source_text(&source);
@@ -2075,65 +2075,67 @@ pub fn analyse_module<'a>(
         ConstraintGraphSpecification::default(),
         parent_state,
     );
-    Some(imbl::OrdMap::unit(program_entity, cfg_analysis))
+    Some((program_entity, cfg_analysis))
 }
 
-pub fn get_imports(cfg_analyses: &imbl::OrdMap<ProgramEntity, CfgAnalysis>) -> BTreeSet<SmolStr> {
-    cfg_analyses
-        .values()
-        .flat_map(|cfg_analysis| {
-            get_imports(&cfg_analysis.environment.sub_program_entities)
-                .into_iter()
-                .chain(cfg_analysis.environment.imports.iter().cloned())
-        })
+pub fn get_imports(cfg_analysis: &CfgAnalysis) -> BTreeSet<SmolStr> {
+    cfg_analysis
+        .environment
+        .imports
+        .iter()
+        .cloned()
+        .chain(
+            cfg_analysis
+                .environment
+                .sub_program_entities
+                .values()
+                .flat_map(|cfg_analysis| get_imports(cfg_analysis)),
+        )
         .collect()
 }
 
-pub fn create_constraint_graphs(
-    cfg_analyses: imbl::OrdMap<ProgramEntity, CfgAnalysis>,
-) -> imbl::OrdMap<Arc<Namespace>, ConstraintGraph> {
-    cfg_analyses
-        .into_iter()
-        .flat_map(|(program_entity, cfg_analysis)| {
-            create_constraint_graphs(cfg_analysis.environment.sub_program_entities).update(
-                program_entity.namespace,
-                ConstraintGraph::new(
-                    cfg_analysis.specification.clone(),
-                    cfg_analysis.environment.nodes.clone(),
-                    cfg_analysis.environment.edges.into_iter().fold(
-                        imbl::OrdMap::default(),
-                        |mut acc, ((from, to), guards)| {
-                            acc.entry(from).or_default().insert(to, guards);
-                            acc
-                        },
-                    ),
-                ),
-            )
-        })
-        .collect()
+pub fn create_constraint_graph(cfg_analysis: CfgAnalysis) -> ConstraintGraph {
+    ConstraintGraph::new(
+        cfg_analysis.specification.clone(),
+        cfg_analysis
+            .environment
+            .sub_program_entities
+            .into_iter()
+            .map(|(program_entity, cfg_analysis)| {
+                (
+                    program_entity.namespace,
+                    create_constraint_graph(cfg_analysis),
+                )
+            })
+            .collect(),
+        cfg_analysis.environment.nodes.clone(),
+        cfg_analysis.environment.edges.into_iter().fold(
+            imbl::OrdMap::default(),
+            |mut acc, ((from, to), guards)| {
+                acc.entry(from).or_default().insert(to, guards);
+                acc
+            },
+        ),
+    )
 }
 
 pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
     module_loader: &C,
     initial_modules: impl Iterator<Item = SmolStr>,
 ) -> ModuleDependentGraph {
-    let builtins_cfg_analyses = analyse_module(module_loader, None, &BUILTINS_MODULE)
-        .expect("builtins module should be analysable");
+    let (builtins_entity, builtins_cfg_analysis) =
+        analyse_module(module_loader, None, &BUILTINS_MODULE)
+            .expect("builtins module should be analysable");
 
-    let builtins_module_node = ModuleNode::Module(BUILTINS_MODULE);
-    let builtins_entity = ProgramEntity::new(
-        Arc::new(Namespace::Module(BUILTINS_MODULE)),
-        ProgramEntityKind::Module,
-    );
-
-    let builtins_module_analysis = &builtins_cfg_analyses[&builtins_entity];
     let builtin_parent_state = &ProgramEntityAbstractParentState::new(
-        &builtins_module_analysis.environment,
+        &builtins_cfg_analysis.environment,
         &builtins_entity,
         None,
     );
 
-    let builtins_imports = get_imports(&builtins_cfg_analyses);
+    let builtins_imports = get_imports(&builtins_cfg_analysis);
+
+    let builtins_module_node = ModuleNode::Module(BUILTINS_MODULE);
 
     let mut dependent_graph = ModuleDependentGraph::default();
     dependent_graph.add_dependent(ModuleNode::Entry, builtins_module_node.clone());
@@ -2154,16 +2156,16 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         let analysed_modules = worklist
             .into_par_iter()
             .filter_map(|module_name| {
-                let cfg_analyses =
+                let (_, cfg_analysis) =
                     analyse_module(module_loader, Some(builtin_parent_state), &module_name)?;
-                let imports = get_imports(&cfg_analyses);
-                let constraint_graphs = create_constraint_graphs(cfg_analyses);
-                Some((ModuleNode::Module(module_name), constraint_graphs, imports))
+                let imports = get_imports(&cfg_analysis);
+                let constraint_graph = create_constraint_graph(cfg_analysis);
+                Some((ModuleNode::Module(module_name), constraint_graph, imports))
             })
             .collect::<Vec<_>>();
 
         worklist = BTreeSet::new();
-        for (module_node, constraint_graphs, imports) in analysed_modules {
+        for (module_node, constraint_graph, imports) in analysed_modules {
             dependent_graph.add_dependent(builtins_module_node.clone(), module_node.clone());
             dependent_graph.remove_dependent(builtins_module_node.clone(), ModuleNode::Exit);
             if !dependent_graph.dependents.contains_key(&module_node) {
@@ -2184,13 +2186,13 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
                 }
             }
 
-            dependent_graph.nodes.insert(module_node, constraint_graphs);
+            dependent_graph.nodes.insert(module_node, constraint_graph);
         }
     }
 
     dependent_graph.insert(
         builtins_module_node,
-        create_constraint_graphs(builtins_cfg_analyses),
+        create_constraint_graph(builtins_cfg_analysis),
     );
 
     dependent_graph
@@ -2224,6 +2226,21 @@ mod tests {
             def __add__(self, value: int, /) -> int: ...
     "##};
 
+    fn push_constraint_graph(
+        target: &mut String,
+        namespace: &Namespace,
+        constraint_graph: ConstraintGraph,
+    ) {
+        target.push_str(&format!(
+            "specification \"{}\":\n    {}\n",
+            namespace, constraint_graph.specification
+        ));
+        target.push_str(&constraint_graph.dot(&namespace.to_string()));
+        for (namespace, constraint_graph) in constraint_graph.subgraphs {
+            push_constraint_graph(target, &namespace, constraint_graph);
+        }
+    }
+
     #[rstest]
     fn test_build_builtins_constraints() {
         let expected_constraints = indoc! {r##"
@@ -2244,14 +2261,6 @@ mod tests {
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
-        specification "builtins[int@{1:6}][__add__@{2:8}]":
-            {arguments: {self@{builtins[int@{1:6}][__add__@{2:8}][2:16]}: , value@{builtins[int@{1:6}][__add__@{2:8}][2:22]}: #annotated(int)}, return_type: {#annotated(int)}, exceptions: {}}
-        digraph "builtins[int@{1:6}][__add__@{2:8}]" {
-            "Constraint()" [label="#return(None)"];
-            "Entry" -> "Constraint()";
-            "Constraint()" -> "TypeExit";
-            "TypeExit" -> "Exit";
-        }
         specification "builtins[int@{1:6}]":
             {arguments: {}, return_type: {}, exceptions: {}}
         digraph "builtins[int@{1:6}]" {
@@ -2264,6 +2273,14 @@ mod tests {
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
+        specification "builtins[int@{1:6}][__add__@{2:8}]":
+            {arguments: {self@{builtins[int@{1:6}][__add__@{2:8}][2:16]}: , value@{builtins[int@{1:6}][__add__@{2:8}][2:22]}: #annotated(int)}, return_type: {#annotated(int)}, exceptions: {}}
+        digraph "builtins[int@{1:6}][__add__@{2:8}]" {
+            "Constraint()" [label="#return(None)"];
+            "Entry" -> "Constraint()";
+            "Constraint()" -> "TypeExit";
+            "TypeExit" -> "Exit";
+        }
         "##};
 
         let module_loader = TestModuleLoader {
@@ -2273,14 +2290,15 @@ mod tests {
 
         let mut actual_constraints = dependent_graph.dot("DependentGraph");
 
-        for program_entities in dependent_graph.nodes.values() {
-            for (namespace, constraints) in program_entities {
-                actual_constraints.push_str(&format!(
-                    "specification \"{}\":\n    {}\n",
-                    namespace, constraints.specification
-                ));
-                actual_constraints.push_str(&constraints.dot(&namespace.to_string()));
-            }
+        for (module_node, constraint_graph) in dependent_graph.nodes {
+            let ModuleNode::Module(module_name) = module_node else {
+                continue;
+            };
+            push_constraint_graph(
+                &mut actual_constraints,
+                &Namespace::Module(module_name),
+                constraint_graph,
+            );
         }
 
         assert_eq!(
@@ -3371,32 +3389,34 @@ mod tests {
         "##},
     )]
     fn test_program_analysis(#[case] source: &str, #[case] expected_constraints: &str) {
-        let module_name = SmolStr::new_static("module");
+        let target_module_name = SmolStr::new_static("module");
 
         let module_loader = TestModuleLoader {
             modules: HashMap::from_iter([
-                (module_name.clone(), source.to_string()),
+                (target_module_name.clone(), source.to_string()),
                 (SmolStr::new_static("some_module"), String::new()),
                 (SmolStr::new_static("some_module.submodule"), String::new()),
                 (SmolStr::new_static("another_module"), String::new()),
                 (BUILTINS_MODULE, TEST_BUILTINS.to_owned()),
             ]),
         };
-        let dependent_graph = analyse_program(&module_loader, std::iter::once(module_name.clone()));
+        let dependent_graph =
+            analyse_program(&module_loader, std::iter::once(target_module_name.clone()));
 
         let mut actual_constraints = dependent_graph.dot("DependentGraph");
 
-        for program_entities in dependent_graph.nodes.values() {
-            for (namespace, constraints) in program_entities {
-                if *namespace.module_name() != module_name {
-                    continue;
-                }
-                actual_constraints.push_str(&format!(
-                    "specification \"{}\":\n    {}\n",
-                    namespace, constraints.specification
-                ));
-                actual_constraints.push_str(&constraints.dot(&namespace.to_string()));
+        for (module_node, constraint_graph) in dependent_graph.nodes {
+            let ModuleNode::Module(module_name) = module_node else {
+                continue;
+            };
+            if module_name != target_module_name {
+                continue;
             }
+            push_constraint_graph(
+                &mut actual_constraints,
+                &Namespace::Module(module_name),
+                constraint_graph,
+            );
         }
 
         assert_eq!(

@@ -192,30 +192,24 @@ pub enum EvaluationError {
 pub struct ExpressionEvaluator<'a> {
     pub mode: EvaluatorMode,
     pub namespace: &'a Namespace,
-    pub constraint_graphs: &'a imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     pub current_expression: Option<Expression>,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
-    pub fn new(
-        mode: EvaluatorMode,
-        namespace: &'a Namespace,
-        constraint_graphs: &'a imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
-    ) -> Self {
+    pub fn new(mode: EvaluatorMode, namespace: &'a Namespace) -> Self {
         Self {
             mode,
             namespace,
-            constraint_graphs,
             current_expression: None,
         }
     }
 
     pub fn with_namespace(&self, namespace: &'a Namespace) -> Self {
-        Self::new(self.mode, namespace, self.constraint_graphs)
+        Self::new(self.mode, namespace)
     }
 
     pub fn with_mode(&self, mode: EvaluatorMode) -> Self {
-        Self::new(mode, self.namespace, self.constraint_graphs)
+        Self::new(mode, self.namespace)
     }
 
     pub fn extract_deferred<T: Clone>(
@@ -425,8 +419,6 @@ impl<'a> ExpressionEvaluator<'a> {
                     }),
                 }),
             )))
-        } else if self.constraint_graphs.contains_key(&namespace) {
-            Err(EvaluationError::Deferred)
         } else {
             Err(EvaluationError::Deferred) // TODO: Add import exception when possible
         }
@@ -957,29 +949,25 @@ impl<'a> ExpressionEvaluator<'a> {
 
 pub struct ConstraintSolver<'s> {
     pub namespace: &'s Namespace,
-    pub constraint_graphs: &'s imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
+    pub constraint_graph: &'s ConstraintGraph,
     pub program_evaluation: &'s dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
 }
 
 impl<'s> ConstraintSolver<'s> {
     pub fn new(
         namespace: &'s Namespace,
-        constraint_graphs: &'s imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
+        constraint_graph: &'s ConstraintGraph,
         program_evaluation: &'s dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
     ) -> Self {
         Self {
             namespace,
-            constraint_graphs,
+            constraint_graph,
             program_evaluation,
         }
     }
 
-    pub fn constraint_graph(&self) -> Option<&ConstraintGraph> {
-        self.constraint_graphs.get(self.namespace)
-    }
-
     pub fn evaluator(&self, mode: EvaluatorMode) -> ExpressionEvaluator<'_> {
-        ExpressionEvaluator::new(mode, self.namespace, self.constraint_graphs)
+        ExpressionEvaluator::new(mode, self.namespace)
     }
 }
 
@@ -999,8 +987,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
         node: &Self::Node,
     ) -> Result<impl Iterator<Item = &Self::Node>, Self::Error> {
         Ok(self
-            .constraint_graph()
-            .unwrap()
+            .constraint_graph
             .edges
             .get(node)
             .into_iter()
@@ -1028,7 +1015,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
 
         match &node {
             ConstraintNode::Entry => {
-                let specification = &self.constraint_graph().unwrap().specification;
+                let specification = &self.constraint_graph.specification;
 
                 let arguments: BTreeMap<_, _> = specification
                     .arguments
@@ -1113,7 +1100,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 }
             }
             ConstraintNode::Constraint { location, .. } => {
-                if let Some(constraints) = self.constraint_graph().unwrap().nodes.get(node) {
+                if let Some(constraints) = self.constraint_graph.nodes.get(node) {
                     for constraint in constraints {
                         match constraint {
                             Constraint::Type(type_constraint) => {
@@ -1241,8 +1228,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
         let mut new_abstract_state = abstract_state.clone();
 
         let guards = self
-            .constraint_graph()
-            .unwrap()
+            .constraint_graph
             .edges
             .get(from)
             .unwrap()
@@ -1655,11 +1641,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
             return Ok(new_analysis_state);
         };
 
-        let program_entity_constraints = self
-            .graph
-            .nodes
-            .get(&ModuleNode::Module(namespace.module_name().clone()))
-            .unwrap();
+        let constraint_graph = self.graph.get_constraint_graph(namespace).unwrap();
         let dependencies = new_analysis_state
             .namespace_dependency_graph
             .nodes()
@@ -1678,7 +1660,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
         let solver_state = analysis(
             &ConstraintSolver::new(
                 namespace,
-                program_entity_constraints,
+                constraint_graph,
                 &mut new_analysis_state.program_evaluation,
             ),
             &mut DummyAnalysisObserver::default(),
@@ -1813,24 +1795,17 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
         let NamespaceNode::Namespace(namespace) = &node else {
             return Ok(None);
         };
-        let Some(constraint_graphs) = self
-            .graph
-            .nodes
-            .get(&ModuleNode::Module(namespace.module_name().clone()))
-        else {
+        let Some(constraint_graph) = self.graph.get_constraint_graph(namespace) else {
             return Ok(None);
         };
-        let Some(constraint_graph) = constraint_graphs.get(namespace) else {
-            return Ok(None);
-        };
+
         let mut program_evaluation: AbstractStateProxy<
             '_,
             _,
             _,
             ProgramEvaluation<EvaluationState>,
         > = AbstractStateProxy::with_default_proxy(&analysis_state.program_evaluation);
-        let mut evaluator =
-            ExpressionEvaluator::new(EvaluatorMode::Normal, namespace, constraint_graphs);
+        let mut evaluator = ExpressionEvaluator::new(EvaluatorMode::Normal, namespace);
 
         Ok(Some(
             constraint_graph

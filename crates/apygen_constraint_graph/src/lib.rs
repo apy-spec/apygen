@@ -158,9 +158,10 @@ impl Display for ConstraintGraphSpecification {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConstraintGraph {
     pub specification: ConstraintGraphSpecification,
+    pub subgraphs: imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     pub nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
     pub edges: imbl::OrdMap<ConstraintNode, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>>,
 }
@@ -168,11 +169,13 @@ pub struct ConstraintGraph {
 impl ConstraintGraph {
     pub fn new(
         specification: ConstraintGraphSpecification,
+        subgraphs: imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
         nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
         edges: imbl::OrdMap<ConstraintNode, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>>,
     ) -> Self {
         Self {
             specification,
+            subgraphs,
             nodes,
             edges,
         }
@@ -196,6 +199,18 @@ impl ConstraintGraph {
 
     pub fn exists(&self, from: &ConstraintNode, to: &ConstraintNode) -> bool {
         self.edges.get(from).and_then(|tos| tos.get(to)).is_some()
+    }
+}
+
+impl Join for ConstraintGraph {
+    // Manual implementation to avoid macro recursion
+    fn join(&self, other: &Self) -> Self {
+        Self::new(
+            self.specification.join(&other.specification),
+            self.subgraphs.join(&other.subgraphs),
+            self.nodes.join(&other.nodes),
+            self.edges.join(&other.edges),
+        )
     }
 }
 
@@ -300,13 +315,29 @@ impl Display for ModuleNode {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ModuleDependentGraph {
-    pub nodes: imbl::OrdMap<ModuleNode, imbl::OrdMap<Arc<Namespace>, ConstraintGraph>>,
+    pub nodes: imbl::OrdMap<ModuleNode, ConstraintGraph>,
     pub dependents: imbl::OrdMap<ModuleNode, imbl::OrdSet<ModuleNode>>,
 }
 
 impl ModuleDependentGraph {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn get_constraint_graph(&self, namespace: &Namespace) -> Option<&ConstraintGraph> {
+        match namespace {
+            Namespace::Module(module_name) => {
+                self.nodes.get(&ModuleNode::Module(module_name.clone()))
+            }
+            Namespace::ProgramEntity(qualified_location) => self
+                .get_constraint_graph(qualified_location.namespace.as_ref())?
+                .subgraphs
+                .get(namespace),
+            Namespace::NamedProgramEntity(named_qualified_location) => self
+                .get_constraint_graph(&named_qualified_location.namespace.as_ref())?
+                .subgraphs
+                .get(namespace),
+        }
     }
 }
 
@@ -320,11 +351,7 @@ impl Default for ModuleDependentGraph {
 }
 
 impl ModuleDependentGraph {
-    pub fn insert(
-        &mut self,
-        node: ModuleNode,
-        state: imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
-    ) {
+    pub fn insert(&mut self, node: ModuleNode, state: ConstraintGraph) {
         self.nodes.insert(node.clone(), state);
     }
 
@@ -351,7 +378,7 @@ impl Display for ModuleDependentGraph {
 
 impl Graph for ModuleDependentGraph {
     type Node = ModuleNode;
-    type NodeData = imbl::OrdMap<Arc<Namespace>, ConstraintGraph>;
+    type NodeData = ConstraintGraph;
     type EdgeData = ();
 
     fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
