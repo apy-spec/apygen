@@ -26,7 +26,7 @@ pub const ABC_MODULE: SmolStr = SmolStr::new_static("abc");
 pub const DEPTH_LIMIT: usize = 20;
 pub const WIDTH_LIMIT: usize = 20;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum Source {
     #[default]
     Inferred,
@@ -42,7 +42,7 @@ impl Display for Source {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Sourced<T> {
     pub data: T,
     pub source: Source,
@@ -1500,7 +1500,7 @@ impl Display for DefinedVariables {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct Deferred<T, E: Ord> {
     pub value: T,
     pub expressions: imbl::OrdSet<Arc<E>>,
@@ -1573,7 +1573,7 @@ pub trait NamespaceEvaluation {
     fn raised_exceptions(&self) -> &Deferred<Sourced<RaisedExceptions>, Self::Expression>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Join)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
 pub struct ProgramEvaluation<N: NamespaceEvaluation> {
     pub states: imbl::OrdMap<Namespace, N>,
 }

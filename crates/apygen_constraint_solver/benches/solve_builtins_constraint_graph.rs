@@ -3,8 +3,7 @@ use apygen_constraint_builder::finder::filesystem::{AbsolutePathBuf, LocalFilesy
 use apygen_constraint_builder::finder::pathfinder::PathFinder;
 use apygen_constraint_builder::{SpecModuleLoader, analyse_program};
 use apygen_constraint_solver::ModuleConstraintSolver;
-use apygen_constraint_solver::analysis::DummyAnalysisObserver;
-use apygen_constraint_solver::analysis::rayon::par_analysis;
+use apygen_constraint_solver::analysis::{DummyAnalysisObserver, dependencies_analysis};
 use apygen_constraint_solver::constraint_graph::ModuleDependentGraph;
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::collections::HashMap;
@@ -24,7 +23,7 @@ fn typeshed_dir() -> AbsolutePathBuf {
 fn solve_builtins_constraints(module_dependent_graph: &ModuleDependentGraph) {
     let solver = ModuleConstraintSolver::new(module_dependent_graph);
 
-    par_analysis(&solver, &mut DummyAnalysisObserver::default()).expect("analysis should work");
+    dependencies_analysis(&solver, &mut DummyAnalysisObserver::default()).expect("analysis should work");
 }
 
 fn bench_constraint_solver(criterion: &mut Criterion) {

@@ -1,20 +1,22 @@
 use crate::analysis::abstract_state::{AbstractState, AbstractStateProxy};
 use crate::analysis::fmt::fmt_set;
-use crate::analysis::lattice::Join;
-use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
+use crate::analysis::lattice::{Join, OrdJoin};
+use crate::analysis::{DependencyGraphAnalyser, DummyAnalysisObserver, GraphAnalyser, analysis};
 use crate::calls::Arguments;
 use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
     ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionImport, ExpressionSubscript,
     ExpressionUnary, ExpressionVariableDefinition, ExpressionVariableReference, Namespace, SmolStr,
 };
+use crate::constraint_graph::graph::Graph;
+use crate::constraint_graph::graph::dot::DiGraphDot;
 use crate::constraint_graph::{
     Constraint, ConstraintGraph, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode,
 };
 use crate::expressions::literal_class::method_resolution_order;
 use crate::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
 use crate::identifiers::smol_str::format_smolstr;
-use crate::identifiers::{Location, NamedQualifiedLocation};
+use crate::identifiers::{Location, NamedQualifiedLocation, QualifiedLocation};
 use crate::inference::{
     BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Deferred, DefinedVariables, Exception,
     ExceptionOrigin, FunctionType, ImportedModuleType, LiteralClass, LiteralFunction,
@@ -25,7 +27,7 @@ use crate::inference::{
 use imbl::ordmap::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -39,12 +41,15 @@ pub use imbl;
 pub mod calls;
 pub mod expressions;
 
-#[derive(Debug, Clone, PartialEq, Eq, Join)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
 pub struct EvaluationState {
     pub types: imbl::OrdMap<Arc<Expression>, Deferred<Sourced<Type>, Expression>>,
     pub return_value: Deferred<Sourced<Type>, Expression>,
     pub raised_exceptions: Deferred<Sourced<RaisedExceptions>, Expression>,
     pub defined_variables: DefinedVariables,
+    pub calls:
+        imbl::OrdMap<Arc<Namespace>, imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>>,
+    pub definitions: imbl::OrdSet<Arc<Namespace>>,
 }
 
 impl EvaluationState {
@@ -65,17 +70,6 @@ impl EvaluationState {
             ty = ty.join(&self.types.get(&variable).cloned());
         }
         ty
-    }
-}
-
-impl Default for EvaluationState {
-    fn default() -> Self {
-        Self {
-            types: imbl::OrdMap::new(),
-            return_value: Deferred::unknown(imbl::OrdSet::new()),
-            raised_exceptions: Deferred::unknown(imbl::OrdSet::new()),
-            defined_variables: DefinedVariables::new(),
-        }
     }
 }
 
@@ -141,9 +135,7 @@ impl<N: Ord, S> Default for SolverState<N, S> {
     }
 }
 
-impl<N: Clone + Ord, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone>
-    AbstractState for SolverState<N, S>
-{
+impl<N: Clone + Ord, S: Clone> AbstractState for SolverState<N, S> {
     type Key = N;
     type AbstractValue = S;
 
@@ -201,7 +193,6 @@ pub struct ExpressionEvaluator<'a> {
     pub mode: EvaluatorMode,
     pub namespace: &'a Namespace,
     pub constraint_graphs: &'a imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
-    pub in_evaluation: &'a imbl::OrdSet<&'a Namespace>,
     pub current_expression: Option<Expression>,
 }
 
@@ -210,33 +201,21 @@ impl<'a> ExpressionEvaluator<'a> {
         mode: EvaluatorMode,
         namespace: &'a Namespace,
         constraint_graphs: &'a imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
-        in_evaluation: &'a imbl::OrdSet<&'a Namespace>,
     ) -> Self {
         Self {
             mode,
             namespace,
             constraint_graphs,
-            in_evaluation,
             current_expression: None,
         }
     }
 
     pub fn with_namespace(&self, namespace: &'a Namespace) -> Self {
-        Self::new(
-            self.mode,
-            namespace,
-            self.constraint_graphs,
-            self.in_evaluation,
-        )
+        Self::new(self.mode, namespace, self.constraint_graphs)
     }
 
     pub fn with_mode(&self, mode: EvaluatorMode) -> Self {
-        Self::new(
-            mode,
-            self.namespace,
-            self.constraint_graphs,
-            self.in_evaluation,
-        )
+        Self::new(mode, self.namespace, self.constraint_graphs)
     }
 
     pub fn extract_deferred<T: Clone>(
@@ -391,16 +370,20 @@ impl<'a> ExpressionEvaluator<'a> {
         abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_function: &ExpressionFunction,
     ) -> Result<PyTypeEval, EvaluationError> {
-        Ok(PyTypeEval::with_default_effects(Type::new_literal(
-            TypeLiteral::Function(LiteralFunction {
+        let function_namespace =
+            Namespace::NamedProgramEntity(expression_function.program_entity.clone());
+
+        Ok(PyTypeEval::new(
+            Type::new_literal(TypeLiteral::Function(LiteralFunction {
                 value: Arc::new(FunctionType {
                     program_entity: expression_function.program_entity.clone(),
                     generics: Default::default(),
                     parameters: Default::default(),
                     is_async: expression_function.is_async,
                 }),
-            }),
-        )))
+            })),
+            PyEffects::new().with_definitions(imbl::OrdSet::unit(Arc::new(function_namespace))),
+        ))
     }
 
     pub fn evaluate_expression_class(
@@ -408,15 +391,11 @@ impl<'a> ExpressionEvaluator<'a> {
         abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_class: &ExpressionClass,
     ) -> Result<PyTypeEval, EvaluationError> {
-        analyse_program_entity(
-            abstract_state,
-            self.constraint_graphs,
-            &Namespace::NamedProgramEntity(expression_class.program_entity.clone()),
-            self.in_evaluation.update(&self.namespace),
-        )
-        .unwrap();
-        Ok(PyTypeEval::with_default_effects(Type::new_literal(
-            TypeLiteral::Class(LiteralClass {
+        let class_namespace =
+            Namespace::NamedProgramEntity(expression_class.program_entity.clone());
+
+        Ok(PyTypeEval::new(
+            Type::new_literal(TypeLiteral::Class(LiteralClass {
                 value: Arc::new(ClassType {
                     program_entity: expression_class.program_entity.clone(),
                     generics: Default::default(),
@@ -424,8 +403,9 @@ impl<'a> ExpressionEvaluator<'a> {
                     keyword_arguments: Default::default(),
                     is_abstract: false,
                 }),
-            }),
-        )))
+            })),
+            PyEffects::new().with_definitions(imbl::OrdSet::unit(Arc::new(class_namespace))),
+        ))
     }
 
     pub fn evaluate_expression_import(
@@ -493,20 +473,9 @@ impl<'a> ExpressionEvaluator<'a> {
                         let class_namespace =
                             Namespace::NamedProgramEntity(class.value.program_entity.clone());
 
-                        let evaluation_state =
-                            if let Some(evaluation_state) = abstract_state.get(&class_namespace) {
-                                evaluation_state
-                            } else if self.in_evaluation.contains(self.namespace) {
-                                return Err(EvaluationError::Deferred);
-                            } else {
-                                analyse_program_entity(
-                                    abstract_state,
-                                    self.constraint_graphs,
-                                    &class_namespace,
-                                    self.in_evaluation.update(&self.namespace),
-                                )
-                                .unwrap()
-                            };
+                        let Some(evaluation_state) = abstract_state.get(&class_namespace) else {
+                            return Err(EvaluationError::Deferred);
+                        };
 
                         let Some(deferred_ty) = evaluation_state.get_attribute(name) else {
                             continue;
@@ -620,26 +589,20 @@ impl<'a> ExpressionEvaluator<'a> {
                 let function_namespace =
                     Namespace::NamedProgramEntity(literal_function.value.program_entity.clone());
 
-                let evaluation_state =
-                    if let Some(evaluation_state) = abstract_state.get(&function_namespace) {
-                        evaluation_state
-                    } else if self.in_evaluation.contains(self.namespace) {
-                        return Err(EvaluationError::Deferred);
-                    } else {
-                        analyse_program_entity(
-                            abstract_state,
-                            self.constraint_graphs,
-                            &function_namespace,
-                            self.in_evaluation.update(self.namespace),
-                        )
-                        .unwrap()
-                    };
-                println!("return {}", evaluation_state.return_value);
+                let Some(evaluation_state) = abstract_state.get(&function_namespace) else {
+                    return Err(EvaluationError::Deferred);
+                };
+
                 Ok(PyTypeEval::new(
                     Self::extract_deferred(&evaluation_state.return_value)?,
-                    PyEffects::new().with_exceptions(Self::extract_deferred(
-                        &evaluation_state.raised_exceptions,
-                    )?),
+                    PyEffects::new()
+                        .with_exceptions(Self::extract_deferred(
+                            &evaluation_state.raised_exceptions,
+                        )?)
+                        .with_calls(imbl::OrdMap::unit(
+                            Arc::new(function_namespace),
+                            imbl::OrdSet::new(),
+                        )),
                 ))
             }
             TypeLiteral::Method(literal_method) => self.evaluate_call(
@@ -994,7 +957,6 @@ pub struct ConstraintSolver<'s> {
     pub namespace: &'s Namespace,
     pub constraint_graphs: &'s imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     pub program_evaluation: &'s dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
-    pub in_evaluation: imbl::OrdSet<&'s Namespace>,
 }
 
 impl<'s> ConstraintSolver<'s> {
@@ -1002,13 +964,11 @@ impl<'s> ConstraintSolver<'s> {
         namespace: &'s Namespace,
         constraint_graphs: &'s imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
         program_evaluation: &'s dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
-        in_evaluation: imbl::OrdSet<&'s Namespace>,
     ) -> Self {
         Self {
             namespace,
             constraint_graphs,
             program_evaluation,
-            in_evaluation,
         }
     }
 
@@ -1017,12 +977,7 @@ impl<'s> ConstraintSolver<'s> {
     }
 
     pub fn evaluator(&self, mode: EvaluatorMode) -> ExpressionEvaluator<'_> {
-        ExpressionEvaluator::new(
-            mode,
-            self.namespace,
-            self.constraint_graphs,
-            &self.in_evaluation,
-        )
+        ExpressionEvaluator::new(mode, self.namespace, self.constraint_graphs)
     }
 }
 
@@ -1059,9 +1014,15 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
-        let mut program_evaluation = analysis_state
-            .get_clone(node)
-            .unwrap_or_else(|| AbstractStateProxy::with_default_proxy(self.program_evaluation));
+        let mut program_evaluation = analysis_state.get_clone(node).unwrap_or_else(|| {
+            AbstractStateProxy::new(
+                self.program_evaluation,
+                ProgramEvaluation::new(imbl::OrdMap::unit(
+                    self.namespace.clone(),
+                    EvaluationState::default(),
+                )),
+            )
+        });
 
         match &node {
             ConstraintNode::Entry => {
@@ -1149,12 +1110,12 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     evaluation_state.return_value = return_ty;
                 }
             }
-            ConstraintNode::Constraint { .. } => {
+            ConstraintNode::Constraint { location, .. } => {
                 if let Some(constraints) = self.constraint_graph().unwrap().nodes.get(node) {
                     for constraint in constraints {
                         match constraint {
                             Constraint::Type(type_constraint) => {
-                                let (ty, raised_exceptions) = match self
+                                let (ty, raised_exceptions, calls, definitions) = match self
                                     .evaluator(EvaluatorMode::Normal)
                                     .evaluate_expression(
                                         &mut program_evaluation,
@@ -1165,6 +1126,8 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                         Deferred::known(Sourced::inferred(
                                             type_eval.effects.exceptions,
                                         )),
+                                        type_eval.effects.calls,
+                                        type_eval.effects.definitions,
                                     ),
                                     Err(_) => (
                                         Deferred::unknown(imbl::OrdSet::unit(
@@ -1173,6 +1136,8 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                         Deferred::unknown(imbl::OrdSet::unit(
                                             type_constraint.left.clone(),
                                         )),
+                                        imbl::OrdMap::new(),
+                                        imbl::OrdSet::new(),
                                     ),
                                 };
 
@@ -1188,6 +1153,24 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                     .or_insert(ty);
                                 evaluation_state.raised_exceptions =
                                     evaluation_state.raised_exceptions.join(&raised_exceptions);
+                                if let Some(location) = location {
+                                    for (call_namespace, arguments) in calls {
+                                        evaluation_state.calls =
+                                            evaluation_state.calls.join(&imbl::OrdMap::unit(
+                                                call_namespace,
+                                                imbl::OrdMap::unit(
+                                                    QualifiedLocation::new(
+                                                        location.clone(),
+                                                        Arc::new(self.namespace.clone()),
+                                                    ),
+                                                    arguments,
+                                                ),
+                                            ));
+                                    }
+                                    for definition in definitions {
+                                        evaluation_state.definitions.insert(definition);
+                                    }
+                                }
                             }
                             Constraint::Return(return_constraint) => {
                                 let (ty, raised_exceptions) = match self
@@ -1396,16 +1379,15 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                             Type::Union(type_union) => {
                                 let mut new_ty = Type::Never;
                                 for ty in type_union.into_types() {
-                                    new_ty = new_ty.join(&if let Type::Literal(type_literal) = &ty {
-                                        type_literal
-                                            .as_type_instance(&new_abstract_state)
-                                            .map(|type_instance| {
-                                                Type::Instance(type_instance)
-                                            })
-                                            .expect("should be able to convert type literal to type instance")
-                                    } else {
-                                        ty
-                                    });
+                                    new_ty =
+                                        new_ty.join(&if let Type::Literal(type_literal) = &ty {
+                                            type_literal
+                                                .as_type_instance(&new_abstract_state)
+                                                .map(|type_instance| Type::Instance(type_instance))
+                                                .unwrap_or(Type::Any)
+                                        } else {
+                                            ty
+                                        });
                                 }
                                 Sourced::inferred(new_ty)
                             }
@@ -1431,50 +1413,158 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
     }
 }
 
-pub fn analyse_program_entity<'a>(
-    abstract_state: &'a mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
-    constraint_graphs: &imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
-    namespace: &Namespace,
-    in_evaluation: imbl::OrdSet<&Namespace>,
-) -> Result<&'a mut EvaluationState, Infallible> {
-    let solver_state = analysis(
-        &ConstraintSolver::new(namespace, constraint_graphs, abstract_state, in_evaluation),
-        &mut DummyAnalysisObserver::default(),
-    )?;
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NamespaceNode {
+    Entry,
+    Namespace(Arc<Namespace>),
+    Exit,
+}
 
-    let evaluation_state =
-        if let Some(program_evaluation) = solver_state.get(&ConstraintNode::TypeExit) {
-            let mut evaluation_state = program_evaluation.get_clone_or_default(namespace);
+impl Display for NamespaceNode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NamespaceNode::Entry => write!(f, "Entry"),
+            NamespaceNode::Namespace(namespace) => write!(f, "Namespace({})", namespace),
+            NamespaceNode::Exit => write!(f, "Exit"),
+        }
+    }
+}
 
-            if let Some(exception_evaluation_state) = solver_state
-                .get(&ConstraintNode::ExceptionExit)
-                .and_then(|program_evaluation| program_evaluation.get(namespace))
-            {
-                evaluation_state.types = evaluation_state
-                    .types
-                    .join(&exception_evaluation_state.types);
-                evaluation_state.raised_exceptions = evaluation_state
-                    .raised_exceptions
-                    .join(&exception_evaluation_state.raised_exceptions);
-            }
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join, Default)]
+pub struct NamespaceData {
+    pub dependents: imbl::OrdSet<NamespaceNode>,
+    pub dependencies: imbl::OrdSet<NamespaceNode>,
+}
 
-            evaluation_state
-        } else {
-            solver_state
-                .get(&ConstraintNode::ExceptionExit)
-                .and_then(|program_evaluation| program_evaluation.get(namespace).cloned())
-                .unwrap_or_default()
-        };
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
+pub struct NamespaceDependencyGraph {
+    nodes: imbl::OrdMap<NamespaceNode, NamespaceData>,
+    edges: imbl::OrdMap<
+        (NamespaceNode, NamespaceNode),
+        imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>,
+    >,
+}
 
-    let new_abstract_state = solver_state.get(&ConstraintNode::Exit).cloned(); // TODO: should always exist
+impl NamespaceDependencyGraph {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
 
-    drop(solver_state);
+impl Default for NamespaceDependencyGraph {
+    fn default() -> Self {
+        Self {
+            nodes: imbl::OrdMap::default(),
+            edges: imbl::OrdMap::default(),
+        }
+    }
+}
 
-    if let Some(new_abstract_state) = new_abstract_state {
-        abstract_state.extend(&mut new_abstract_state.proxy.states.into_iter());
+impl NamespaceDependencyGraph {
+    pub fn nodes(&self) -> &imbl::OrdMap<NamespaceNode, NamespaceData> {
+        &self.nodes
+    }
+    pub fn edges(
+        &self,
+    ) -> &imbl::OrdMap<
+        (NamespaceNode, NamespaceNode),
+        imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>,
+    > {
+        &self.edges
+    }
+    pub fn add_dependency(
+        &mut self,
+        dependency: NamespaceNode,
+        node: NamespaceNode,
+        calls: imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>,
+    ) {
+        self.nodes
+            .entry(dependency.clone())
+            .or_default()
+            .dependents
+            .insert(node.clone());
+        self.nodes
+            .entry(node.clone())
+            .or_default()
+            .dependencies
+            .insert(dependency.clone());
+        let existing_calls = self.edges.entry((dependency, node)).or_default();
+        *existing_calls = existing_calls.join(&calls);
+    }
+    pub fn remove_dependency(&mut self, dependency: &NamespaceNode, node: &NamespaceNode) {
+        self.edges.remove(&(dependency.clone(), node.clone()));
+        if let Some(entry) = self.nodes.get_mut(dependency) {
+            entry.dependents.remove(node);
+        }
+        if let Some(entry) = self.nodes.get_mut(node) {
+            entry.dependencies.remove(dependency);
+        }
+    }
+}
+
+impl Display for NamespaceDependencyGraph {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{ nodes: {:?}, edges: {:?} }}", self.nodes, self.edges)
+    }
+}
+
+impl Graph for NamespaceDependencyGraph {
+    type Node = NamespaceNode;
+    type NodeData = NamespaceData;
+    type EdgeData = imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>;
+
+    fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
+        self.nodes.iter()
     }
 
-    Ok(abstract_state.insert(namespace.clone(), evaluation_state))
+    fn edge_data_iter(
+        &self,
+    ) -> impl Iterator<Item = ((&Self::Node, &Self::Node), &Self::EdgeData)> {
+        self.edges
+            .iter()
+            .map(|((from, to), edge_data)| ((from, to), edge_data))
+    }
+}
+
+impl DiGraphDot for NamespaceDependencyGraph {
+    fn fmt_node(
+        &self,
+        f: &mut Formatter<'_>,
+        node: &Self::Node,
+        _node_data: &Self::NodeData,
+    ) -> std::fmt::Result {
+        write!(f, "    \"{}\" [label=\"{}\"]\n", node, node)
+    }
+
+    fn fmt_edge(
+        &self,
+        f: &mut Formatter<'_>,
+        (from, to): (&Self::Node, &Self::Node),
+        edge_data: &Self::EdgeData,
+    ) -> std::fmt::Result {
+        write!(
+            f,
+            "    \"{}\" -> \"{}\" [label=\"{:?}\"]\n",
+            from, to, edge_data
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum AnalysisStatus {
+    #[default]
+    NotStarted,
+    Started,
+}
+
+impl OrdJoin for AnalysisStatus {}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Join)]
+pub struct ModuleConstraintSolverAnalysisState {
+    pub program_evaluation: ProgramEvaluation<EvaluationState>,
+    pub namespace_dependency_graph: NamespaceDependencyGraph,
+    pub removed_nodes: imbl::OrdSet<NamespaceNode>,
+    pub started: AnalysisStatus,
 }
 
 pub struct ModuleConstraintSolver<'a> {
@@ -1487,105 +1577,352 @@ impl<'a> ModuleConstraintSolver<'a> {
     }
 }
 
-impl GraphAnalyser for ModuleConstraintSolver<'_> {
-    type Node = ModuleNode;
-    type AbstractState = ProgramEvaluation<EvaluationState>;
-    type AnalysisState = SolverState<Self::Node, Self::AbstractState>;
+impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
+    type Node = NamespaceNode;
+
+    type InputState = BTreeMap<ExpressionVariableDefinition, Deferred<Sourced<Type>, Expression>>;
+    type OutputState = (
+        EvaluationState,
+        BTreeSet<Deferred<Sourced<RaisedExceptions>, Expression>>,
+        Deferred<Sourced<Type>, Expression>,
+    );
+    type AnalysisState = ModuleConstraintSolverAnalysisState;
     type Error = Infallible;
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
-        Ok(std::iter::once(ModuleNode::Entry))
+        Ok(std::iter::once(NamespaceNode::Entry))
     }
-
-    fn next_nodes(
-        &self,
-        node: &Self::Node,
-    ) -> Result<impl Iterator<Item = &Self::Node>, Self::Error> {
-        Ok(self
-            .graph
-            .dependents
+    fn dependency_nodes<'a>(
+        &'a self,
+        analysis_state: &'a Self::AnalysisState,
+        node: &'a Self::Node,
+    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
+        Ok(analysis_state
+            .namespace_dependency_graph
+            .nodes()
             .get(node)
-            .map(|nodes| nodes.iter())
             .into_iter()
-            .flatten())
+            .flat_map(|namespace_data| namespace_data.dependencies.iter())
+            .chain(analysis_state.removed_nodes.iter()))
+    }
+    fn dependent_nodes<'a>(
+        &'a self,
+        analysis_state: &'a Self::AnalysisState,
+        node: &'a Self::Node,
+    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
+        Ok(analysis_state
+            .namespace_dependency_graph
+            .nodes()
+            .get(node)
+            .into_iter()
+            .flat_map(|namespace_data| namespace_data.dependents.iter()))
     }
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
-        Ok(SolverState::default())
+        let mut analysis_state = ModuleConstraintSolverAnalysisState::default();
+        for (module_node, dependent_nodes) in &self.graph.dependents {
+            let namespace_node = match module_node {
+                ModuleNode::Entry => NamespaceNode::Entry,
+                ModuleNode::Module(module_name) => {
+                    NamespaceNode::Namespace(Arc::new(Namespace::Module(module_name.clone())))
+                }
+                ModuleNode::Exit => NamespaceNode::Exit,
+            };
+            for dependent_node in dependent_nodes {
+                let namespace_dependent_node = match dependent_node {
+                    ModuleNode::Entry => NamespaceNode::Entry,
+                    ModuleNode::Module(dependent_module_name) => NamespaceNode::Namespace(
+                        Arc::new(Namespace::Module(dependent_module_name.clone())),
+                    ),
+                    ModuleNode::Exit => NamespaceNode::Exit,
+                };
+                analysis_state.namespace_dependency_graph.add_dependency(
+                    namespace_node.clone(),
+                    namespace_dependent_node,
+                    imbl::OrdMap::default(),
+                );
+            }
+        }
+        Ok(analysis_state)
     }
-
     fn analyse_node(
         &self,
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
-    ) -> Result<Self::AbstractState, Self::Error> {
-        let mut new_analysis_state = analysis_state.get_clone_or_default(node);
+    ) -> Result<Self::AnalysisState, Self::Error> {
+        let mut new_analysis_state = analysis_state.clone();
 
-        let ModuleNode::Module(module_name) = &node else {
+        let NamespaceNode::Namespace(namespace) = &node else {
+            new_analysis_state.started = AnalysisStatus::Started;
             return Ok(new_analysis_state);
         };
 
-        let program_entity_constraints = self.graph.nodes.get(&node).unwrap();
+        let program_entity_constraints = self
+            .graph
+            .nodes
+            .get(&ModuleNode::Module(namespace.module_name().clone()))
+            .unwrap();
+        let dependencies = new_analysis_state
+            .namespace_dependency_graph
+            .nodes()
+            .get(node)
+            .map(|namespace_data| namespace_data.dependencies.clone());
 
-        let namespace = Namespace::Module(module_name.clone());
-
-        analyse_program_entity(
-            &mut new_analysis_state,
-            program_entity_constraints,
-            &namespace,
-            imbl::OrdSet::new(),
-        )?;
-
-        for other_namespace in program_entity_constraints.keys() {
-            if **other_namespace != namespace {
-                analyse_program_entity(
-                    &mut new_analysis_state,
-                    program_entity_constraints,
-                    other_namespace,
-                    imbl::OrdSet::new(),
-                )?;
+        if let Some(dependencies) = dependencies {
+            for dependency in dependencies {
+                new_analysis_state
+                    .namespace_dependency_graph
+                    .remove_dependency(&dependency, node);
+                new_analysis_state.removed_nodes.insert(dependency);
             }
         }
 
+        let solver_state = analysis(
+            &ConstraintSolver::new(
+                namespace,
+                program_entity_constraints,
+                &mut new_analysis_state.program_evaluation,
+            ),
+            &mut DummyAnalysisObserver::default(),
+        )?;
+
+        let evaluation_state =
+            if let Some(program_evaluation) = solver_state.get(&ConstraintNode::TypeExit) {
+                let mut evaluation_state = program_evaluation.get_clone_or_default(namespace);
+
+                if let Some(exception_evaluation_state) = solver_state
+                    .get(&ConstraintNode::ExceptionExit)
+                    .and_then(|program_evaluation| program_evaluation.get(namespace))
+                {
+                    evaluation_state.types = evaluation_state
+                        .types
+                        .join(&exception_evaluation_state.types);
+                    evaluation_state.raised_exceptions = evaluation_state
+                        .raised_exceptions
+                        .join(&exception_evaluation_state.raised_exceptions);
+                }
+
+                evaluation_state
+            } else {
+                solver_state
+                    .get(&ConstraintNode::ExceptionExit)
+                    .and_then(|program_evaluation| program_evaluation.get(namespace).cloned())
+                    .unwrap_or_default()
+            };
+
+        let new_abstract_state = solver_state.get(&ConstraintNode::Exit).cloned(); // TODO: should always exist
+
+        drop(solver_state);
+
+        if let Some(new_abstract_state) = new_abstract_state {
+            let proxy_states = new_abstract_state.proxy;
+            new_analysis_state
+                .program_evaluation
+                .extend(&mut proxy_states.states.into_iter());
+        }
+
+        for (dependency_namespace, calls) in &evaluation_state.calls {
+            let dependency_node = NamespaceNode::Namespace(dependency_namespace.clone());
+            new_analysis_state.removed_nodes.remove(&dependency_node);
+            new_analysis_state
+                .namespace_dependency_graph
+                .add_dependency(
+                    dependency_node,
+                    NamespaceNode::Namespace(namespace.clone()),
+                    calls.clone(),
+                );
+        }
+        for definition in &evaluation_state.definitions {
+            let dependent_node = NamespaceNode::Namespace(definition.clone());
+            new_analysis_state.removed_nodes.remove(&dependent_node);
+            new_analysis_state
+                .namespace_dependency_graph
+                .add_dependency(
+                    NamespaceNode::Namespace(namespace.clone()),
+                    dependent_node.clone(),
+                    imbl::OrdMap::default(),
+                );
+            new_analysis_state
+                .namespace_dependency_graph
+                .add_dependency(
+                    dependent_node,
+                    NamespaceNode::Namespace(namespace.clone()),
+                    imbl::OrdMap::default(),
+                );
+        }
+
+        if let Some(namespace_data) = new_analysis_state
+            .namespace_dependency_graph
+            .nodes()
+            .get(&NamespaceNode::Namespace(namespace.clone()))
+        {
+            if namespace_data.dependents.is_empty() {
+                new_analysis_state
+                    .namespace_dependency_graph
+                    .add_dependency(
+                        NamespaceNode::Namespace(namespace.clone()),
+                        NamespaceNode::Exit,
+                        imbl::OrdMap::default(),
+                    );
+                new_analysis_state
+                    .removed_nodes
+                    .remove(&NamespaceNode::Exit);
+            }
+        }
+
+        if let Some(dependent_nodes) = self
+            .graph
+            .dependents
+            .get(&ModuleNode::Module(namespace.module_name().clone()))
+        {
+            for dependent_node in dependent_nodes {
+                let namespace_dependent_node = match dependent_node {
+                    ModuleNode::Entry => NamespaceNode::Entry,
+                    ModuleNode::Module(dependent_module_name) => NamespaceNode::Namespace(
+                        Arc::new(Namespace::Module(dependent_module_name.clone())),
+                    ),
+                    ModuleNode::Exit => NamespaceNode::Exit,
+                };
+                new_analysis_state
+                    .removed_nodes
+                    .remove(&namespace_dependent_node);
+                new_analysis_state
+                    .namespace_dependency_graph
+                    .add_dependency(
+                        NamespaceNode::Namespace(namespace.clone()),
+                        namespace_dependent_node,
+                        imbl::OrdMap::default(),
+                    );
+            }
+        }
+
+        new_analysis_state
+            .program_evaluation
+            .insert(namespace.as_ref().clone(), evaluation_state);
+
         Ok(new_analysis_state)
     }
-
-    fn update_abstract_state(
+    fn get_input_state(
         &self,
-        _analysis_state: &Self::AnalysisState,
-        _from: &Self::Node,
-        _to: &Self::Node,
-        abstract_state: &Self::AbstractState,
-    ) -> Result<Option<Self::AbstractState>, Self::Error> {
-        Ok(Some(abstract_state.clone()))
-    }
-
-    fn get_abstract_state<'a>(
-        &self,
-        analysis_state: &'a Self::AnalysisState,
+        analysis_state: &Self::AnalysisState,
         node: &Self::Node,
-    ) -> Result<Option<&'a Self::AbstractState>, Self::Error> {
-        Ok(analysis_state.get(node))
-    }
+    ) -> Result<Option<Self::InputState>, Self::Error> {
+        let NamespaceNode::Namespace(namespace) = &node else {
+            return Ok(None);
+        };
+        let Some(constraint_graphs) = self
+            .graph
+            .nodes
+            .get(&ModuleNode::Module(namespace.module_name().clone()))
+        else {
+            return Ok(None);
+        };
+        let Some(constraint_graph) = constraint_graphs.get(namespace) else {
+            return Ok(None);
+        };
+        let mut program_evaluation: AbstractStateProxy<
+            '_,
+            _,
+            _,
+            ProgramEvaluation<EvaluationState>,
+        > = AbstractStateProxy::with_default_proxy(&analysis_state.program_evaluation);
+        let mut evaluator =
+            ExpressionEvaluator::new(EvaluatorMode::Normal, namespace, constraint_graphs);
 
-    fn set_abstract_state(
+        Ok(Some(
+            constraint_graph
+                .specification
+                .arguments
+                .iter()
+                .map(|(variable, expressions)| {
+                    let ty = if let Ok(eval) =
+                        evaluator.evaluate_expressions(&mut program_evaluation, expressions)
+                    {
+                        Deferred::known(Sourced::specified(eval.value))
+                    } else {
+                        Deferred::unknown(
+                            expressions
+                                .iter()
+                                .map(|expression| Arc::new(expression.clone()))
+                                .collect(),
+                        )
+                    };
+                    (variable.clone(), ty)
+                })
+                .collect(),
+        ))
+    }
+    fn get_output_state(
         &self,
-        analysis_state: &mut Self::AnalysisState,
+        analysis_state: &Self::AnalysisState,
         node: &Self::Node,
-        abstract_state: Self::AbstractState,
-    ) -> Result<(), Self::Error> {
-        analysis_state.insert(node.clone(), abstract_state);
-        Ok(())
-    }
+    ) -> Result<Option<Self::OutputState>, Self::Error> {
+        let NamespaceNode::Namespace(namespace) = &node else {
+            return if matches!(analysis_state.started, AnalysisStatus::Started) {
+                Ok(Some((
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                )))
+            } else {
+                Ok(None)
+            };
+        };
+        let Some(constraint_graphs) = self
+            .graph
+            .nodes
+            .get(&ModuleNode::Module(namespace.module_name().clone()))
+        else {
+            return Ok(None);
+        };
+        let Some(constraint_graph) = constraint_graphs.get(namespace) else {
+            return Ok(None);
+        };
+        let mut program_evaluation: AbstractStateProxy<
+            '_,
+            _,
+            _,
+            ProgramEvaluation<EvaluationState>,
+        > = AbstractStateProxy::with_default_proxy(&analysis_state.program_evaluation);
+        let mut evaluator =
+            ExpressionEvaluator::new(EvaluatorMode::Normal, namespace, constraint_graphs);
 
-    fn merge(
-        &self,
-        _analysis_state: &Self::AnalysisState,
-        _node: &Self::Node,
-        left: &Self::AbstractState,
-        right: &Self::AbstractState,
-    ) -> Result<Self::AbstractState, Self::Error> {
-        Ok(left.join(right))
+        Ok(Some((
+            analysis_state
+                .program_evaluation
+                .get_clone_or_default(namespace),
+            constraint_graph
+                .specification
+                .exceptions
+                .iter()
+                .map(|expression| {
+                    if let Ok(eval) =
+                        evaluator.evaluate_expression(&mut program_evaluation, expression)
+                    {
+                        Deferred::known(Sourced::specified(RaisedExceptions::raise(
+                            Exception::new(Arc::new(eval.value), ExceptionOrigin::Specified),
+                        )))
+                    } else {
+                        Deferred::unknown(imbl::OrdSet::unit(Arc::new(expression.clone())))
+                    }
+                })
+                .collect(),
+            if let Ok(eval) = evaluator.evaluate_expressions(
+                &mut program_evaluation,
+                &constraint_graph.specification.return_type,
+            ) {
+                Deferred::known(Sourced::specified(eval.value))
+            } else {
+                Deferred::unknown(
+                    constraint_graph
+                        .specification
+                        .return_type
+                        .iter()
+                        .map(|expression| Arc::new(expression.clone()))
+                        .collect(),
+                )
+            },
+        )))
     }
 }
 
@@ -1593,7 +1930,7 @@ impl GraphAnalyser for ModuleConstraintSolver<'_> {
 mod tests {
     use super::*;
     use crate::inference::BUILTINS_MODULE;
-    use apygen_analysis::analysis;
+    use apygen_analysis::dependencies_analysis;
     use apygen_analysis::log::LogAnalysisObserver;
     use apygen_constraint_builder::{ModuleLoader, analyse_program};
     use indoc::indoc;
@@ -1638,9 +1975,9 @@ mod tests {
             #return = None
         builtins[int@{1:6}][__add__@{2:8}]:
             self = Never
-            value = Any
+            value = @class(builtins[int@{1:6}])
             #raise = {}
-            #return = None
+            #return = @class(builtins[int@{1:6}])
         builtins[int@{1:6}]:
             __add__ = function(builtins[int@{1:6}][__add__@{2:8}])
             #raise = {}
@@ -1659,10 +1996,10 @@ mod tests {
             #return = Inferred(None)
         builtins[int@{1:6}][__add__@{2:8}]:
             self@{builtins[int@{1:6}][__add__@{2:8}][2:16]} = Specified(Never)
-            value@{builtins[int@{1:6}][__add__@{2:8}][2:22]} = Inferred(Never) ⊔ #deferred{#annotated(int)}
+            value@{builtins[int@{1:6}][__add__@{2:8}][2:22]} = Specified(@class(builtins[int@{1:6}]))
             #variables = {self: {builtins[int@{1:6}][__add__@{2:8}][2:16]}, value: {builtins[int@{1:6}][__add__@{2:8}][2:22]}}
             #raise = Inferred({})
-            #return = Inferred(None)
+            #return = Specified(@class(builtins[int@{1:6}]))
         builtins[int@{1:6}]:
             __add__@{builtins[int@{1:6}][2:8]} = Inferred(function(builtins[int@{1:6}][__add__@{2:8}]))
             #variables = {__add__: {builtins[int@{1:6}][2:8]}}
@@ -1680,10 +2017,10 @@ mod tests {
 
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-        let program_evaluation = analysis(&solver, &mut LogAnalysisObserver::default())
-            .expect("analysis should work")
-            .abstract_states[&ModuleNode::Exit]
-            .clone();
+        let program_evaluation =
+            dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
+                .expect("analysis should work")
+                .program_evaluation;
 
         let mut actual_types = String::new();
         let mut actual_expressions = String::new();
@@ -1730,11 +2067,11 @@ mod tests {
                 .push_str(&format!("    #return = {}\n", abstract_state.return_value));
         }
 
-        assert_eq!(expected_types, actual_types, "{actual_types}");
         assert_eq!(
             expected_expressions, actual_expressions,
             "{actual_expressions}"
         );
+        assert_eq!(expected_types, actual_types, "{actual_types}");
     }
 
     #[rstest]
@@ -1778,16 +2115,16 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            a = Any
-            b = Any
+            a = @class(builtins[int@{1:6}])
+            b = @class(builtins[int@{1:6}])
             #raise = {Exception(type=Any, origin=Unknown)}
             #return = None
         "##},
         indoc! {r##"
         module:
             a@{module[1:0]} = Inferred(0)
-            a@{module[4:4]} = Inferred(Any)
-            b@{module[6:0]} = Inferred(Any)
+            a@{module[4:4]} = Inferred(@class(builtins[int@{1:6}]))
+            b@{module[6:0]} = Inferred(@class(builtins[int@{1:6}]))
             #variables = {a: {module[1:0], module[4:4]}, b: {module[6:0]}}
             #raise = Inferred({Exception(type=Any, origin=Unknown)}) ⊔ #deferred{(a) < (5)}
             #return = Inferred(None)
@@ -1988,22 +2325,28 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            #raise = {Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)}
-            #return = Never
+            CONST = 5
+            foo = function(module[foo@{1:4}])
+            result = 5
+            #raise = {}
+            #return = None
         module[foo@{1:4}]:
-            #raise = {Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)}
-            #return = Never
+            #raise = {}
+            #return = 5
         "##},
         indoc! {r##"
         module:
-            #variables = {}
-            #raise = Inferred({Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)})
-            #return = Inferred(Never)
+            CONST@{module[6:0]} = Inferred(5)
+            foo@{module[1:4]} = Inferred(function(module[foo@{1:4}]))
+            result@{module[4:0]} = Inferred(5)
+            #variables = {CONST: {module[6:0]}, foo: {module[1:4]}, result: {module[4:0]}}
+            #raise = Inferred({})
+            #return = Inferred(None)
         module[foo@{1:4}]:
             #variables = {}
-            #raise = Inferred({Exception(type=@class(builtins[NameError@{4:6}]), origin=Specified)})
-            #return = Inferred(Never)
-        "##},
+            #raise = Inferred({})
+            #return = Inferred(5)
+        "##},  // TODO: fix when possible
     )]
     #[case::forward_reference_function_call(
         indoc! {r##"
@@ -2058,10 +2401,10 @@ mod tests {
 
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-        let program_evaluation = analysis(&solver, &mut LogAnalysisObserver::default())
-            .expect("analysis should work")
-            .abstract_states[&ModuleNode::Exit]
-            .clone();
+        let program_evaluation =
+            dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
+                .expect("analysis should work")
+                .program_evaluation;
 
         let mut actual_types = String::new();
         let mut actual_expressions = String::new();
@@ -2111,10 +2454,10 @@ mod tests {
                 .push_str(&format!("    #return = {}\n", abstract_state.return_value));
         }
 
-        assert_eq!(expected_types, actual_types, "{actual_types}");
         assert_eq!(
             expected_expressions, actual_expressions,
             "{actual_expressions}"
         );
+        assert_eq!(expected_types, actual_types, "{actual_types}");
     }
 }

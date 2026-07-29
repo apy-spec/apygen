@@ -138,3 +138,103 @@ pub fn analysis<
 
     Ok(analysis_state)
 }
+
+pub trait DependencyGraphAnalyser {
+    type Node;
+    type InputState;
+    type OutputState;
+    type AnalysisState;
+    type Error;
+
+    fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error>;
+    fn dependency_nodes<'a>(
+        &'a self,
+        analysis_state: &'a Self::AnalysisState,
+        node: &'a Self::Node,
+    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error>;
+    fn dependent_nodes<'a>(
+        &'a self,
+        analysis_state: &'a Self::AnalysisState,
+        node: &'a Self::Node,
+    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error>;
+
+    fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error>;
+    fn analyse_node(
+        &self,
+        analysis_state: &Self::AnalysisState,
+        node: &Self::Node,
+    ) -> Result<Self::AnalysisState, Self::Error>;
+    fn get_input_state(
+        &self,
+        analysis_state: &Self::AnalysisState,
+        node: &Self::Node,
+    ) -> Result<Option<Self::InputState>, Self::Error>;
+    fn get_output_state(
+        &self,
+        analysis_state: &Self::AnalysisState,
+        node: &Self::Node,
+    ) -> Result<Option<Self::OutputState>, Self::Error>;
+}
+
+pub fn dependencies_analysis<
+    N: Clone + Ord,
+    I: Eq,
+    R: Eq,
+    A,
+    E,
+    T: DependencyGraphAnalyser<
+            Node = N,
+            InputState = I,
+            OutputState = R,
+            AnalysisState = A,
+            Error = E,
+        >,
+    O: AnalysisObserver<N, A>,
+>(
+    analyser: &T,
+    observer: &mut O,
+) -> Result<A, E> {
+    let mut analysis_state = analyser.initialise_analysis_state()?;
+
+    let mut worklist = BTreeSet::from_iter(analyser.entry_nodes()?);
+
+    observer.before_analysis(&analysis_state, &worklist);
+
+    loop {
+        observer.before_iteration(&analysis_state, &worklist);
+
+        let Some(node) = worklist.pop_first() else {
+            break;
+        };
+
+        observer.before_node_analysis(&analysis_state, &worklist, &node);
+
+        let new_analysis_state = analyser.analyse_node(&analysis_state, &node)?;
+
+        for dependency in analyser.dependency_nodes(&new_analysis_state, &node)? {
+            if analyser.get_input_state(&analysis_state, dependency)?
+                != analyser.get_input_state(&new_analysis_state, dependency)?
+            {
+                worklist.insert(dependency.clone());
+            }
+        }
+
+        if analyser.get_output_state(&analysis_state, &node)?
+            != analyser.get_output_state(&new_analysis_state, &node)?
+        {
+            for dependent in analyser.dependent_nodes(&new_analysis_state, &node)? {
+                worklist.insert(dependent.clone());
+            }
+        }
+
+        analysis_state = new_analysis_state;
+
+        observer.after_node_analysis(&analysis_state, &worklist, &node);
+
+        observer.after_iteration(&analysis_state, &worklist);
+    }
+
+    observer.after_analysis(&analysis_state, &worklist);
+
+    Ok(analysis_state)
+}

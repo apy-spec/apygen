@@ -36,7 +36,7 @@ pub enum BindError {
     MultipleValuesForParameter,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Arguments {
     pub positional: Vec<Arc<Type>>,
     pub keyword: BTreeMap<SmolStr, Arc<Type>>,

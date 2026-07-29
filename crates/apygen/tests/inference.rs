@@ -1,10 +1,10 @@
+use apygen::constraint_builder::constraint_graph::ModuleDependentGraph;
 use apygen::constraint_builder::constraint_graph::graph::dot::ToDot;
 use apygen::constraint_builder::constraint_graph::identifiers::SmolStr;
-use apygen::constraint_builder::constraint_graph::{ModuleDependentGraph, ModuleNode};
 use apygen::constraint_builder::{SpecModuleLoader, analyse_program};
-use apygen::constraint_solver::ModuleConstraintSolver;
+use apygen::constraint_solver::analysis::dependencies_analysis;
 use apygen::constraint_solver::analysis::log::LogAnalysisObserver;
-use apygen::constraint_solver::analysis::rayon::par_analysis;
+use apygen::constraint_solver::{ModuleConstraintSolver, NamespaceNode};
 use apygen::converter::v1::convert_apy_v1;
 use apygen::finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
 use apygen::finder::pathfinder::PathFinder;
@@ -55,10 +55,9 @@ pub fn analyse_directory(
 
     let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-    let program_evaluation = par_analysis(&solver, &mut LogAnalysisObserver::default())
+    let program_evaluation = dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
         .expect("analysis should work")
-        .abstract_states[&ModuleNode::Exit]
-        .clone();
+        .program_evaluation;
 
     let apy_v1 = convert_apy_v1(&program_evaluation, rayon::iter::once(&target_module));
 
@@ -91,8 +90,7 @@ fn test_inference(#[case] module_name: String) {
     let absolute_manifest_dir = absolute_manifest_dir();
     let modules_dir = absolute_manifest_dir.join("tests/data/modules");
 
-    let (actual_dependent_graph, actual_apy) =
-        analyse_directory(modules_dir, module_name.clone());
+    let (actual_dependent_graph, actual_apy) = analyse_directory(modules_dir, module_name.clone());
 
     let mut actual_dot = actual_dependent_graph.dot("DependentGraph");
     for constraint_graphs in actual_dependent_graph.nodes.values() {

@@ -1,4 +1,5 @@
-use crate::{AnalysisObserver, GraphAnalyser};
+use crate::lattice::Join;
+use crate::{AnalysisObserver, DependencyGraphAnalyser, GraphAnalyser};
 use rayon::prelude::*;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -122,6 +123,96 @@ pub fn par_analysis<
             analyser.set_abstract_state(&mut analysis_state, &next_node, new_abstract_state)?;
             new_worklist.insert(next_node.clone());
         }
+
+        for node in &worklist {
+            observer.after_node_analysis(&analysis_state, &new_worklist, node);
+        }
+
+        worklist = new_worklist;
+
+        observer.after_iteration(&analysis_state, &worklist);
+    }
+
+    observer.after_analysis(&analysis_state, &worklist);
+
+    Ok(analysis_state)
+}
+
+pub fn par_dependencies_analysis<
+    N: Clone + Ord + Send + Sync,
+    I: Eq,
+    R: Eq,
+    A: Default + Join + Send + Sync,
+    E: Send,
+    T: DependencyGraphAnalyser<
+            Node = N,
+            InputState = I,
+            OutputState = R,
+            AnalysisState = A,
+            Error = E,
+        > + Sync,
+    O: AnalysisObserver<N, A>,
+>(
+    analyser: &T,
+    observer: &mut O,
+) -> Result<A, E> {
+    let mut analysis_state = analyser.initialise_analysis_state()?;
+
+    let mut worklist = BTreeSet::from_iter(analyser.entry_nodes()?);
+
+    observer.before_analysis(&analysis_state, &worklist);
+
+    loop {
+        observer.before_iteration(&analysis_state, &worklist);
+
+        if worklist.is_empty() {
+            break;
+        }
+
+        for node in &worklist {
+            observer.before_node_analysis(&analysis_state, &worklist, node);
+        }
+
+        let new_analysis_state = worklist
+            .par_iter()
+            .map(|node| analyser.analyse_node(&analysis_state, node))
+            .try_reduce(
+                || A::default(),
+                |acc, new_analysis_state| Ok(acc.join(&new_analysis_state)),
+            )?;
+
+        let new_worklist = worklist
+            .par_iter()
+            .map(|node| {
+                let mut acc = BTreeSet::new();
+
+                for dependency in analyser.dependency_nodes(&new_analysis_state, &node)? {
+                    if analyser.get_input_state(&analysis_state, dependency)?
+                        != analyser.get_input_state(&new_analysis_state, dependency)?
+                    {
+                        acc.insert(dependency.clone());
+                    }
+                }
+
+                if analyser.get_output_state(&analysis_state, &node)?
+                    != analyser.get_output_state(&new_analysis_state, &node)?
+                {
+                    for dependent in analyser.dependent_nodes(&new_analysis_state, &node)? {
+                        acc.insert(dependent.clone());
+                    }
+                }
+
+                Ok(acc)
+            })
+            .try_reduce(
+                || BTreeSet::new(),
+                |mut acc, new_worklist| {
+                    acc.extend(new_worklist);
+                    Ok(acc)
+                },
+            )?;
+
+        analysis_state = new_analysis_state;
 
         for node in &worklist {
             observer.after_node_analysis(&analysis_state, &new_worklist, node);

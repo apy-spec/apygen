@@ -1,3 +1,10 @@
+use crate::analysis::lattice::Join;
+use crate::calls::Arguments;
+use crate::identifiers::Namespace;
+use crate::inference::{Completeness, Exception, Pureness, RaisedExceptions, Type};
+use std::fmt::Display;
+use std::sync::Arc;
+
 pub mod literal_boolean;
 pub mod literal_bytes;
 pub mod literal_class;
@@ -9,15 +16,13 @@ pub mod literal_none;
 pub mod literal_string;
 pub mod type_literal;
 
-use crate::analysis::lattice::Join;
-use crate::inference::{Completeness, Exception, Pureness, RaisedExceptions, Type};
-use std::fmt::Display;
-
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
 pub struct PyEffects {
     pub exceptions: RaisedExceptions,
     pub pureness: Pureness,
     pub completeness: Completeness,
+    pub calls: imbl::OrdMap<Arc<Namespace>, imbl::OrdSet<Arguments>>,
+    pub definitions: imbl::OrdSet<Arc<Namespace>>,
 }
 
 impl PyEffects {
@@ -40,10 +45,25 @@ impl PyEffects {
         self
     }
 
+    pub fn with_calls(
+        mut self,
+        calls: imbl::OrdMap<Arc<Namespace>, imbl::OrdSet<Arguments>>,
+    ) -> Self {
+        self.calls = calls;
+        self
+    }
+
+    pub fn with_definitions(mut self, definitions: imbl::OrdSet<Arc<Namespace>>) -> Self {
+        self.definitions = definitions;
+        self
+    }
+
     pub fn consume<T>(&mut self, eval: PyValueEval<T>) -> T {
         self.exceptions = self.exceptions.join(&eval.effects.exceptions);
         self.pureness = self.pureness.join(&eval.effects.pureness);
         self.completeness = self.completeness.join(&eval.effects.completeness);
+        self.calls = self.calls.join(&eval.effects.calls);
+        self.definitions = self.definitions.join(&eval.effects.definitions);
         eval.value
     }
 }
@@ -106,6 +126,8 @@ impl PyTypeEval {
                 exceptions: RaisedExceptions::raise(exception),
                 pureness: Pureness::Impure,
                 completeness: Completeness::Partial,
+                calls: imbl::OrdMap::new(),
+                definitions: imbl::OrdSet::new(),
             },
         )
     }
@@ -117,6 +139,8 @@ impl PyTypeEval {
                 exceptions: RaisedExceptions::raise(Exception::any()),
                 pureness: Pureness::Impure,
                 completeness: Completeness::Partial,
+                calls: imbl::OrdMap::new(),
+                definitions: imbl::OrdSet::new(),
             },
         )
     }
