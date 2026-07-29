@@ -21,7 +21,7 @@ use crate::constraint_graph::primitives::literals::{
 use crate::constraint_graph::primitives::{BigInt, Complex64, Int, Num};
 use crate::constraint_graph::{
     Constraint, ConstraintGraph, ConstraintGraphSpecification, ConstraintNode, Guard,
-    IncludeConstraint, ModuleDependentGraph, ModuleNode, ReturnConstraint,
+    IncludeConstraint, ModuleDependentGraph, ReturnConstraint,
 };
 use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
 use crate::finder::pathfinder::{FinderSpec, ModuleKind, ModuleSpec, Spec, StubSpec};
@@ -2135,16 +2135,9 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
 
     let builtins_imports = get_imports(&builtins_cfg_analysis);
 
-    let builtins_module_node = ModuleNode::Module(BUILTINS_MODULE);
-
     let mut dependent_graph = ModuleDependentGraph::default();
-    dependent_graph.add_dependent(ModuleNode::Entry, builtins_module_node.clone());
-    dependent_graph.add_dependent(builtins_module_node.clone(), ModuleNode::Exit);
-    for import in &builtins_imports {
-        dependent_graph.add_dependent(
-            ModuleNode::Module(import.clone()),
-            builtins_module_node.clone(),
-        );
+    for builtins_import in &builtins_imports {
+        dependent_graph.add_dependent(builtins_import.clone(), BUILTINS_MODULE);
     }
 
     let mut worklist = initial_modules
@@ -2160,38 +2153,32 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
                     analyse_module(module_loader, Some(builtin_parent_state), &module_name)?;
                 let imports = get_imports(&cfg_analysis);
                 let constraint_graph = create_constraint_graph(cfg_analysis);
-                Some((ModuleNode::Module(module_name), constraint_graph, imports))
+                Some((module_name, constraint_graph, imports))
             })
             .collect::<Vec<_>>();
 
         worklist = BTreeSet::new();
-        for (module_node, constraint_graph, imports) in analysed_modules {
-            dependent_graph.add_dependent(builtins_module_node.clone(), module_node.clone());
-            dependent_graph.remove_dependent(builtins_module_node.clone(), ModuleNode::Exit);
-            if !dependent_graph.dependents.contains_key(&module_node) {
-                dependent_graph.add_dependent(module_node.clone(), ModuleNode::Exit);
-            }
+        for (module_name, constraint_graph, imports) in analysed_modules {
+            dependent_graph.add_dependent(BUILTINS_MODULE, module_name.clone());
 
             for import in imports {
                 if import == BUILTINS_MODULE {
                     continue;
                 }
-                let import_module_node = ModuleNode::Module(import.clone());
 
-                dependent_graph.add_dependent(import_module_node.clone(), module_node.clone());
-                dependent_graph.remove_dependent(import_module_node.clone(), ModuleNode::Exit);
+                dependent_graph.add_dependent(import.clone(), module_name.clone());
 
-                if !dependent_graph.nodes.contains_key(&import_module_node) {
-                    worklist.insert(import.clone());
+                if !dependent_graph.nodes.contains_key(&import) {
+                    worklist.insert(import);
                 }
             }
 
-            dependent_graph.nodes.insert(module_node, constraint_graph);
+            dependent_graph.nodes.insert(module_name, constraint_graph);
         }
     }
 
     dependent_graph.insert(
-        builtins_module_node,
+        BUILTINS_MODULE,
         create_constraint_graph(builtins_cfg_analysis),
     );
 
@@ -2245,9 +2232,7 @@ mod tests {
     fn test_build_builtins_constraints() {
         let expected_constraints = indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Exit";
+            "builtins";
         }
         specification "builtins":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2290,10 +2275,7 @@ mod tests {
 
         let mut actual_constraints = dependent_graph.dot("DependentGraph");
 
-        for (module_node, constraint_graph) in dependent_graph.nodes {
-            let ModuleNode::Module(module_name) = module_node else {
-                continue;
-            };
+        for (module_name, constraint_graph) in dependent_graph.nodes {
             push_constraint_graph(
                 &mut actual_constraints,
                 &Namespace::Module(module_name),
@@ -2312,14 +2294,12 @@ mod tests {
         "import some_module",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Module(some_module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(builtins)" -> "Module(some_module)";
-            "Module(module)" -> "Exit";
-            "Module(some_module)" -> "Module(module)";
+            "builtins";
+            "module";
+            "some_module";
+            "builtins" -> "module";
+            "builtins" -> "some_module";
+            "some_module" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2339,14 +2319,12 @@ mod tests {
         "import some_module as mod",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Module(some_module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(builtins)" -> "Module(some_module)";
-            "Module(module)" -> "Exit";
-            "Module(some_module)" -> "Module(module)";
+            "builtins";
+            "module";
+            "some_module";
+            "builtins" -> "module";
+            "builtins" -> "some_module";
+            "some_module" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2366,17 +2344,15 @@ mod tests {
         "import some_module.submodule",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Module(some_module)";
-            "Module(some_module.submodule)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(builtins)" -> "Module(some_module)";
-            "Module(builtins)" -> "Module(some_module.submodule)";
-            "Module(module)" -> "Exit";
-            "Module(some_module)" -> "Module(module)";
-            "Module(some_module.submodule)" -> "Module(module)";
+            "builtins";
+            "module";
+            "some_module";
+            "some_module.submodule";
+            "builtins" -> "module";
+            "builtins" -> "some_module";
+            "builtins" -> "some_module.submodule";
+            "some_module" -> "module";
+            "some_module.submodule" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2399,17 +2375,15 @@ mod tests {
         "import some_module, some_module.submodule",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Module(some_module)";
-            "Module(some_module.submodule)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(builtins)" -> "Module(some_module)";
-            "Module(builtins)" -> "Module(some_module.submodule)";
-            "Module(module)" -> "Exit";
-            "Module(some_module)" -> "Module(module)";
-            "Module(some_module.submodule)" -> "Module(module)";
+            "builtins";
+            "module";
+            "some_module";
+            "some_module.submodule";
+            "builtins" -> "module";
+            "builtins" -> "some_module";
+            "builtins" -> "some_module.submodule";
+            "some_module" -> "module";
+            "some_module.submodule" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2435,17 +2409,15 @@ mod tests {
         "import some_module, another_module",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(another_module)";
-            "Module(builtins)";
-            "Module(module)";
-            "Module(some_module)";
-            "Entry" -> "Module(builtins)";
-            "Module(another_module)" -> "Module(module)";
-            "Module(builtins)" -> "Module(another_module)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(builtins)" -> "Module(some_module)";
-            "Module(module)" -> "Exit";
-            "Module(some_module)" -> "Module(module)";
+            "another_module";
+            "builtins";
+            "module";
+            "some_module";
+            "another_module" -> "module";
+            "builtins" -> "another_module";
+            "builtins" -> "module";
+            "builtins" -> "some_module";
+            "some_module" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2468,17 +2440,15 @@ mod tests {
         "import some_module as mod, another_module as mod",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(another_module)";
-            "Module(builtins)";
-            "Module(module)";
-            "Module(some_module)";
-            "Entry" -> "Module(builtins)";
-            "Module(another_module)" -> "Module(module)";
-            "Module(builtins)" -> "Module(another_module)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(builtins)" -> "Module(some_module)";
-            "Module(module)" -> "Exit";
-            "Module(some_module)" -> "Module(module)";
+            "another_module";
+            "builtins";
+            "module";
+            "some_module";
+            "another_module" -> "module";
+            "builtins" -> "another_module";
+            "builtins" -> "module";
+            "builtins" -> "some_module";
+            "some_module" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2501,11 +2471,9 @@ mod tests {
         "a = 42",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2523,11 +2491,9 @@ mod tests {
         "a = 4200000000000000000000000000",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2545,11 +2511,9 @@ mod tests {
         "add = 42 + 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2569,11 +2533,9 @@ mod tests {
         "sub = 42 - 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2593,11 +2555,9 @@ mod tests {
         "mult = 42 * 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2617,11 +2577,9 @@ mod tests {
         "mat_mult = 42 @ 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2641,11 +2599,9 @@ mod tests {
         "div = 42 / 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2665,11 +2621,9 @@ mod tests {
         "floor_div = 42 // 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2689,11 +2643,9 @@ mod tests {
         "mod = 42 % 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2713,11 +2665,9 @@ mod tests {
         "pow = 42 ** 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2737,11 +2687,9 @@ mod tests {
         "shl = 42 << 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2761,11 +2709,9 @@ mod tests {
         "shr = 42 >> 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2785,11 +2731,9 @@ mod tests {
         "bit_or = 42 | 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2809,11 +2753,9 @@ mod tests {
         "bit_xor = 42 ^ 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2833,11 +2775,9 @@ mod tests {
         "bit_and = 42 & 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2857,11 +2797,9 @@ mod tests {
         "and_ = 42 and 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2881,11 +2819,9 @@ mod tests {
         "or_ = 42 or 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2905,11 +2841,9 @@ mod tests {
         "eq = 42 == 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2929,11 +2863,9 @@ mod tests {
         "not_eq = 42 != 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2953,11 +2885,9 @@ mod tests {
         "lt = 42 < 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -2977,11 +2907,9 @@ mod tests {
         "gt = 42 > 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3001,11 +2929,9 @@ mod tests {
         "lte = 42 <= 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3025,11 +2951,9 @@ mod tests {
         "gte = 42 >= 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3049,11 +2973,9 @@ mod tests {
         "is_ = 42 is 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3073,11 +2995,9 @@ mod tests {
         "is_not = 42 is not 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3097,11 +3017,9 @@ mod tests {
         "in_ = 42 in 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3121,11 +3039,9 @@ mod tests {
         "not_in = 42 not in 67",
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3149,11 +3065,9 @@ mod tests {
         "##},
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3184,11 +3098,9 @@ mod tests {
         "##},
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3224,11 +3136,9 @@ mod tests {
         "##},
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3263,11 +3173,9 @@ mod tests {
         "##},
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3307,11 +3215,9 @@ mod tests {
         "##},
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3353,11 +3259,9 @@ mod tests {
         "##},
         indoc! {r##"
         digraph "DependentGraph" {
-            "Module(builtins)";
-            "Module(module)";
-            "Entry" -> "Module(builtins)";
-            "Module(builtins)" -> "Module(module)";
-            "Module(module)" -> "Exit";
+            "builtins";
+            "module";
+            "builtins" -> "module";
         }
         specification "module":
             {arguments: {}, return_type: {}, exceptions: {}}
@@ -3405,10 +3309,7 @@ mod tests {
 
         let mut actual_constraints = dependent_graph.dot("DependentGraph");
 
-        for (module_node, constraint_graph) in dependent_graph.nodes {
-            let ModuleNode::Module(module_name) = module_node else {
-                continue;
-            };
+        for (module_name, constraint_graph) in dependent_graph.nodes {
             if module_name != target_module_name {
                 continue;
             }

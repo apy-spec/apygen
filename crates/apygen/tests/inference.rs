@@ -9,7 +9,7 @@ use apygen::converter::v1::convert_apy_v1;
 use apygen::finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
 use apygen::finder::pathfinder::PathFinder;
 use apygen_constraint_builder::cfg::identifiers::Namespace;
-use apygen_constraint_builder::constraint_graph::{ConstraintGraph, ModuleNode};
+use apygen_constraint_builder::constraint_graph::ConstraintGraph;
 
 use rstest::rstest;
 use std::collections::HashMap;
@@ -106,10 +106,7 @@ fn test_inference(#[case] module_name: String) {
     let (dependent_graph, actual_apy) = analyse_directory(modules_dir, target_module_name.clone());
 
     let mut actual_dot = dependent_graph.dot("DependentGraph");
-    for (module_node, constraint_graph) in dependent_graph.nodes {
-        let ModuleNode::Module(module_name) = module_node else {
-            continue;
-        };
+    for (module_name, constraint_graph) in dependent_graph.nodes {
         if module_name != target_module_name {
             continue;
         }

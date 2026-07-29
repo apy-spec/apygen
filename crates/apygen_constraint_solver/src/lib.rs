@@ -1,6 +1,6 @@
 use crate::analysis::abstract_state::{AbstractState, AbstractStateProxy};
 use crate::analysis::fmt::fmt_set;
-use crate::analysis::lattice::{Join, OrdJoin};
+use crate::analysis::lattice::Join;
 use crate::analysis::{DependencyGraphAnalyser, DummyAnalysisObserver, GraphAnalyser, analysis};
 use crate::calls::Arguments;
 use crate::constraint_graph::expressions::{
@@ -11,7 +11,7 @@ use crate::constraint_graph::expressions::{
 use crate::constraint_graph::graph::Graph;
 use crate::constraint_graph::graph::dot::DiGraphDot;
 use crate::constraint_graph::{
-    Constraint, ConstraintGraph, ConstraintNode, Guard, ModuleDependentGraph, ModuleNode,
+    Constraint, ConstraintGraph, ConstraintNode, Guard, ModuleDependentGraph,
 };
 use crate::expressions::literal_class::method_resolution_order;
 use crate::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
@@ -1401,34 +1401,17 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum NamespaceNode {
-    Entry,
-    Namespace(Arc<Namespace>),
-    Exit,
-}
-
-impl Display for NamespaceNode {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NamespaceNode::Entry => write!(f, "Entry"),
-            NamespaceNode::Namespace(namespace) => write!(f, "Namespace({})", namespace),
-            NamespaceNode::Exit => write!(f, "Exit"),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join, Default)]
 pub struct NamespaceData {
-    pub dependents: imbl::OrdSet<NamespaceNode>,
-    pub dependencies: imbl::OrdSet<NamespaceNode>,
+    pub dependents: imbl::OrdSet<Namespace>,
+    pub dependencies: imbl::OrdSet<Namespace>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
 pub struct NamespaceDependencyGraph {
-    nodes: imbl::OrdMap<NamespaceNode, NamespaceData>,
+    nodes: imbl::OrdMap<Namespace, NamespaceData>,
     edges: imbl::OrdMap<
-        (NamespaceNode, NamespaceNode),
+        (Namespace, Namespace),
         imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>,
     >,
 }
@@ -1449,21 +1432,21 @@ impl Default for NamespaceDependencyGraph {
 }
 
 impl NamespaceDependencyGraph {
-    pub fn nodes(&self) -> &imbl::OrdMap<NamespaceNode, NamespaceData> {
+    pub fn nodes(&self) -> &imbl::OrdMap<Namespace, NamespaceData> {
         &self.nodes
     }
     pub fn edges(
         &self,
     ) -> &imbl::OrdMap<
-        (NamespaceNode, NamespaceNode),
+        (Namespace, Namespace),
         imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>,
     > {
         &self.edges
     }
     pub fn add_dependency(
         &mut self,
-        dependency: NamespaceNode,
-        node: NamespaceNode,
+        dependency: Namespace,
+        node: Namespace,
         calls: imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>,
     ) {
         self.nodes
@@ -1479,7 +1462,7 @@ impl NamespaceDependencyGraph {
         let existing_calls = self.edges.entry((dependency, node)).or_default();
         *existing_calls = existing_calls.join(&calls);
     }
-    pub fn remove_dependency(&mut self, dependency: &NamespaceNode, node: &NamespaceNode) {
+    pub fn remove_dependency(&mut self, dependency: &Namespace, node: &Namespace) {
         self.edges.remove(&(dependency.clone(), node.clone()));
         if let Some(entry) = self.nodes.get_mut(dependency) {
             entry.dependents.remove(node);
@@ -1497,7 +1480,7 @@ impl Display for NamespaceDependencyGraph {
 }
 
 impl Graph for NamespaceDependencyGraph {
-    type Node = NamespaceNode;
+    type Node = Namespace;
     type NodeData = NamespaceData;
     type EdgeData = imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>;
 
@@ -1538,130 +1521,19 @@ impl DiGraphDot for NamespaceDependencyGraph {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub enum AnalysisStatus {
-    #[default]
-    NotStarted,
-    Started,
-}
-
-impl OrdJoin for AnalysisStatus {}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Join)]
-pub struct ModuleConstraintSolverAnalysisState {
-    pub program_evaluation: ProgramEvaluation<EvaluationState>,
-    pub namespace_dependency_graph: NamespaceDependencyGraph,
-    pub removed_nodes: imbl::OrdSet<NamespaceNode>,
-    pub started: AnalysisStatus,
-}
-
-pub struct ModuleConstraintSolver<'a> {
-    pub graph: &'a ModuleDependentGraph,
-}
-
-impl<'a> ModuleConstraintSolver<'a> {
-    pub fn new(graph: &'a ModuleDependentGraph) -> Self {
-        Self { graph }
-    }
-}
-
-impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
-    type Node = NamespaceNode;
-
-    type InputState = BTreeMap<ExpressionVariableDefinition, Deferred<Sourced<Type>, Expression>>;
-    type OutputState = EvaluationState;
-    type AnalysisState = ModuleConstraintSolverAnalysisState;
-    type Error = Infallible;
-
-    fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
-        Ok(std::iter::once(NamespaceNode::Entry))
-    }
-    fn dependency_nodes<'a>(
-        &'a self,
-        analysis_state: &'a Self::AnalysisState,
-        node: &'a Self::Node,
-    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
-        Ok(analysis_state
-            .namespace_dependency_graph
-            .nodes()
-            .get(node)
-            .into_iter()
-            .flat_map(|namespace_data| namespace_data.dependencies.iter())
-            .chain(analysis_state.removed_nodes.iter()))
-    }
-    fn dependent_nodes<'a>(
-        &'a self,
-        analysis_state: &'a Self::AnalysisState,
-        node: &'a Self::Node,
-    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
-        Ok(analysis_state
-            .namespace_dependency_graph
-            .nodes()
-            .get(node)
-            .into_iter()
-            .flat_map(|namespace_data| namespace_data.dependents.iter()))
-    }
-
-    fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
-        let mut analysis_state = ModuleConstraintSolverAnalysisState::default();
-        for (module_node, dependent_nodes) in &self.graph.dependents {
-            let namespace_node = match module_node {
-                ModuleNode::Entry => NamespaceNode::Entry,
-                ModuleNode::Module(module_name) => {
-                    NamespaceNode::Namespace(Arc::new(Namespace::Module(module_name.clone())))
-                }
-                ModuleNode::Exit => NamespaceNode::Exit,
-            };
-            for dependent_node in dependent_nodes {
-                let namespace_dependent_node = match dependent_node {
-                    ModuleNode::Entry => NamespaceNode::Entry,
-                    ModuleNode::Module(dependent_module_name) => NamespaceNode::Namespace(
-                        Arc::new(Namespace::Module(dependent_module_name.clone())),
-                    ),
-                    ModuleNode::Exit => NamespaceNode::Exit,
-                };
-                analysis_state.namespace_dependency_graph.add_dependency(
-                    namespace_node.clone(),
-                    namespace_dependent_node,
-                    imbl::OrdMap::default(),
-                );
-            }
-        }
-        Ok(analysis_state)
-    }
-    fn analyse_node(
-        &self,
-        analysis_state: &Self::AnalysisState,
-        node: &Self::Node,
-    ) -> Result<Self::AnalysisState, Self::Error> {
-        let mut new_analysis_state = analysis_state.clone();
-
-        let NamespaceNode::Namespace(namespace) = &node else {
-            new_analysis_state.started = AnalysisStatus::Started;
-            return Ok(new_analysis_state);
-        };
-
-        let constraint_graph = self.graph.get_constraint_graph(namespace).unwrap();
-        let dependencies = new_analysis_state
-            .namespace_dependency_graph
-            .nodes()
-            .get(node)
-            .map(|namespace_data| namespace_data.dependencies.clone());
-
-        if let Some(dependencies) = dependencies {
-            for dependency in dependencies {
-                new_analysis_state
-                    .namespace_dependency_graph
-                    .remove_dependency(&dependency, node);
-                new_analysis_state.removed_nodes.insert(dependency);
-            }
-        }
+pub fn solve_namespace(
+    namespace: &Namespace,
+    constraint_graph: &ConstraintGraph,
+    analysis_state: &mut ModuleConstraintSolverAnalysisState,
+) -> Result<(), Infallible> {
+    loop {
+        let previous_evaluation_state = analysis_state.program_evaluation.get(namespace).cloned();
 
         let solver_state = analysis(
             &ConstraintSolver::new(
-                namespace,
+                &namespace,
                 constraint_graph,
-                &mut new_analysis_state.program_evaluation,
+                &mut analysis_state.program_evaluation,
             ),
             &mut DummyAnalysisObserver::default(),
         )?;
@@ -1696,94 +1568,168 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
 
         if let Some(new_abstract_state) = new_abstract_state {
             let proxy_states = new_abstract_state.proxy;
-            new_analysis_state
+            analysis_state
                 .program_evaluation
                 .extend(&mut proxy_states.states.into_iter());
         }
 
-        for (dependency_namespace, calls) in &evaluation_state.calls {
-            let dependency_node = NamespaceNode::Namespace(dependency_namespace.clone());
-            new_analysis_state.removed_nodes.remove(&dependency_node);
-            new_analysis_state
-                .namespace_dependency_graph
-                .add_dependency(
-                    dependency_node,
-                    NamespaceNode::Namespace(namespace.clone()),
-                    calls.clone(),
-                );
+        for (called_namespace, calls) in &evaluation_state.calls {
+            analysis_state.namespace_dependency_graph.add_dependency(
+                called_namespace.as_ref().clone(),
+                namespace.clone(),
+                calls.clone(),
+            );
         }
-        for (definition, is_class) in &evaluation_state.definitions {
-            let dependent_node = NamespaceNode::Namespace(definition.clone());
-            new_analysis_state.removed_nodes.remove(&dependent_node);
-            new_analysis_state
-                .namespace_dependency_graph
-                .add_dependency(
-                    NamespaceNode::Namespace(namespace.clone()),
-                    dependent_node.clone(),
+
+        let evaluation_state: &EvaluationState = analysis_state
+            .program_evaluation
+            .insert(namespace.clone(), evaluation_state);
+
+        if Some(evaluation_state) == previous_evaluation_state.as_ref() {
+            break;
+        }
+
+        for (sub_namespace, subgraph) in &constraint_graph.subgraphs {
+            analysis_state.namespace_dependency_graph.add_dependency(
+                namespace.clone(),
+                sub_namespace.as_ref().clone(),
+                imbl::OrdMap::default(),
+            );
+            solve_namespace(sub_namespace, subgraph, analysis_state)?;
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Join)]
+pub struct ModuleConstraintSolverAnalysisState {
+    pub program_evaluation: ProgramEvaluation<EvaluationState>,
+    pub namespace_dependency_graph: NamespaceDependencyGraph,
+}
+
+pub struct ModuleConstraintSolver<'a> {
+    pub graph: &'a ModuleDependentGraph,
+}
+
+impl<'a> ModuleConstraintSolver<'a> {
+    pub fn new(graph: &'a ModuleDependentGraph) -> Self {
+        Self { graph }
+    }
+
+    fn get_namespaces<'n>(&'n self, namespace: &'n Namespace) -> Option<BTreeSet<&'n Namespace>> {
+        self.graph
+            .get_constraint_graph(namespace)
+            .map(|constraint_graph| {
+                constraint_graph
+                    .subgraphs
+                    .keys()
+                    .filter_map(|sub_namespace| self.get_namespaces(sub_namespace))
+                    .flatten()
+                    .chain(std::iter::once(namespace))
+                    .collect()
+            })
+    }
+}
+
+impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
+    type Node = SmolStr;
+    type InputState = BTreeMap<
+        Namespace,
+        BTreeMap<ExpressionVariableDefinition, Deferred<Sourced<Type>, Expression>>,
+    >;
+    type OutputState = BTreeMap<Namespace, EvaluationState>;
+    type AnalysisState = ModuleConstraintSolverAnalysisState;
+    type Error = Infallible;
+
+    fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
+        Ok(std::iter::once(BUILTINS_MODULE))
+    }
+    fn dependency_nodes<'a>(
+        &'a self,
+        analysis_state: &'a Self::AnalysisState,
+        node: &'a Self::Node,
+    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
+        Ok(self
+            .get_namespaces(&Namespace::Module(node.clone()))
+            .unwrap()
+            .into_iter()
+            .filter_map(|namespace| {
+                Some(
+                    &analysis_state
+                        .namespace_dependency_graph
+                        .nodes()
+                        .get(namespace)?
+                        .dependencies,
+                )
+            })
+            .flatten()
+            .filter_map(|dependency_namespace| {
+                let dependency_module_name = dependency_namespace.module_name();
+                if node != dependency_module_name {
+                    Some(dependency_module_name)
+                } else {
+                    None
+                }
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter())
+    }
+    fn dependent_nodes<'a>(
+        &'a self,
+        analysis_state: &'a Self::AnalysisState,
+        node: &'a Self::Node,
+    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
+        Ok(self
+            .get_namespaces(&Namespace::Module(node.clone()))
+            .unwrap()
+            .into_iter()
+            .filter_map(|namespace| {
+                Some(
+                    &analysis_state
+                        .namespace_dependency_graph
+                        .nodes()
+                        .get(namespace)?
+                        .dependents,
+                )
+            })
+            .flatten()
+            .filter_map(|dependent_namespace| {
+                let dependent_module_name = dependent_namespace.module_name();
+                if node != dependent_module_name {
+                    Some(dependent_module_name)
+                } else {
+                    None
+                }
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter())
+    }
+
+    fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
+        let mut analysis_state = ModuleConstraintSolverAnalysisState::default();
+        for (module_name, dependent_module_names) in &self.graph.dependents {
+            for dependent_module_name in dependent_module_names {
+                analysis_state.namespace_dependency_graph.add_dependency(
+                    Namespace::Module(module_name.clone()),
+                    Namespace::Module(dependent_module_name.clone()),
                     imbl::OrdMap::default(),
                 );
-            if *is_class {
-                new_analysis_state
-                    .namespace_dependency_graph
-                    .add_dependency(
-                        dependent_node,
-                        NamespaceNode::Namespace(namespace.clone()),
-                        imbl::OrdMap::default(),
-                    );
             }
         }
+        Ok(analysis_state)
+    }
+    fn analyse_node(
+        &self,
+        analysis_state: &Self::AnalysisState,
+        node: &Self::Node,
+    ) -> Result<Self::AnalysisState, Self::Error> {
+        let mut new_analysis_state = analysis_state.clone();
 
-        if let Some(namespace_data) = new_analysis_state
-            .namespace_dependency_graph
-            .nodes()
-            .get(&NamespaceNode::Namespace(namespace.clone()))
-        {
-            if namespace_data.dependents.is_empty() {
-                let target = if let Some(parent) = namespace.parent() {
-                    NamespaceNode::Namespace(parent.clone())
-                } else {
-                    NamespaceNode::Exit
-                };
-                new_analysis_state.removed_nodes.remove(&target);
-                new_analysis_state
-                    .namespace_dependency_graph
-                    .add_dependency(
-                        NamespaceNode::Namespace(namespace.clone()),
-                        target,
-                        imbl::OrdMap::default(),
-                    );
-            }
-        }
+        let namespace = Namespace::Module(node.clone());
+        let constraint_graph = self.graph.get_constraint_graph(&namespace).unwrap();
 
-        if let Some(dependent_nodes) = self
-            .graph
-            .dependents
-            .get(&ModuleNode::Module(namespace.module_name().clone()))
-        {
-            for dependent_node in dependent_nodes {
-                let namespace_dependent_node = match dependent_node {
-                    ModuleNode::Entry => NamespaceNode::Entry,
-                    ModuleNode::Module(dependent_module_name) => NamespaceNode::Namespace(
-                        Arc::new(Namespace::Module(dependent_module_name.clone())),
-                    ),
-                    ModuleNode::Exit => NamespaceNode::Exit,
-                };
-                new_analysis_state
-                    .removed_nodes
-                    .remove(&namespace_dependent_node);
-                new_analysis_state
-                    .namespace_dependency_graph
-                    .add_dependency(
-                        NamespaceNode::Namespace(namespace.clone()),
-                        namespace_dependent_node,
-                        imbl::OrdMap::default(),
-                    );
-            }
-        }
-
-        new_analysis_state
-            .program_evaluation
-            .insert(namespace.as_ref().clone(), evaluation_state);
+        solve_namespace(&namespace, constraint_graph, &mut new_analysis_state)?;
 
         Ok(new_analysis_state)
     }
@@ -1791,63 +1737,66 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
         &self,
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
-    ) -> Result<Option<Self::InputState>, Self::Error> {
-        let NamespaceNode::Namespace(namespace) = &node else {
-            return Ok(None);
-        };
-        let Some(constraint_graph) = self.graph.get_constraint_graph(namespace) else {
-            return Ok(None);
-        };
+    ) -> Result<Self::InputState, Self::Error> {
+        Ok(self
+            .get_namespaces(&Namespace::Module(node.clone()))
+            .unwrap()
+            .into_iter()
+            .map(|namespace| {
+                let constraint_graph = self.graph.get_constraint_graph(namespace).unwrap();
 
-        let mut program_evaluation: AbstractStateProxy<
-            '_,
-            _,
-            _,
-            ProgramEvaluation<EvaluationState>,
-        > = AbstractStateProxy::with_default_proxy(&analysis_state.program_evaluation);
-        let mut evaluator = ExpressionEvaluator::new(EvaluatorMode::Normal, namespace);
+                let mut program_evaluation: AbstractStateProxy<
+                    '_,
+                    _,
+                    _,
+                    ProgramEvaluation<EvaluationState>,
+                > = AbstractStateProxy::with_default_proxy(&analysis_state.program_evaluation);
+                let mut evaluator = ExpressionEvaluator::new(EvaluatorMode::Normal, namespace);
 
-        Ok(Some(
-            constraint_graph
-                .specification
-                .arguments
-                .iter()
-                .map(|(variable, expressions)| {
-                    let ty = if let Ok(eval) =
-                        evaluator.evaluate_expressions(&mut program_evaluation, expressions)
-                    {
-                        Deferred::known(Sourced::specified(eval.value))
-                    } else {
-                        Deferred::unknown(
-                            expressions
-                                .iter()
-                                .map(|expression| Arc::new(expression.clone()))
-                                .collect(),
-                        )
-                    };
-                    (variable.clone(), ty)
-                })
-                .collect(),
-        ))
+                (
+                    namespace.clone(),
+                    constraint_graph
+                        .specification
+                        .arguments
+                        .iter()
+                        .map(|(variable, expressions)| {
+                            let ty = if let Ok(eval) =
+                                evaluator.evaluate_expressions(&mut program_evaluation, expressions)
+                            {
+                                Deferred::known(Sourced::specified(eval.value))
+                            } else {
+                                Deferred::unknown(
+                                    expressions
+                                        .iter()
+                                        .map(|expression| Arc::new(expression.clone()))
+                                        .collect(),
+                                )
+                            };
+                            (variable.clone(), ty)
+                        })
+                        .collect(),
+                )
+            })
+            .collect())
     }
     fn get_output_state(
         &self,
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
-    ) -> Result<Option<Self::OutputState>, Self::Error> {
-        let NamespaceNode::Namespace(namespace) = &node else {
-            return if matches!(analysis_state.started, AnalysisStatus::Started) {
-                Ok(Some(Default::default()))
-            } else {
-                Ok(None)
-            };
-        };
-
-        Ok(Some(
-            analysis_state
-                .program_evaluation
-                .get_clone_or_default(namespace),
-        ))
+    ) -> Result<Self::OutputState, Self::Error> {
+        Ok(self
+            .get_namespaces(&Namespace::Module(node.clone()))
+            .unwrap()
+            .into_iter()
+            .map(|namespace| {
+                (
+                    namespace.clone(),
+                    analysis_state
+                        .program_evaluation
+                        .get_clone_or_default(namespace),
+                )
+            })
+            .collect())
     }
 }
 
@@ -2065,27 +2014,27 @@ mod tests {
         indoc! {r##"
         module:
             add_two = function(module[add_two@{1:4}])
-            result = Any
-            #raise = {Exception(type=Any, origin=Unknown)}
+            result = @class(builtins[int@{1:6}])
+            #raise = {}
             #return = None
         module[add_two@{1:4}]:
             a = @class(builtins[int@{1:6}])
             b = @class(builtins[int@{1:6}])
-            #raise = {Exception(type=Any, origin=Unknown)}
+            #raise = {}
             #return = @class(builtins[int@{1:6}])
         "##},
         indoc! {r##"
         module:
             add_two@{module[1:4]} = Inferred(function(module[add_two@{1:4}]))
-            result@{module[4:0]} = Inferred(Never) ⊔ #deferred{(add_two)(42, 67)}
+            result@{module[4:0]} = Inferred(@class(builtins[int@{1:6}]))
             #variables = {add_two: {module[1:4]}, result: {module[4:0]}}
-            #raise = Inferred({}) ⊔ #deferred{(add_two)(42, 67)}
+            #raise = Inferred({})
             #return = Inferred(None)
         module[add_two@{1:4}]:
             a@{module[add_two@{1:4}][1:12]} = Specified(@class(builtins[int@{1:6}]))
             b@{module[add_two@{1:4}][1:20]} = Specified(@class(builtins[int@{1:6}]))
             #variables = {a: {module[add_two@{1:4}][1:12]}, b: {module[add_two@{1:4}][1:20]}}
-            #raise = Inferred({}) ⊔ #deferred{(a) + (b)}
+            #raise = Inferred({})
             #return = Specified(@class(builtins[int@{1:6}]))
         "##},
     )]

@@ -168,12 +168,12 @@ pub trait DependencyGraphAnalyser {
         &self,
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
-    ) -> Result<Option<Self::InputState>, Self::Error>;
+    ) -> Result<Self::InputState, Self::Error>;
     fn get_output_state(
         &self,
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
-    ) -> Result<Option<Self::OutputState>, Self::Error>;
+    ) -> Result<Self::OutputState, Self::Error>;
 }
 
 pub fn dependencies_analysis<

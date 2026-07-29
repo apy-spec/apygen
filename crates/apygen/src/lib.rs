@@ -1,6 +1,5 @@
 use crate::analysis::dependencies_analysis;
 use crate::analysis::log::LogAnalysisObserver;
-use crate::constraint_builder::constraint_graph::ModuleNode;
 use crate::constraint_builder::constraint_graph::identifiers::SmolStr;
 use crate::constraint_builder::{SpecModuleLoader, analyse_program};
 use crate::constraint_solver::ModuleConstraintSolver;
@@ -62,17 +61,7 @@ pub fn analyse_workdir(
 
     let apy_v1 = convert_apy_v1(
         &program_evaluation,
-        dependent_graph
-            .nodes
-            .keys()
-            .par_bridge()
-            .filter_map(|module_node| {
-                if let ModuleNode::Module(module_name) = module_node {
-                    Some(module_name)
-                } else {
-                    None
-                }
-            }),
+        dependent_graph.nodes.keys().par_bridge(),
     );
 
     Apy::V1(apy_v1)

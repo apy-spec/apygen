@@ -296,27 +296,10 @@ impl DiGraphDot for ConstraintGraph {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ModuleNode {
-    Entry,
-    Module(SmolStr),
-    Exit,
-}
-
-impl Display for ModuleNode {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ModuleNode::Entry => write!(f, "Entry"),
-            ModuleNode::Module(module_name) => write!(f, "Module({})", module_name),
-            ModuleNode::Exit => write!(f, "Exit"),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct ModuleDependentGraph {
-    pub nodes: imbl::OrdMap<ModuleNode, ConstraintGraph>,
-    pub dependents: imbl::OrdMap<ModuleNode, imbl::OrdSet<ModuleNode>>,
+    pub nodes: imbl::OrdMap<SmolStr, ConstraintGraph>,
+    pub dependents: imbl::OrdMap<SmolStr, imbl::OrdSet<SmolStr>>,
 }
 
 impl ModuleDependentGraph {
@@ -326,9 +309,7 @@ impl ModuleDependentGraph {
 
     pub fn get_constraint_graph(&self, namespace: &Namespace) -> Option<&ConstraintGraph> {
         match namespace {
-            Namespace::Module(module_name) => {
-                self.nodes.get(&ModuleNode::Module(module_name.clone()))
-            }
+            Namespace::Module(module_name) => self.nodes.get(module_name),
             Namespace::ProgramEntity(qualified_location) => self
                 .get_constraint_graph(qualified_location.namespace.as_ref())?
                 .subgraphs
@@ -351,15 +332,15 @@ impl Default for ModuleDependentGraph {
 }
 
 impl ModuleDependentGraph {
-    pub fn insert(&mut self, node: ModuleNode, state: ConstraintGraph) {
+    pub fn insert(&mut self, node: SmolStr, state: ConstraintGraph) {
         self.nodes.insert(node.clone(), state);
     }
 
-    pub fn add_dependent(&mut self, from: ModuleNode, to: ModuleNode) {
+    pub fn add_dependent(&mut self, from: SmolStr, to: SmolStr) {
         self.dependents.entry(from).or_default().insert(to);
     }
 
-    pub fn remove_dependent(&mut self, from: ModuleNode, to: ModuleNode) {
+    pub fn remove_dependent(&mut self, from: SmolStr, to: SmolStr) {
         if let Entry::Occupied(mut tos) = self.dependents.entry(from) {
             tos.get_mut().remove(&to);
         }
@@ -377,7 +358,7 @@ impl Display for ModuleDependentGraph {
 }
 
 impl Graph for ModuleDependentGraph {
-    type Node = ModuleNode;
+    type Node = SmolStr;
     type NodeData = ConstraintGraph;
     type EdgeData = ();
 
