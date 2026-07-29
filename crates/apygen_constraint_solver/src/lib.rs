@@ -49,7 +49,7 @@ pub struct EvaluationState {
     pub defined_variables: DefinedVariables,
     pub calls:
         imbl::OrdMap<Arc<Namespace>, imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>>,
-    pub definitions: imbl::OrdSet<Arc<Namespace>>,
+    pub definitions: imbl::OrdSet<(Arc<Namespace>, bool)>,
 }
 
 impl EvaluationState {
@@ -382,7 +382,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     is_async: expression_function.is_async,
                 }),
             })),
-            PyEffects::new().with_definitions(imbl::OrdSet::unit(Arc::new(function_namespace))),
+            PyEffects::new().with_definitions(imbl::OrdSet::unit((Arc::new(function_namespace), false))),
         ))
     }
 
@@ -404,7 +404,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     is_abstract: false,
                 }),
             })),
-            PyEffects::new().with_definitions(imbl::OrdSet::unit(Arc::new(class_namespace))),
+            PyEffects::new().with_definitions(imbl::OrdSet::unit((Arc::new(class_namespace), true))),
         ))
     }
 
@@ -1732,7 +1732,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
                     calls.clone(),
                 );
         }
-        for definition in &evaluation_state.definitions {
+        for (definition, is_class) in &evaluation_state.definitions {
             let dependent_node = NamespaceNode::Namespace(definition.clone());
             new_analysis_state.removed_nodes.remove(&dependent_node);
             new_analysis_state
@@ -1742,13 +1742,15 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
                     dependent_node.clone(),
                     imbl::OrdMap::default(),
                 );
-            new_analysis_state
-                .namespace_dependency_graph
-                .add_dependency(
-                    dependent_node,
-                    NamespaceNode::Namespace(namespace.clone()),
-                    imbl::OrdMap::default(),
-                );
+            if *is_class {
+                new_analysis_state
+                    .namespace_dependency_graph
+                    .add_dependency(
+                        dependent_node,
+                        NamespaceNode::Namespace(namespace.clone()),
+                        imbl::OrdMap::default(),
+                    );
+            }
         }
 
         if let Some(namespace_data) = new_analysis_state

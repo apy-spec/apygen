@@ -22,7 +22,7 @@ pub struct PyEffects {
     pub pureness: Pureness,
     pub completeness: Completeness,
     pub calls: imbl::OrdMap<Arc<Namespace>, imbl::OrdSet<Arguments>>,
-    pub definitions: imbl::OrdSet<Arc<Namespace>>,
+    pub definitions: imbl::OrdSet<(Arc<Namespace>, bool)>,
 }
 
 impl PyEffects {
@@ -53,7 +53,7 @@ impl PyEffects {
         self
     }
 
-    pub fn with_definitions(mut self, definitions: imbl::OrdSet<Arc<Namespace>>) -> Self {
+    pub fn with_definitions(mut self, definitions: imbl::OrdSet<(Arc<Namespace>, bool)>) -> Self {
         self.definitions = definitions;
         self
     }
