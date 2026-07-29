@@ -1571,6 +1571,7 @@ pub trait NamespaceEvaluation {
         None
     }
     fn raised_exceptions(&self) -> &Deferred<Sourced<RaisedExceptions>, Self::Expression>;
+    fn return_value(&self) -> &Deferred<Sourced<Type>, Self::Expression>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
@@ -1603,11 +1604,28 @@ impl<N: NamespaceEvaluation> Default for ProgramEvaluation<N> {
     }
 }
 
-impl<N: NamespaceEvaluation + Display> Display for ProgramEvaluation<N> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fmt_set(f, self.states.iter(), |f, (location, state)| {
-            write!(f, "{}: {}", location, state)
-        })
+impl<N: NamespaceEvaluation + Display> Display for ProgramEvaluation<N>
+where
+    N::Expression: Display,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if f.alternate() {
+            for (namespace, namespace_evaluation) in &self.states {
+                writeln!(f, "{}:", namespace)?;
+                for line in format!("{:#}", namespace_evaluation).lines() {
+                    writeln!(f, "    {}", line)?;
+                }
+            }
+            Ok(())
+        } else {
+            fmt_set(
+                f,
+                self.states.iter(),
+                |f, (namespace, namespace_evaluation)| {
+                    write!(f, "{}: {}", namespace, namespace_evaluation)
+                },
+            )
+        }
     }
 }
 

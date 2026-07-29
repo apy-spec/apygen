@@ -74,16 +74,25 @@ impl EvaluationState {
 }
 
 impl Display for EvaluationState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("(evaluations: ")?;
-        fmt_set(f, self.types.iter(), |f, (expression, eval)| {
-            write!(f, "{}: {}", expression, eval)
-        })?;
-        write!(
-            f,
-            ", return: {}, raised: {}, defined_variables = {})",
-            self.return_value, self.raised_exceptions, self.defined_variables
-        )
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if f.alternate() {
+            for (expression, deferred_ty) in &self.types {
+                writeln!(f, "{} = {}", expression, deferred_ty)?;
+            }
+            writeln!(f, "#variables = {}", self.defined_variables)?;
+            writeln!(f, "#raise = {}", self.raised_exceptions)?;
+            writeln!(f, "#return = {}", self.return_value)
+        } else {
+            f.write_str("(evaluations: ")?;
+            fmt_set(f, self.types.iter(), |f, (expression, eval)| {
+                write!(f, "{}: {}", expression, eval)
+            })?;
+            write!(
+                f,
+                ", return: {}, raised: {}, defined_variables: {})",
+                self.return_value, self.raised_exceptions, self.defined_variables
+            )
+        }
     }
 }
 
@@ -113,6 +122,10 @@ impl NamespaceEvaluation for EvaluationState {
 
     fn raised_exceptions(&self) -> &Deferred<Sourced<RaisedExceptions>, Self::Expression> {
         &self.raised_exceptions
+    }
+
+    fn return_value(&self) -> &Deferred<Sourced<Type>, Self::Expression> {
+        &self.return_value
     }
 }
 
@@ -1838,25 +1851,6 @@ mod tests {
     fn test_builtins_constraints_solving() {
         init_logger();
 
-        let expected_types = indoc! {r##"
-        builtins:
-            NameError = class(builtins[NameError@{4:6}])
-            int = class(builtins[int@{1:6}])
-            #raise = {}
-            #return = None
-        builtins[NameError@{4:6}]:
-            #raise = {}
-            #return = None
-        builtins[int@{1:6}][__add__@{2:8}]:
-            self = Never
-            value = @class(builtins[int@{1:6}])
-            #raise = {}
-            #return = @class(builtins[int@{1:6}])
-        builtins[int@{1:6}]:
-            __add__ = function(builtins[int@{1:6}][__add__@{2:8}])
-            #raise = {}
-            #return = None
-        "##};
         let expected_expressions = indoc! {r##"
         builtins:
             NameError@{builtins[4:6]} = Inferred(class(builtins[NameError@{4:6}]))
@@ -1896,56 +1890,12 @@ mod tests {
                 .expect("analysis should work")
                 .program_evaluation;
 
-        let mut actual_types = String::new();
-        let mut actual_expressions = String::new();
-        for (qualified_location, abstract_state) in &program_evaluation.states {
-            actual_types.push_str(&format!("{}:\n", qualified_location));
-            for (variable_name, variable_type) in abstract_state.attributes() {
-                actual_types.push_str(&format!(
-                    "    {} = {}\n",
-                    variable_name,
-                    variable_type.to_value().map_or(Type::Any, |ty| ty.data)
-                ));
-            }
-            actual_types.push_str(&format!(
-                "    #raise = {}\n",
-                abstract_state.raised_exceptions.as_value().map_or(
-                    RaisedExceptions::raise(Exception::new(
-                        Arc::new(Type::Any),
-                        ExceptionOrigin::Unknown
-                    )),
-                    |raised_exceptions| { raised_exceptions.data.clone() }
-                )
-            ));
-            actual_types.push_str(&format!(
-                "    #return = {}\n",
-                abstract_state
-                    .return_value
-                    .as_value()
-                    .map_or(Type::Any, |ty| ty.data.clone())
-            ));
-
-            actual_expressions.push_str(&format!("{}:\n", qualified_location));
-            for (expression, eval) in &abstract_state.types {
-                actual_expressions.push_str(&format!("    {} = {}\n", expression, eval))
-            }
-            actual_expressions.push_str(&format!(
-                "    #variables = {}\n",
-                abstract_state.defined_variables
-            ));
-            actual_expressions.push_str(&format!(
-                "    #raise = {}\n",
-                abstract_state.raised_exceptions
-            ));
-            actual_expressions
-                .push_str(&format!("    #return = {}\n", abstract_state.return_value));
-        }
+        let actual_expressions = format!("{:#}", program_evaluation);
 
         assert_eq!(
             expected_expressions, actual_expressions,
             "{actual_expressions}"
         );
-        assert_eq!(expected_types, actual_types, "{actual_types}");
     }
 
     #[rstest]
@@ -1959,14 +1909,6 @@ mod tests {
             a = 67
 
         b = a
-        "##},
-        indoc! {r##"
-        module:
-            a = 42
-            b = 42
-            x = True
-            #raise = {}
-            #return = None
         "##},
         indoc! {r##"
         module:
@@ -1989,13 +1931,6 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            a = @class(builtins[int@{1:6}])
-            b = @class(builtins[int@{1:6}])
-            #raise = {Exception(type=Any, origin=Unknown)}
-            #return = None
-        "##},
-        indoc! {r##"
-        module:
             a@{module[1:0]} = Inferred(0)
             a@{module[4:4]} = Inferred(@class(builtins[int@{1:6}]))
             b@{module[6:0]} = Inferred(@class(builtins[int@{1:6}]))
@@ -2010,18 +1945,6 @@ mod tests {
             return a + b
 
         result = add_two(42, 67)
-        "##},
-        indoc! {r##"
-        module:
-            add_two = function(module[add_two@{1:4}])
-            result = @class(builtins[int@{1:6}])
-            #raise = {}
-            #return = None
-        module[add_two@{1:4}]:
-            a = @class(builtins[int@{1:6}])
-            b = @class(builtins[int@{1:6}])
-            #raise = {}
-            #return = @class(builtins[int@{1:6}])
         "##},
         indoc! {r##"
         module:
@@ -2047,17 +1970,6 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            A = class(module[A@{1:6}])
-            result = 5
-            #raise = {}
-            #return = None
-        module[A@{1:6}]:
-            b = 5
-            #raise = {}
-            #return = None
-        "##},
-        indoc! {r##"
-        module:
             A@{module[1:6]} = Inferred(class(module[A@{1:6}]))
             result@{module[4:0]} = Inferred(5)
             #variables = {A: {module[1:6]}, result: {module[4:0]}}
@@ -2077,18 +1989,6 @@ mod tests {
 
         a = A()
         result = a.b
-        "##},
-        indoc! {r##"
-        module:
-            A = class(module[A@{1:6}])
-            a = @class(module[A@{1:6}])
-            result = 5
-            #raise = {}
-            #return = None
-        module[A@{1:6}]:
-            b = 5
-            #raise = {}
-            #return = None
         "##},
         indoc! {r##"
         module:
@@ -2112,20 +2012,6 @@ mod tests {
                 return 5
 
         result = A.foo
-        "##},
-        indoc! {r##"
-        module:
-            A = class(module[A@{1:6}])
-            result = function(module[A@{1:6}][foo@{2:8}])
-            #raise = {}
-            #return = None
-        module[A@{1:6}]:
-            foo = function(module[A@{1:6}][foo@{2:8}])
-            #raise = {}
-            #return = None
-        module[A@{1:6}][foo@{2:8}]:
-            #raise = {}
-            #return = 5
         "##},
         indoc! {r##"
         module:
@@ -2153,21 +2039,6 @@ mod tests {
 
         a = A()
         result = a.foo
-        "##},
-        indoc! {r##"
-        module:
-            A = class(module[A@{1:6}])
-            a = @class(module[A@{1:6}])
-            result = method(class(module[A@{1:6}])[], function(module[A@{1:6}][foo@{2:8}]))
-            #raise = {}
-            #return = None
-        module[A@{1:6}]:
-            foo = function(module[A@{1:6}][foo@{2:8}])
-            #raise = {}
-            #return = None
-        module[A@{1:6}][foo@{2:8}]:
-            #raise = {}
-            #return = 5
         "##},
         indoc! {r##"
         module:
@@ -2199,17 +2070,6 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            CONST = 5
-            foo = function(module[foo@{1:4}])
-            result = 5
-            #raise = {}
-            #return = None
-        module[foo@{1:4}]:
-            #raise = {}
-            #return = 5
-        "##},
-        indoc! {r##"
-        module:
             CONST@{module[6:0]} = Inferred(5)
             foo@{module[1:4]} = Inferred(function(module[foo@{1:4}]))
             result@{module[4:0]} = Inferred(5)
@@ -2233,17 +2093,6 @@ mod tests {
         "##},
         indoc! {r##"
         module:
-            CONST = 5
-            foo = function(module[foo@{1:4}])
-            result = 5
-            #raise = {}
-            #return = None
-        module[foo@{1:4}]:
-            #raise = {}
-            #return = 5
-        "##},
-        indoc! {r##"
-        module:
             CONST@{module[4:0]} = Inferred(5)
             foo@{module[1:4]} = Inferred(function(module[foo@{1:4}]))
             result@{module[6:0]} = Inferred(5)
@@ -2256,11 +2105,7 @@ mod tests {
             #return = Inferred(5)
         "##},
     )]
-    fn test_constraints_solving(
-        #[case] source: &str,
-        #[case] expected_types: &str,
-        #[case] expected_expressions: &str,
-    ) {
+    fn test_constraints_solving(#[case] source: &str, #[case] expected_expressions: &str) {
         init_logger();
 
         let module_name = SmolStr::new_static("module");
@@ -2275,63 +2120,22 @@ mod tests {
 
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-        let program_evaluation =
+        let mut program_evaluation =
             dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
                 .expect("analysis should work")
                 .program_evaluation;
 
-        let mut actual_types = String::new();
-        let mut actual_expressions = String::new();
-        for (qualified_location, abstract_state) in &program_evaluation.states {
-            if *qualified_location.module_name() != module_name {
-                continue;
-            }
-            actual_types.push_str(&format!("{}:\n", qualified_location));
-            for (variable_name, variable_type) in abstract_state.attributes() {
-                actual_types.push_str(&format!(
-                    "    {} = {}\n",
-                    variable_name,
-                    variable_type.to_value().map_or(Type::Any, |ty| ty.data)
-                ));
-            }
-            actual_types.push_str(&format!(
-                "    #raise = {}\n",
-                abstract_state.raised_exceptions.as_value().map_or(
-                    RaisedExceptions::raise(Exception::new(
-                        Arc::new(Type::Any),
-                        ExceptionOrigin::Unknown
-                    )),
-                    |raised_exceptions| { raised_exceptions.data.clone() }
-                )
-            ));
-            actual_types.push_str(&format!(
-                "    #return = {}\n",
-                abstract_state
-                    .return_value
-                    .as_value()
-                    .map_or(Type::Any, |ty| ty.data.clone())
-            ));
+        program_evaluation.states = program_evaluation
+            .states
+            .into_iter()
+            .filter(|(namespace, _)| *namespace.module_name() == module_name)
+            .collect();
 
-            actual_expressions.push_str(&format!("{}:\n", qualified_location));
-            for (expression, eval) in &abstract_state.types {
-                actual_expressions.push_str(&format!("    {} = {}\n", expression, eval))
-            }
-            actual_expressions.push_str(&format!(
-                "    #variables = {}\n",
-                abstract_state.defined_variables
-            ));
-            actual_expressions.push_str(&format!(
-                "    #raise = {}\n",
-                abstract_state.raised_exceptions
-            ));
-            actual_expressions
-                .push_str(&format!("    #return = {}\n", abstract_state.return_value));
-        }
+        let actual_expressions = format!("{:#}", program_evaluation);
 
         assert_eq!(
             expected_expressions, actual_expressions,
             "{actual_expressions}"
         );
-        assert_eq!(expected_types, actual_types, "{actual_types}");
     }
 }
