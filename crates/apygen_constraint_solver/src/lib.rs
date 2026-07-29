@@ -1877,7 +1877,7 @@ mod tests {
 
         let module_loader = TestModuleLoader {
             modules: HashMap::from_iter([(
-                apygen_constraint_builder::BUILTINS_MODULE,
+                BUILTINS_MODULE,
                 TEST_BUILTINS.to_owned(),
             )]),
         };
@@ -1885,12 +1885,10 @@ mod tests {
 
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-        let program_evaluation =
-            dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
-                .expect("analysis should work")
-                .program_evaluation;
+        let analysis_state = dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
+            .expect("analysis should work");
 
-        let actual_expressions = format!("{:#}", program_evaluation);
+        let actual_expressions = format!("{:#}", analysis_state.program_evaluation);
 
         assert_eq!(
             expected_expressions, actual_expressions,
@@ -2120,18 +2118,18 @@ mod tests {
 
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-        let mut program_evaluation =
+        let mut analysis_state =
             dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
-                .expect("analysis should work")
-                .program_evaluation;
+                .expect("analysis should work");
 
-        program_evaluation.states = program_evaluation
+        analysis_state.program_evaluation.states = analysis_state
+            .program_evaluation
             .states
             .into_iter()
             .filter(|(namespace, _)| *namespace.module_name() == module_name)
             .collect();
 
-        let actual_expressions = format!("{:#}", program_evaluation);
+        let actual_expressions = format!("{:#}", analysis_state.program_evaluation);
 
         assert_eq!(
             expected_expressions, actual_expressions,
