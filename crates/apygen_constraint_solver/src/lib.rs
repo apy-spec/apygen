@@ -57,7 +57,7 @@ impl EvaluationState {
         variable_name: &SmolStr,
         locations: &imbl::OrdSet<(Arc<Namespace>, Location)>,
     ) -> Option<Sourced<Type>> {
-        let mut ty = Sourced::default();
+        let mut ty = Sourced::specified(Type::Never);
         for (namespace, location) in locations {
             let variable = Expression::VariableDefinition(ExpressionVariableDefinition::new(
                 NamedQualifiedLocation::new(
@@ -1640,7 +1640,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
                     _,
                     ProgramEvaluation<EvaluationState>,
                 > = AbstractStateProxy::with_default_proxy(&analysis_state.program_evaluation);
-                let mut evaluator = ExpressionEvaluator::new(EvaluatorMode::Normal, namespace);
+                let evaluator = ExpressionEvaluator::new(EvaluatorMode::Normal, namespace);
 
                 (
                     namespace.clone(),

@@ -6,7 +6,7 @@ use crate::primitives::literals::{
 };
 pub use apygen_analysis as analysis;
 use apygen_analysis::abstract_state::AbstractState;
-use apygen_analysis::fmt::{fmt_display_set, fmt_set};
+use apygen_analysis::fmt::{fmt_set};
 use imbl::ordmap::Entry;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
@@ -34,7 +34,6 @@ pub enum Source {
 }
 
 impl OrdJoin for Source {}
-impl OrdLatticeOrd for Source {}
 
 impl Display for Source {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
