@@ -1425,7 +1425,7 @@ pub fn solve_namespace(
             &ConstraintSolver::new(
                 &namespace,
                 constraint_graph,
-                &mut analysis_state.program_evaluation,
+                &analysis_state.program_evaluation,
             ),
             &mut DummyAnalysisObserver::default(),
         )?;
