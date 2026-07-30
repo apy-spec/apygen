@@ -1,7 +1,7 @@
+use crate::constraint_graph::expressions::UnaryOperator;
 use crate::expressions::PyTypeEval;
-use crate::inference::{Exception, Type};
+use crate::inference::{Exception, Sourced, Type};
 use crate::primitives::literals::LiteralBool;
-use apygen_constraint_graph::expressions::UnaryOperator;
 
 pub fn as_boolean() -> bool {
     false
@@ -24,6 +24,6 @@ pub fn call_unary_op(operator: UnaryOperator) -> PyTypeEval {
         UnaryOperator::Invert | UnaryOperator::UAdd | UnaryOperator::USub => {
             PyTypeEval::raise(Exception::any()) // TODO: fix
         }
-        UnaryOperator::Not => PyTypeEval::with_default_effects(call_not()),
+        UnaryOperator::Not => PyTypeEval::with_default_effects(Sourced::inferred(call_not())),
     }
 }

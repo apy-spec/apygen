@@ -1,9 +1,8 @@
+use crate::constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use crate::expressions::PyTypeEval;
-use crate::inference::{Exception, Type};
-use crate::primitives::Zero;
+use crate::inference::{Exception, Sourced, Type};
 use crate::primitives::literals::{LiteralBool, LiteralFloat, LiteralInt};
-use apygen_constraint_graph::expressions::{BinaryOperator, UnaryOperator};
-use apygen_primitives::{Pow, PowOutput};
+use crate::primitives::{Pow, PowOutput, Zero};
 
 pub fn as_boolean(literal_integer: &LiteralInt) -> bool {
     !literal_integer.value.is_zero()
@@ -11,7 +10,7 @@ pub fn as_boolean(literal_integer: &LiteralInt) -> bool {
 
 pub fn call_dunder_float(literal_integer: &LiteralInt) -> PyTypeEval {
     if let Some(literal_float) = literal_integer.to_literal_float() {
-        PyTypeEval::with_default_effects(Type::new_float_literal(literal_float))
+        PyTypeEval::with_default_effects(Sourced::inferred(Type::new_float_literal(literal_float)))
     } else {
         PyTypeEval::unknown()
     }
@@ -61,7 +60,7 @@ pub fn call_binary_op(
 ) -> PyTypeEval {
     let left_int = &left.value;
     let right_int = &right.value;
-    PyTypeEval::with_default_effects(match operator {
+    PyTypeEval::with_default_effects(Sourced::inferred(match operator {
         BinaryOperator::Add => Type::new_integer_literal(LiteralInt::new(left_int + right_int)),
         BinaryOperator::Sub => Type::new_integer_literal(LiteralInt::new(left_int - right_int)),
         BinaryOperator::Mult => Type::new_integer_literal(LiteralInt::new(left_int * right_int)),
@@ -116,5 +115,5 @@ pub fn call_binary_op(
             return PyTypeEval::raise(Exception::any()); // TODO: fix
         }
         _ => return PyTypeEval::unknown(),
-    })
+    }))
 }

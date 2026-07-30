@@ -18,11 +18,10 @@ use crate::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
 use crate::identifiers::smol_str::format_smolstr;
 use crate::identifiers::{Location, NamedQualifiedLocation, QualifiedLocation};
 use crate::inference::{
-    BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Deferred, DefinedVariables, Exception,
-    ExceptionOrigin, FunctionType, ImportedModuleType, LiteralClass, LiteralFunction,
-    LiteralImportedModule, LiteralMethod, NamespaceEvaluation, ProgramEvaluation, RaisedExceptions,
-    Source, Sourced, StructuralDepth, StructuralWidth, Type, TypeInstance, TypeLiteral,
-    WIDTH_LIMIT,
+    BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, DefinedVariables, Exception, ExceptionOrigin,
+    FunctionType, ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule,
+    LiteralMethod, NamespaceEvaluation, ProgramEvaluation, RaisedExceptions, Source, Sourced,
+    StructuralDepth, StructuralWidth, Type, TypeInstance, TypeLiteral, WIDTH_LIMIT,
 };
 use imbl::ordmap::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -43,9 +42,9 @@ pub mod expressions;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
 pub struct EvaluationState {
-    pub types: imbl::OrdMap<Arc<Expression>, Deferred<Sourced<Type>, Expression>>,
-    pub return_value: Deferred<Sourced<Type>, Expression>,
-    pub raised_exceptions: Deferred<Sourced<RaisedExceptions>, Expression>,
+    pub types: imbl::OrdMap<Arc<Expression>, Sourced<Type>>,
+    pub return_value: Sourced<Type>,
+    pub raised_exceptions: RaisedExceptions,
     pub defined_variables: DefinedVariables,
     pub calls:
         imbl::OrdMap<Arc<Namespace>, imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>>,
@@ -57,8 +56,8 @@ impl EvaluationState {
         &self,
         variable_name: &SmolStr,
         locations: &imbl::OrdSet<(Arc<Namespace>, Location)>,
-    ) -> Option<Deferred<Sourced<Type>, Expression>> {
-        let mut ty = None;
+    ) -> Option<Sourced<Type>> {
+        let mut ty = Sourced::default();
         for (namespace, location) in locations {
             let variable = Expression::VariableDefinition(ExpressionVariableDefinition::new(
                 NamedQualifiedLocation::new(
@@ -67,17 +66,17 @@ impl EvaluationState {
                     namespace.clone(),
                 ),
             ));
-            ty = ty.join(&self.types.get(&variable).cloned());
+            ty = ty.join(&self.types.get(&variable).cloned()?);
         }
-        ty
+        Some(ty)
     }
 }
 
 impl Display for EvaluationState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if f.alternate() {
-            for (expression, deferred_ty) in &self.types {
-                writeln!(f, "{} = {}", expression, deferred_ty)?;
+            for (expression, eval) in &self.types {
+                writeln!(f, "{} = {}", expression, eval)?;
             }
             writeln!(f, "#variables = {}", self.defined_variables)?;
             writeln!(f, "#raise = {}", self.raised_exceptions)?;
@@ -97,10 +96,7 @@ impl Display for EvaluationState {
 }
 
 impl NamespaceEvaluation for EvaluationState {
-    type Expression = Expression;
-    fn attributes(
-        &self,
-    ) -> impl Iterator<Item = (&SmolStr, Deferred<Sourced<Type>, Self::Expression>)> {
+    fn attributes(&self) -> impl Iterator<Item = (&SmolStr, Sourced<Type>)> {
         self.defined_variables
             .names
             .iter()
@@ -113,18 +109,18 @@ impl NamespaceEvaluation for EvaluationState {
             })
     }
 
-    fn get_attribute(&self, name: &SmolStr) -> Option<Deferred<Sourced<Type>, Self::Expression>> {
+    fn get_attribute(&self, name: &SmolStr) -> Option<Sourced<Type>> {
         self.defined_variables
             .names
             .get(name)
             .map(|locations| self.get_variable_type(name, locations).unwrap_or_default())
     }
 
-    fn raised_exceptions(&self) -> &Deferred<Sourced<RaisedExceptions>, Self::Expression> {
+    fn raised_exceptions(&self) -> &RaisedExceptions {
         &self.raised_exceptions
     }
 
-    fn return_value(&self) -> &Deferred<Sourced<Type>, Self::Expression> {
+    fn return_value(&self) -> &Sourced<Type> {
         &self.return_value
     }
 }
@@ -192,8 +188,6 @@ pub enum EvaluatorMode {
 
 #[derive(Debug, Clone, Error)]
 pub enum EvaluationError {
-    #[error("the expression uses a deferred expression")]
-    Deferred,
     #[error("the expression is an invalid annotation")]
     InvalidAnnotation,
     #[error("failed to get the reference to the qualified name {module}.{id}")]
@@ -205,16 +199,11 @@ pub enum EvaluationError {
 pub struct ExpressionEvaluator<'a> {
     pub mode: EvaluatorMode,
     pub namespace: &'a Namespace,
-    pub current_expression: Option<Expression>,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
     pub fn new(mode: EvaluatorMode, namespace: &'a Namespace) -> Self {
-        Self {
-            mode,
-            namespace,
-            current_expression: None,
-        }
+        Self { mode, namespace }
     }
 
     pub fn with_namespace(&self, namespace: &'a Namespace) -> Self {
@@ -225,17 +214,8 @@ impl<'a> ExpressionEvaluator<'a> {
         Self::new(mode, self.namespace)
     }
 
-    pub fn extract_deferred<T: Clone>(
-        deferred: &Deferred<Sourced<T>, Expression>,
-    ) -> Result<T, EvaluationError> {
-        match deferred.as_value() {
-            Some(sourced) => Ok(sourced.data.clone()),
-            None => Err(EvaluationError::Deferred),
-        }
-    }
-
     pub fn find_type(
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         module: &SmolStr,
         name: &SmolStr,
     ) -> Result<Type, EvaluationError> {
@@ -249,8 +229,8 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     pub fn evaluate_expression_variable_definition(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_variable_definition: &ExpressionVariableDefinition,
     ) -> Result<PyTypeEval, EvaluationError> {
         let namespace = expression_variable_definition.namespace();
@@ -261,58 +241,29 @@ impl<'a> ExpressionEvaluator<'a> {
             ));
         };
 
-        let exists = evaluation_state
-            .defined_variables
-            .names
-            .get(expression_variable_definition.name())
-            .map(|locations| {
-                locations.contains(&(
-                    namespace.clone(),
-                    expression_variable_definition.location().clone(),
+        Ok(PyTypeEval::with_default_effects(
+            evaluation_state
+                .types
+                .get(&Expression::VariableDefinition(
+                    expression_variable_definition.clone(),
                 ))
-            })
-            .unwrap_or(false);
-
-        if exists {
-            Ok(PyTypeEval::with_default_effects(Self::extract_deferred(
-                &evaluation_state
-                    .types
-                    .get(&Expression::VariableDefinition(
-                        expression_variable_definition.clone(),
-                    ))
-                    .cloned()
-                    .unwrap_or_default(),
-            )?))
-        } else {
-            Ok(PyTypeEval::raise(Exception::new(
-                Arc::new(Self::find_type(
-                    abstract_state,
-                    &BUILTINS_MODULE,
-                    &SmolStr::new_static("NameError"),
-                )?),
-                ExceptionOrigin::Specified, // TODO: fix origin
-            )))
-        }
+                .cloned()
+                .unwrap_or_default(),
+        ))
     }
 
     pub fn evaluate_expression_variable_reference(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_variable_reference: &ExpressionVariableReference,
     ) -> Result<PyTypeEval, EvaluationError> {
-        let Some(evaluation_state) = abstract_state.get(self.namespace) else {
-            return Err(EvaluationError::NamespaceReferenceError(
-                self.namespace.clone(),
-            ));
+        if let Some(evaluation_state) = abstract_state.get(self.namespace) {
+            if let Some(sourced_ty) =
+                evaluation_state.get_attribute(&expression_variable_reference.name)
+            {
+                return Ok(PyTypeEval::with_default_effects(sourced_ty));
+            }
         };
-
-        if let Some(deferred_ty) =
-            evaluation_state.get_attribute(&expression_variable_reference.name)
-        {
-            return Ok(PyTypeEval::with_default_effects(Self::extract_deferred(
-                &deferred_ty,
-            )?));
-        }
 
         if let Some(parent_namespace) = self.namespace.parent() {
             return self
@@ -333,7 +284,7 @@ impl<'a> ExpressionEvaluator<'a> {
         }
 
         Ok(PyTypeEval::raise(Exception::new(
-            Arc::new(Self::find_type(
+            Sourced::inferred(Self::find_type(
                 abstract_state,
                 &BUILTINS_MODULE,
                 &SmolStr::new_static("NameError"),
@@ -343,15 +294,19 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     pub fn evaluate_expression_annotated(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_annotated: &ExpressionAnnotated,
     ) -> Result<PyTypeEval, EvaluationError> {
-        let annotation_eval = self
-            .with_mode(EvaluatorMode::Annotation)
-            .evaluate_expression(abstract_state, &expression_annotated.annotation)?;
+        let mut effects = PyEffects::new();
 
-        let Type::Literal(type_literal) = annotation_eval.value else {
+        let annotation_sourced_ty = pytype_consume_or_return_ok!(
+            effects,
+            self.with_mode(EvaluatorMode::Annotation)
+                .evaluate_expression(abstract_state, &expression_annotated.annotation)?
+        );
+
+        let Type::Literal(type_literal) = annotation_sourced_ty.data else {
             return Err(EvaluationError::InvalidAnnotation);
         };
 
@@ -364,46 +319,47 @@ impl<'a> ExpressionEvaluator<'a> {
             _ => return Err(EvaluationError::InvalidAnnotation),
         };
 
-        Ok(PyTypeEval::with_default_effects(Type::Instance(
-            TypeInstance {
+        Ok(PyTypeEval::new(
+            Sourced::specified(Type::Instance(TypeInstance {
                 base,
                 arguments: imbl::Vector::new(),
-            },
-        )))
+            })),
+            effects,
+        ))
     }
 
     pub fn evaluate_expression_function(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_function: &ExpressionFunction,
     ) -> Result<PyTypeEval, EvaluationError> {
         let function_namespace =
             Namespace::NamedProgramEntity(expression_function.program_entity.clone());
 
         Ok(PyTypeEval::new(
-            Type::new_literal(TypeLiteral::Function(LiteralFunction {
+            Sourced::inferred(Type::new_literal(TypeLiteral::Function(LiteralFunction {
                 value: Arc::new(FunctionType {
                     program_entity: expression_function.program_entity.clone(),
                     generics: Default::default(),
                     parameters: Default::default(),
                     is_async: expression_function.is_async,
                 }),
-            })),
+            }))),
             PyEffects::new()
                 .with_definitions(imbl::OrdSet::unit((Arc::new(function_namespace), false))),
         ))
     }
 
     pub fn evaluate_expression_class(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_class: &ExpressionClass,
     ) -> Result<PyTypeEval, EvaluationError> {
         let class_namespace =
             Namespace::NamedProgramEntity(expression_class.program_entity.clone());
 
         Ok(PyTypeEval::new(
-            Type::new_literal(TypeLiteral::Class(LiteralClass {
+            Sourced::inferred(Type::new_literal(TypeLiteral::Class(LiteralClass {
                 value: Arc::new(ClassType {
                     program_entity: expression_class.program_entity.clone(),
                     generics: Default::default(),
@@ -411,36 +367,36 @@ impl<'a> ExpressionEvaluator<'a> {
                     keyword_arguments: Default::default(),
                     is_abstract: false,
                 }),
-            })),
+            }))),
             PyEffects::new()
                 .with_definitions(imbl::OrdSet::unit((Arc::new(class_namespace), true))),
         ))
     }
 
     pub fn evaluate_expression_import(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_import: &ExpressionImport,
     ) -> Result<PyTypeEval, EvaluationError> {
         let namespace = Namespace::Module(expression_import.module.clone());
 
         if abstract_state.contains(&namespace) {
-            Ok(PyTypeEval::with_default_effects(Type::new_literal(
-                TypeLiteral::ImportedModule(LiteralImportedModule {
+            Ok(PyTypeEval::with_default_effects(Sourced::inferred(
+                Type::new_literal(TypeLiteral::ImportedModule(LiteralImportedModule {
                     value: Arc::new(ImportedModuleType {
                         module: expression_import.module.clone(),
                     }),
-                }),
+                })),
             )))
         } else {
-            Err(EvaluationError::Deferred) // TODO: Add import exception when possible
+            Ok(PyTypeEval::unknown())
         }
     }
 
     /// References: https://docs.python.org/3/howto/descriptor.html
     fn evaluate_attributes(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         value_ty: &Type,
         name: &SmolStr,
         instance_arguments: Option<&imbl::Vector<Arc<Type>>>,
@@ -471,7 +427,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     // TODO: add support for descriptors
                     let Some(mro) = method_resolution_order(literal_class) else {
                         return Ok(PyTypeEval::raise(Exception::new(
-                            Arc::new(Type::Any),
+                            Sourced::inferred(Type::Any),
                             ExceptionOrigin::Specified, // TODO: fix origin
                         )));
                     };
@@ -481,28 +437,28 @@ impl<'a> ExpressionEvaluator<'a> {
                             Namespace::NamedProgramEntity(class.value.program_entity.clone());
 
                         let Some(evaluation_state) = abstract_state.get(&class_namespace) else {
-                            return Err(EvaluationError::Deferred);
+                            return Ok(PyTypeEval::unknown());
                         };
 
-                        let Some(deferred_ty) = evaluation_state.get_attribute(name) else {
+                        let Some(mut sourced_ty) = evaluation_state.get_attribute(name) else {
                             continue;
                         };
 
-                        let mut ty = Self::extract_deferred(&deferred_ty)?;
-
-                        if let Type::Literal(type_literal) = &ty {
+                        if let Type::Literal(type_literal) = &sourced_ty.data {
                             if let TypeLiteral::Function(literal_function) = type_literal.as_ref() {
                                 if let Some(arguments) = instance_arguments {
-                                    ty = Type::new_literal(TypeLiteral::Method(LiteralMethod {
-                                        class: class.value.clone(),
-                                        function: literal_function.value.clone(),
-                                        arguments: arguments.clone(),
-                                    }));
+                                    sourced_ty = Sourced::inferred(Type::new_literal(
+                                        TypeLiteral::Method(LiteralMethod {
+                                            class: class.value.clone(),
+                                            function: literal_function.value.clone(),
+                                            arguments: arguments.clone(),
+                                        }),
+                                    ));
                                 }
                             }
                         };
 
-                        return Ok(PyTypeEval::with_default_effects(ty));
+                        return Ok(PyTypeEval::with_default_effects(sourced_ty));
                     }
 
                     Ok(PyTypeEval::unknown())
@@ -523,72 +479,75 @@ impl<'a> ExpressionEvaluator<'a> {
                     )
                 }
             },
-            _ => Err(EvaluationError::Deferred), // TODO: add missing cases
+            _ => Ok(PyTypeEval::unknown()), // TODO: add missing cases
         }
     }
 
     pub fn evaluate_expression_attribute(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_attribute: &ExpressionAttribute,
     ) -> Result<PyTypeEval, EvaluationError> {
         let mut effects = PyEffects::new();
 
-        let value_ty = pytype_consume_or_return_ok!(
+        let value_sourced_ty = pytype_consume_or_return_ok!(
             effects,
             self.evaluate_expression(abstract_state, &expression_attribute.value)?
         );
 
         self.evaluate_attributes(
             abstract_state,
-            &value_ty,
+            &value_sourced_ty.data,
             &expression_attribute.attribute,
             None,
         )
     }
 
     pub fn evaluate_expression_subscript(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_subscript: &ExpressionSubscript,
     ) -> Result<PyTypeEval, EvaluationError> {
         let mut effects = PyEffects::new();
 
-        let value_ty = pytype_consume_or_return_ok!(
+        let value_sourced_ty = pytype_consume_or_return_ok!(
             effects,
             self.evaluate_expression(abstract_state, &expression_subscript.value)?
         );
-        let get_item = self.evaluate_attributes(
-            abstract_state,
-            &value_ty,
-            &SmolStr::new_static("__getitem__"),
-            None,
-        )?;
-        let slice_ty = pytype_consume_or_return_ok!(
+        let get_item_sourced_ty = pytype_consume_or_return_ok!(
+            effects,
+            self.evaluate_attributes(
+                abstract_state,
+                &value_sourced_ty.data,
+                &SmolStr::new_static("__getitem__"),
+                None,
+            )?
+        );
+        let slice_sourced_ty = pytype_consume_or_return_ok!(
             effects,
             self.evaluate_expression(abstract_state, &expression_subscript.slice)?
         );
 
-        let ty = pytype_consume_or_return_ok!(
+        let sourced_ty = pytype_consume_or_return_ok!(
             effects,
             self.evaluate_call(
                 abstract_state,
-                &get_item.value,
-                Arguments::new().add_positional_argument(Arc::new(slice_ty))
+                &get_item_sourced_ty.data,
+                Arguments::new().add_positional_argument(Arc::new(slice_sourced_ty.data))
             )?
         );
 
-        Ok(PyTypeEval::new(ty, effects))
+        Ok(PyTypeEval::new(sourced_ty, effects))
     }
 
     pub fn evaluate_call(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         ty: &Type,
         arguments: Arguments,
     ) -> Result<PyTypeEval, EvaluationError> {
         let Type::Literal(literal) = ty else {
-            return Err(EvaluationError::Deferred); // TODO: add support for unions, etc
+            return Ok(PyTypeEval::unknown()); // TODO: add support for unions, etc
         };
 
         match literal.as_ref() {
@@ -597,18 +556,16 @@ impl<'a> ExpressionEvaluator<'a> {
                     Namespace::NamedProgramEntity(literal_function.value.program_entity.clone());
 
                 let Some(evaluation_state) = abstract_state.get(&function_namespace) else {
-                    return Err(EvaluationError::Deferred);
+                    return Ok(PyTypeEval::unknown());
                 };
 
                 Ok(PyTypeEval::new(
-                    Self::extract_deferred(&evaluation_state.return_value)?,
+                    Sourced::inferred(evaluation_state.return_value.data.clone()),
                     PyEffects::new()
-                        .with_exceptions(Self::extract_deferred(
-                            &evaluation_state.raised_exceptions,
-                        )?)
+                        .with_exceptions(evaluation_state.raised_exceptions.clone())
                         .with_calls(imbl::OrdMap::unit(
                             Arc::new(function_namespace),
-                            imbl::OrdSet::new(),
+                            imbl::OrdSet::unit(arguments),
                         )),
                 ))
             }
@@ -624,23 +581,23 @@ impl<'a> ExpressionEvaluator<'a> {
                 ))))),
             ),
             TypeLiteral::Class(literal_class) => Ok(PyTypeEval::with_default_effects(
-                Type::Instance(TypeInstance {
+                Sourced::inferred(Type::Instance(TypeInstance {
                     base: Base::Class(literal_class.clone()),
                     arguments: imbl::Vector::new(),
-                }),
+                })),
             )),
-            _ => Err(EvaluationError::Deferred), // TODO: add support for classes, etc
+            _ => Ok(PyTypeEval::unknown()), // TODO: add support for classes, etc
         }
     }
 
     pub fn evaluate_expression_call(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_call: &ExpressionCall,
     ) -> Result<PyTypeEval, EvaluationError> {
         let mut effects = PyEffects::new();
 
-        let ty = pytype_consume_or_return_ok!(
+        let sourced_ty = pytype_consume_or_return_ok!(
             effects,
             self.evaluate_expression(abstract_state, &expression_call.target)?
         );
@@ -648,42 +605,44 @@ impl<'a> ExpressionEvaluator<'a> {
         let mut arguments = Arguments::new();
 
         for argument in &expression_call.positional_arguments {
-            let argument_ty = pytype_consume_or_return_ok!(
+            let argument_sourced_ty = pytype_consume_or_return_ok!(
                 effects,
                 self.evaluate_expression(abstract_state, &argument)?
             );
 
-            arguments.positional.push(Arc::new(argument_ty));
+            arguments
+                .positional
+                .push(Arc::new(argument_sourced_ty.data));
         }
         for keyword_argument in &expression_call.keyword_arguments {
             if let Some(name) = &keyword_argument.name {
-                let keyword_argument_ty = pytype_consume_or_return_ok!(
+                let keyword_argument_sourced_ty = pytype_consume_or_return_ok!(
                     effects,
                     self.evaluate_expression(abstract_state, &keyword_argument.value)?
                 );
 
                 arguments
                     .keyword
-                    .insert(name.clone(), Arc::new(keyword_argument_ty));
+                    .insert(name.clone(), Arc::new(keyword_argument_sourced_ty.data));
             }
         }
 
-        self.evaluate_call(abstract_state, &ty, arguments)
+        self.evaluate_call(abstract_state, &sourced_ty.data, arguments)
     }
 
     pub fn evaluate_expression_unary(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_unary: &ExpressionUnary,
     ) -> Result<PyTypeEval, EvaluationError> {
         let mut effects = PyEffects::new();
 
-        let operand_ty = pytype_consume_or_return_ok!(
+        let operand_sourced_ty = pytype_consume_or_return_ok!(
             effects,
             self.evaluate_expression(abstract_state, &expression_unary.operand)?
         );
 
-        let ty = match operand_ty {
+        let sourced_ty = match operand_sourced_ty.data {
             Type::Literal(type_literal) => {
                 pytype_consume_or_return_ok!(
                     effects,
@@ -691,15 +650,15 @@ impl<'a> ExpressionEvaluator<'a> {
                 )
             }
             Type::Never | Type::NoReturn => unreachable!("operand_ty should not be unreachable"),
-            _ => return Err(EvaluationError::Deferred), // TODO: add other cases
+            _ => return Ok(PyTypeEval::unknown()), // TODO: add other cases
         };
 
-        Ok(PyTypeEval::new(ty, effects))
+        Ok(PyTypeEval::new(sourced_ty, effects))
     }
 
     pub fn evaluate_binary_operation(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         left_ty: &Type,
         operator: BinaryOperator,
         right_ty: &Type,
@@ -714,10 +673,10 @@ impl<'a> ExpressionEvaluator<'a> {
                 let mut effects = PyEffects::new();
 
                 let Some(method_name) = operator.method_name() else {
-                    return Err(EvaluationError::Deferred); // TODO: fix
+                    return Ok(PyTypeEval::unknown()); // TODO: fix
                 };
 
-                let method = pytype_consume_or_return_ok!(
+                let method_sourced_ty = pytype_consume_or_return_ok!(
                     effects,
                     self.evaluate_attributes(
                         abstract_state,
@@ -731,7 +690,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     effects,
                     self.evaluate_call(
                         abstract_state,
-                        &method,
+                        &method_sourced_ty.data,
                         Arguments::new().add_positional_argument(Arc::new(right_ty.clone())),
                     )?
                 );
@@ -742,10 +701,10 @@ impl<'a> ExpressionEvaluator<'a> {
                 let mut effects = PyEffects::new();
 
                 let Some(method_name) = operator.method_name() else {
-                    return Err(EvaluationError::Deferred); // TODO: fix
+                    return Ok(PyTypeEval::unknown()); // TODO: fix
                 };
 
-                let method = pytype_consume_or_return_ok!(
+                let method_sourced_ty = pytype_consume_or_return_ok!(
                     effects,
                     self.evaluate_attributes(
                         abstract_state,
@@ -759,7 +718,7 @@ impl<'a> ExpressionEvaluator<'a> {
                     effects,
                     self.evaluate_call(
                         abstract_state,
-                        &method,
+                        &method_sourced_ty.data,
                         Arguments::new().add_positional_argument(Arc::new(left_ty.clone())),
                     )?
                 );
@@ -814,71 +773,52 @@ impl<'a> ExpressionEvaluator<'a> {
             (Type::Never, _) | (_, Type::Never) | (Type::NoReturn, _) | (_, Type::NoReturn) => {
                 unreachable!()
             }
-            _ => Err(EvaluationError::Deferred), // TODO: add support for the rest
+            _ => Ok(PyTypeEval::unknown()), // TODO: add support for the rest
         }
     }
 
     pub fn evaluate_expression_binary(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression_binary: &ExpressionBinary,
     ) -> Result<PyTypeEval, EvaluationError> {
         let mut effects = PyEffects::new();
 
-        let left_ty = pytype_consume_or_return_ok!(
+        let left_sourced_ty = pytype_consume_or_return_ok!(
             effects,
             self.evaluate_expression(abstract_state, &expression_binary.left)?
         );
-        let right_ty = pytype_consume_or_return_ok!(
+        let right_sourced_ty = pytype_consume_or_return_ok!(
             effects,
             self.evaluate_expression(abstract_state, &expression_binary.right)?
         );
 
-        let ty = pytype_consume_or_return_ok!(
+        let sourced_ty = pytype_consume_or_return_ok!(
             effects,
             self.evaluate_binary_operation(
                 abstract_state,
-                &left_ty,
+                &left_sourced_ty.data,
                 expression_binary.operator,
-                &right_ty
+                &right_sourced_ty.data
             )?
         );
 
-        Ok(PyTypeEval::new(ty, effects))
+        Ok(PyTypeEval::new(sourced_ty, effects))
     }
 
     pub fn evaluate_expression(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expression: &Expression,
     ) -> Result<PyTypeEval, EvaluationError> {
-        if let Some(expression_eval) = abstract_state
-            .get(self.namespace)
-            .and_then(|state| state.types.get(expression))
-            .cloned()
-        {
-            if let Some(current_expression) = &self.current_expression {
-                if current_expression == expression && !expression_eval.expressions.is_empty() {
-                    return Err(EvaluationError::Deferred);
-                }
-            }
-            if self.current_expression == None {
-                self.current_expression = Some(expression.clone());
-            }
-            let eval = self.evaluate_expressions(
-                abstract_state,
-                expression_eval
-                    .expressions
-                    .iter()
-                    .map(|expression| expression.as_ref()),
-            )?;
-            if self.current_expression.as_ref() == Some(expression) {
-                self.current_expression = None;
-            }
-            return Ok(PyTypeEval::new(
-                expression_eval.value.data.join(&eval.value),
-                eval.effects,
+        let Some(evaluation_state) = abstract_state.get(self.namespace) else {
+            return Err(EvaluationError::NamespaceReferenceError(
+                self.namespace.clone(),
             ));
+        };
+
+        if let Some(sourced_ty) = evaluation_state.types.get(expression) {
+            return Ok(PyTypeEval::with_default_effects(sourced_ty.clone()));
         }
 
         match expression {
@@ -893,7 +833,7 @@ impl<'a> ExpressionEvaluator<'a> {
             Expression::Annotated(expression_annotated) => {
                 self.evaluate_expression_annotated(abstract_state, expression_annotated)
             }
-            Expression::Override(_) => Err(EvaluationError::Deferred),
+            Expression::Override(_) => Ok(PyTypeEval::unknown()),
             Expression::Function(expression_function) => {
                 self.evaluate_expression_function(abstract_state, expression_function)
             }
@@ -919,38 +859,38 @@ impl<'a> ExpressionEvaluator<'a> {
                 self.evaluate_expression_binary(abstract_state, expression_binary)
             }
             Expression::LiteralInteger(literal_integer) => Ok(PyTypeEval::with_default_effects(
-                Type::new_integer_literal(literal_integer.clone()),
+                Sourced::inferred(Type::new_integer_literal(literal_integer.clone())),
             )),
             Expression::LiteralFloat(literal_float) => Ok(PyTypeEval::with_default_effects(
-                Type::new_float_literal(literal_float.clone()),
+                Sourced::inferred(Type::new_float_literal(literal_float.clone())),
             )),
             Expression::LiteralComplex(literal_complex) => Ok(PyTypeEval::with_default_effects(
-                Type::new_complex_literal(literal_complex.clone()),
+                Sourced::inferred(Type::new_complex_literal(literal_complex.clone())),
             )),
             Expression::LiteralString(literal_string) => Ok(PyTypeEval::with_default_effects(
-                Type::new_string_literal(literal_string.clone()),
+                Sourced::inferred(Type::new_string_literal(literal_string.clone())),
             )),
             Expression::LiteralBytes(literal_bytes) => Ok(PyTypeEval::with_default_effects(
-                Type::new_bytes_literal(literal_bytes.clone()),
+                Sourced::inferred(Type::new_bytes_literal(literal_bytes.clone())),
             )),
             Expression::LiteralBoolean(literal_boolean) => Ok(PyTypeEval::with_default_effects(
-                Type::new_boolean_literal(literal_boolean.clone()),
+                Sourced::inferred(Type::new_boolean_literal(literal_boolean.clone())),
             )),
-            Expression::LiteralNone => Ok(PyTypeEval::with_default_effects(Type::new_literal(
-                TypeLiteral::None,
+            Expression::LiteralNone => Ok(PyTypeEval::with_default_effects(Sourced::inferred(
+                Type::new_literal(TypeLiteral::None),
             ))),
-            Expression::LiteralEllipsis => Ok(PyTypeEval::with_default_effects(Type::new_literal(
-                TypeLiteral::Ellipsis,
+            Expression::LiteralEllipsis => Ok(PyTypeEval::with_default_effects(Sourced::inferred(
+                Type::new_literal(TypeLiteral::Ellipsis),
             ))),
         }
     }
 
     pub fn evaluate_expressions<'e>(
-        &mut self,
-        abstract_state: &mut dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        &self,
+        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         expressions: impl IntoIterator<Item = &'e Expression>,
     ) -> Result<PyTypeEval, EvaluationError> {
-        let mut eval = PyTypeEval::never();
+        let mut eval = PyTypeEval::with_default_effects(Sourced::specified(Type::Never));
 
         for expression in expressions {
             eval = eval.join(&self.evaluate_expression(abstract_state, expression)?);
@@ -1034,59 +974,45 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     .arguments
                     .iter()
                     .map(|(variable, expressions)| {
-                        let ty = if let Ok(eval) = self
-                            .evaluator(EvaluatorMode::Normal)
-                            .evaluate_expressions(&mut program_evaluation, expressions)
-                        {
-                            Deferred::known(Sourced::specified(eval.value))
-                        } else {
-                            Deferred::unknown(
-                                expressions
-                                    .iter()
-                                    .map(|expression| Arc::new(expression.clone()))
-                                    .collect(),
+                        (
+                            variable.clone(),
+                            self.evaluator(EvaluatorMode::Normal)
+                                .evaluate_expressions(&program_evaluation, expressions)
+                                .map(|eval| eval.value)
+                                .unwrap_or(Sourced::inferred(Type::Any)), // TODO: fix
+                        )
+                    })
+                    .collect();
+
+                let raised_exceptions = RaisedExceptions::new(
+                    specification
+                        .exceptions
+                        .iter()
+                        .map(|expression| {
+                            Exception::new(
+                                self.evaluator(EvaluatorMode::Normal)
+                                    .evaluate_expression(&program_evaluation, expression)
+                                    .map(|eval| eval.value)
+                                    .unwrap_or(Sourced::inferred(Type::Any)), // TODO: fix
+                                ExceptionOrigin::Specified,
                             )
-                        };
-                        (variable.clone(), ty)
-                    })
-                    .collect();
+                        })
+                        .collect(),
+                );
 
-                let raised_exceptions: BTreeSet<_> = specification
-                    .exceptions
-                    .iter()
-                    .map(|expression| {
-                        if let Ok(eval) = self
-                            .evaluator(EvaluatorMode::Normal)
-                            .evaluate_expression(&mut program_evaluation, expression)
-                        {
-                            Deferred::known(Sourced::specified(RaisedExceptions::raise(
-                                Exception::new(Arc::new(eval.value), ExceptionOrigin::Specified),
-                            )))
-                        } else {
-                            Deferred::unknown(imbl::OrdSet::unit(Arc::new(expression.clone())))
-                        }
-                    })
-                    .collect();
-
-                let return_ty = if let Ok(eval) = self
-                    .evaluator(EvaluatorMode::Normal)
-                    .evaluate_expressions(&mut program_evaluation, &specification.return_type)
-                {
-                    Deferred::known(Sourced::specified(eval.value))
+                let return_value = if !specification.return_type.is_empty() {
+                    self.evaluator(EvaluatorMode::Normal)
+                        .evaluate_expressions(&program_evaluation, &specification.return_type)
+                        .map(|eval| eval.value)
+                        .unwrap_or(Sourced::inferred(Type::Any)) // TODO: fix
                 } else {
-                    Deferred::unknown(
-                        specification
-                            .return_type
-                            .iter()
-                            .map(|expression| Arc::new(expression.clone()))
-                            .collect(),
-                    )
+                    Sourced::inferred(Type::Never)
                 };
 
                 let evaluation_state =
                     program_evaluation.get_or_insert_default(self.namespace.clone());
 
-                for (variable, ty) in arguments {
+                for (variable, sourced_ty) in arguments {
                     evaluation_state.defined_variables.names.insert(
                         variable.named_qualified_location.name.clone(),
                         imbl::OrdSet::unit((
@@ -1097,51 +1023,22 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
 
                     evaluation_state.types.insert(
                         Arc::new(Expression::VariableDefinition(variable.clone())),
-                        ty,
+                        sourced_ty,
                     );
                 }
 
-                if !specification.exceptions.is_empty() {
-                    for exceptions in &raised_exceptions {
-                        evaluation_state.raised_exceptions =
-                            evaluation_state.raised_exceptions.join(exceptions);
-                    }
-                }
-
-                if !specification.return_type.is_empty() {
-                    evaluation_state.return_value = return_ty;
-                }
+                evaluation_state.raised_exceptions = raised_exceptions;
+                evaluation_state.return_value = return_value;
             }
             ConstraintNode::Constraint { location, .. } => {
                 if let Some(constraints) = self.constraint_graph.nodes.get(node) {
                     for constraint in constraints {
                         match constraint {
                             Constraint::Type(type_constraint) => {
-                                let (ty, raised_exceptions, calls, definitions) = match self
+                                let eval = self
                                     .evaluator(EvaluatorMode::Normal)
-                                    .evaluate_expression(
-                                        &mut program_evaluation,
-                                        &type_constraint.left,
-                                    ) {
-                                    Ok(type_eval) => (
-                                        Deferred::known(Sourced::inferred(type_eval.value)),
-                                        Deferred::known(Sourced::inferred(
-                                            type_eval.effects.exceptions,
-                                        )),
-                                        type_eval.effects.calls,
-                                        type_eval.effects.definitions,
-                                    ),
-                                    Err(_) => (
-                                        Deferred::unknown(imbl::OrdSet::unit(
-                                            type_constraint.left.clone(),
-                                        )),
-                                        Deferred::unknown(imbl::OrdSet::unit(
-                                            type_constraint.left.clone(),
-                                        )),
-                                        imbl::OrdMap::new(),
-                                        imbl::OrdSet::new(),
-                                    ),
-                                };
+                                    .evaluate_expression(&program_evaluation, &type_constraint.left)
+                                    .unwrap_or(PyTypeEval::unknown());
 
                                 let evaluation_state = program_evaluation
                                     .get_or_insert_default(self.namespace.clone());
@@ -1150,13 +1047,14 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                     .types
                                     .entry(type_constraint.right.clone())
                                     .and_modify(|previous_eval| {
-                                        *previous_eval = previous_eval.join(&ty)
+                                        *previous_eval = previous_eval.join(&eval.value)
                                     })
-                                    .or_insert(ty);
-                                evaluation_state.raised_exceptions =
-                                    evaluation_state.raised_exceptions.join(&raised_exceptions);
+                                    .or_insert(eval.value);
+                                evaluation_state.raised_exceptions = evaluation_state
+                                    .raised_exceptions
+                                    .join(&eval.effects.exceptions);
                                 if let Some(location) = location {
-                                    for (call_namespace, arguments) in calls {
+                                    for (call_namespace, arguments) in eval.effects.calls {
                                         evaluation_state.calls =
                                             evaluation_state.calls.join(&imbl::OrdMap::unit(
                                                 call_namespace,
@@ -1169,45 +1067,32 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                                 ),
                                             ));
                                     }
-                                    for definition in definitions {
+                                    for definition in eval.effects.definitions {
                                         evaluation_state.definitions.insert(definition);
                                     }
                                 }
                             }
                             Constraint::Return(return_constraint) => {
-                                let (ty, raised_exceptions) = match self
+                                let eval = self
                                     .evaluator(EvaluatorMode::Normal)
                                     .evaluate_expression(
-                                        &mut program_evaluation,
+                                        &program_evaluation,
                                         &return_constraint.expression,
-                                    ) {
-                                    Ok(type_eval) => (
-                                        Deferred::known(Sourced::inferred(type_eval.value)),
-                                        Deferred::known(Sourced::inferred(
-                                            type_eval.effects.exceptions,
-                                        )),
-                                    ),
-                                    Err(_) => (
-                                        Deferred::unknown(imbl::OrdSet::unit(
-                                            return_constraint.expression.clone(),
-                                        )),
-                                        Deferred::unknown(imbl::OrdSet::unit(
-                                            return_constraint.expression.clone(),
-                                        )),
-                                    ),
-                                };
+                                    )
+                                    .unwrap_or(PyTypeEval::unknown());
 
                                 let evaluation_state = program_evaluation
                                     .get_or_insert_default(self.namespace.clone());
 
                                 if !matches!(
-                                    evaluation_state.return_value.value.source,
+                                    evaluation_state.return_value.source,
                                     Source::Specified
                                 ) {
-                                    evaluation_state.return_value = ty;
+                                    evaluation_state.return_value = eval.value;
                                 }
-                                evaluation_state.raised_exceptions =
-                                    raised_exceptions.join(&raised_exceptions);
+                                evaluation_state.raised_exceptions = evaluation_state
+                                    .raised_exceptions
+                                    .join(&eval.effects.exceptions);
                             }
                             Constraint::DefinedVariable(expression) => {
                                 let evaluation_state = program_evaluation
@@ -1255,62 +1140,56 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 Guard::IsTrue(expression) => {
                     let eval = self
                         .evaluator(EvaluatorMode::Normal)
-                        .evaluate_expression(&mut new_abstract_state, expression);
+                        .evaluate_expression(&new_abstract_state, expression)
+                        .unwrap_or(PyTypeEval::unknown());
 
-                    if let Ok(type_eval) = eval {
-                        if let Some(bool_value) = gen_bool_value(&type_eval.value) {
-                            if !bool_value {
-                                continue;
-                            }
+                    if let Some(bool_value) = gen_bool_value(&eval.value.data) {
+                        if !bool_value {
+                            continue;
                         }
                     }
+
                     should_ignore = false;
                 }
                 Guard::IsFalse(expression) => {
                     let eval = self
                         .evaluator(EvaluatorMode::Normal)
-                        .evaluate_expression(&mut new_abstract_state, expression);
+                        .evaluate_expression(&new_abstract_state, expression)
+                        .unwrap_or(PyTypeEval::unknown());
 
-                    if let Ok(type_eval) = eval {
-                        if let Some(bool_value) = gen_bool_value(&type_eval.value) {
-                            if bool_value {
-                                continue;
-                            }
+                    if let Some(bool_value) = gen_bool_value(&eval.value.data) {
+                        if bool_value {
+                            continue;
                         }
                     }
+
                     should_ignore = false;
                 }
                 Guard::Succeed(expression) => {
                     let eval = self
                         .evaluator(EvaluatorMode::Normal)
-                        .evaluate_expression(&mut new_abstract_state, expression);
+                        .evaluate_expression(&new_abstract_state, expression)
+                        .unwrap_or(PyTypeEval::unknown());
 
-                    if let Ok(type_eval) = eval {
-                        if is_type_unreachable!(type_eval.value) {
-                            continue;
-                        }
+                    if is_sourced_type_unreachable!(eval.value) {
+                        continue;
                     }
+
                     should_ignore = false;
                 }
                 Guard::Raise { expression, .. } => {
                     let eval = self
                         .evaluator(EvaluatorMode::Normal)
-                        .evaluate_expression(&mut new_abstract_state, expression);
+                        .evaluate_expression(&new_abstract_state, expression)
+                        .unwrap_or(PyTypeEval::unknown());
 
                     let evaluation_state =
                         new_abstract_state.get_or_insert_default(self.namespace.clone());
 
-                    if let Ok(type_eval) = eval {
-                        evaluation_state.raised_exceptions.value = evaluation_state
-                            .raised_exceptions
-                            .value
-                            .join(&Sourced::inferred(type_eval.effects.exceptions));
-                    } else {
-                        evaluation_state
-                            .raised_exceptions
-                            .expressions
-                            .insert(expression.clone());
-                    }
+                    evaluation_state.raised_exceptions = evaluation_state
+                        .raised_exceptions
+                        .join(&eval.effects.exceptions);
+
                     should_ignore = false;
                 }
             }
@@ -1321,7 +1200,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
         } else if matches!(to, ConstraintNode::ExceptionExit) {
             if let Some(program_evaluation) = new_abstract_state.get_mut(self.namespace) {
                 program_evaluation.types.clear();
-                program_evaluation.return_value = Deferred::default();
+                program_evaluation.return_value = Sourced::default();
                 program_evaluation.defined_variables.names.clear();
             }
             Ok(Some(new_abstract_state))
@@ -1374,9 +1253,9 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 .types
                 .clone()
                 .into_iter()
-                .map(|(expression, mut eval)| {
-                    while eval.value.data.width() > WIDTH_LIMIT {
-                        eval.value = match eval.value.data {
+                .map(|(expression, mut sourced_ty)| {
+                    while sourced_ty.data.width() > WIDTH_LIMIT {
+                        sourced_ty = match sourced_ty.data {
                             Type::Union(type_union) => {
                                 let mut new_ty = Type::Never;
                                 for ty in type_union.into_types() {
@@ -1396,11 +1275,11 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                         };
                     }
 
-                    if eval.value.data.depth() > DEPTH_LIMIT {
-                        eval.value = Sourced::inferred(Type::Any);
+                    if sourced_ty.data.depth() > DEPTH_LIMIT {
+                        sourced_ty = Sourced::inferred(Type::Any);
                     }
 
-                    (expression, eval)
+                    (expression, sourced_ty)
                 })
                 .collect();
 
@@ -1647,10 +1526,7 @@ impl<'a> ModuleConstraintSolver<'a> {
 
 impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     type Node = SmolStr;
-    type InputState = BTreeMap<
-        Namespace,
-        BTreeMap<ExpressionVariableDefinition, Deferred<Sourced<Type>, Expression>>,
-    >;
+    type InputState = BTreeMap<Namespace, BTreeMap<ExpressionVariableDefinition, Sourced<Type>>>;
     type OutputState = BTreeMap<Namespace, EvaluationState>;
     type AnalysisState = ModuleConstraintSolverAnalysisState;
     type Error = Infallible;
@@ -1773,19 +1649,13 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
                         .arguments
                         .iter()
                         .map(|(variable, expressions)| {
-                            let ty = if let Ok(eval) =
-                                evaluator.evaluate_expressions(&mut program_evaluation, expressions)
-                            {
-                                Deferred::known(Sourced::specified(eval.value))
-                            } else {
-                                Deferred::unknown(
-                                    expressions
-                                        .iter()
-                                        .map(|expression| Arc::new(expression.clone()))
-                                        .collect(),
-                                )
-                            };
-                            (variable.clone(), ty)
+                            (
+                                variable.clone(),
+                                evaluator
+                                    .evaluate_expressions(&mut program_evaluation, expressions)
+                                    .map(|eval| eval.value)
+                                    .unwrap_or(Sourced::inferred(Type::Any)), // TODO: fix
+                            )
                         })
                         .collect(),
                 )
@@ -1856,30 +1726,27 @@ mod tests {
             NameError@{builtins[4:6]} = Inferred(class(builtins[NameError@{4:6}]))
             int@{builtins[1:6]} = Inferred(class(builtins[int@{1:6}]))
             #variables = {NameError: {builtins[4:6]}, int: {builtins[1:6]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         builtins[NameError@{4:6}]:
             #variables = {}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         builtins[int@{1:6}][__add__@{2:8}]:
             self@{builtins[int@{1:6}][__add__@{2:8}][2:16]} = Specified(Never)
             value@{builtins[int@{1:6}][__add__@{2:8}][2:22]} = Specified(@class(builtins[int@{1:6}]))
             #variables = {self: {builtins[int@{1:6}][__add__@{2:8}][2:16]}, value: {builtins[int@{1:6}][__add__@{2:8}][2:22]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Specified(@class(builtins[int@{1:6}]))
         builtins[int@{1:6}]:
             __add__@{builtins[int@{1:6}][2:8]} = Inferred(function(builtins[int@{1:6}][__add__@{2:8}]))
             #variables = {__add__: {builtins[int@{1:6}][2:8]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         "##};
 
         let module_loader = TestModuleLoader {
-            modules: HashMap::from_iter([(
-                BUILTINS_MODULE,
-                TEST_BUILTINS.to_owned(),
-            )]),
+            modules: HashMap::from_iter([(BUILTINS_MODULE, TEST_BUILTINS.to_owned())]),
         };
         let dependent_graph = analyse_program(&module_loader, [].into_iter());
 
@@ -1914,7 +1781,7 @@ mod tests {
             b@{module[8:0]} = Inferred(42)
             x@{module[1:0]} = Inferred(True)
             #variables = {a: {module[4:4]}, b: {module[8:0]}, x: {module[1:0]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         "##},
     )]
@@ -1933,7 +1800,7 @@ mod tests {
             a@{module[4:4]} = Inferred(@class(builtins[int@{1:6}]))
             b@{module[6:0]} = Inferred(@class(builtins[int@{1:6}]))
             #variables = {a: {module[1:0], module[4:4]}, b: {module[6:0]}}
-            #raise = Inferred({Exception(type=Any, origin=Unknown)}) ⊔ #deferred{(a) < (5)}
+            #raise = {Exception(type=Inferred(Any), origin=Unknown)}
             #return = Inferred(None)
         "##},
     )]
@@ -1949,13 +1816,13 @@ mod tests {
             add_two@{module[1:4]} = Inferred(function(module[add_two@{1:4}]))
             result@{module[4:0]} = Inferred(@class(builtins[int@{1:6}]))
             #variables = {add_two: {module[1:4]}, result: {module[4:0]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         module[add_two@{1:4}]:
             a@{module[add_two@{1:4}][1:12]} = Specified(@class(builtins[int@{1:6}]))
             b@{module[add_two@{1:4}][1:20]} = Specified(@class(builtins[int@{1:6}]))
             #variables = {a: {module[add_two@{1:4}][1:12]}, b: {module[add_two@{1:4}][1:20]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Specified(@class(builtins[int@{1:6}]))
         "##},
     )]
@@ -1971,12 +1838,12 @@ mod tests {
             A@{module[1:6]} = Inferred(class(module[A@{1:6}]))
             result@{module[4:0]} = Inferred(5)
             #variables = {A: {module[1:6]}, result: {module[4:0]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         module[A@{1:6}]:
             b@{module[A@{1:6}][2:4]} = Inferred(5)
             #variables = {b: {module[A@{1:6}][2:4]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         "##},
     )]
@@ -1994,12 +1861,12 @@ mod tests {
             a@{module[4:0]} = Inferred(@class(module[A@{1:6}]))
             result@{module[5:0]} = Inferred(5)
             #variables = {A: {module[1:6]}, a: {module[4:0]}, result: {module[5:0]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         module[A@{1:6}]:
             b@{module[A@{1:6}][2:4]} = Inferred(5)
             #variables = {b: {module[A@{1:6}][2:4]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         "##},
     )]
@@ -2016,16 +1883,16 @@ mod tests {
             A@{module[1:6]} = Inferred(class(module[A@{1:6}]))
             result@{module[5:0]} = Inferred(function(module[A@{1:6}][foo@{2:8}]))
             #variables = {A: {module[1:6]}, result: {module[5:0]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         module[A@{1:6}]:
             foo@{module[A@{1:6}][2:8]} = Inferred(function(module[A@{1:6}][foo@{2:8}]))
             #variables = {foo: {module[A@{1:6}][2:8]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         module[A@{1:6}][foo@{2:8}]:
             #variables = {}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(5)
         "##},
     )]
@@ -2044,16 +1911,16 @@ mod tests {
             a@{module[5:0]} = Inferred(@class(module[A@{1:6}]))
             result@{module[6:0]} = Inferred(method(class(module[A@{1:6}])[], function(module[A@{1:6}][foo@{2:8}])))
             #variables = {A: {module[1:6]}, a: {module[5:0]}, result: {module[6:0]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         module[A@{1:6}]:
             foo@{module[A@{1:6}][2:8]} = Inferred(function(module[A@{1:6}][foo@{2:8}]))
             #variables = {foo: {module[A@{1:6}][2:8]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         module[A@{1:6}][foo@{2:8}]:
             #variables = {}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(5)
         "##},
     )]
@@ -2072,11 +1939,11 @@ mod tests {
             foo@{module[1:4]} = Inferred(function(module[foo@{1:4}]))
             result@{module[4:0]} = Inferred(5)
             #variables = {CONST: {module[6:0]}, foo: {module[1:4]}, result: {module[4:0]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         module[foo@{1:4}]:
             #variables = {}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(5)
         "##},  // TODO: fix when possible
     )]
@@ -2095,11 +1962,11 @@ mod tests {
             foo@{module[1:4]} = Inferred(function(module[foo@{1:4}]))
             result@{module[6:0]} = Inferred(5)
             #variables = {CONST: {module[4:0]}, foo: {module[1:4]}, result: {module[6:0]}}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(None)
         module[foo@{1:4}]:
             #variables = {}
-            #raise = Inferred({})
+            #raise = {}
             #return = Inferred(5)
         "##},
     )]

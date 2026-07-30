@@ -1,8 +1,8 @@
+use crate::constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use crate::expressions::PyTypeEval;
-use crate::inference::{Exception, Type};
+use crate::inference::{Exception, Sourced, Type};
 use crate::primitives::Pow;
 use crate::primitives::literals::{LiteralBool, LiteralFloat};
-use apygen_constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(literal_float: &LiteralFloat) -> bool {
     literal_float.value != 0.0
@@ -33,14 +33,14 @@ pub fn call_dunder_neg(literal_float: &LiteralFloat) -> Type {
 }
 
 pub fn call_unary_op(literal_float: &LiteralFloat, operator: UnaryOperator) -> PyTypeEval {
-    PyTypeEval::with_default_effects(match operator {
+    PyTypeEval::with_default_effects(Sourced::inferred(match operator {
         UnaryOperator::Invert => {
             return PyTypeEval::raise(Exception::any()); // TODO: fix
         }
         UnaryOperator::Not => call_not(literal_float),
         UnaryOperator::UAdd => call_dunder_pos(literal_float),
         UnaryOperator::USub => call_dunder_neg(literal_float),
-    })
+    }))
 }
 
 pub fn call_binary_op(
@@ -48,7 +48,7 @@ pub fn call_binary_op(
     operator: BinaryOperator,
     right: &LiteralFloat,
 ) -> PyTypeEval {
-    PyTypeEval::with_default_effects(match operator {
+    PyTypeEval::with_default_effects(Sourced::inferred(match operator {
         BinaryOperator::Add => Type::new_float_literal(LiteralFloat {
             value: left.value + right.value,
         }),
@@ -95,5 +95,5 @@ pub fn call_binary_op(
         | BinaryOperator::BitXor
         | BinaryOperator::BitAnd => return PyTypeEval::raise(Exception::any()), // TODO: fix,
         _ => todo!(),
-    })
+    }))
 }

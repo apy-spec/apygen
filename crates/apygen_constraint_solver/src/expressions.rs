@@ -1,7 +1,7 @@
 use crate::analysis::lattice::Join;
 use crate::calls::Arguments;
 use crate::identifiers::Namespace;
-use crate::inference::{Completeness, Exception, Pureness, RaisedExceptions, Type};
+use crate::inference::{Completeness, Exception, Pureness, RaisedExceptions, Sourced, Type};
 use std::fmt::Display;
 use std::sync::Arc;
 
@@ -112,65 +112,36 @@ impl<T: Display> Display for PyValueEval<T> {
     }
 }
 
-pub type PyTypeEval = PyValueEval<Type>;
+pub type PyTypeEval = PyValueEval<Sourced<Type>>;
 
 impl PyTypeEval {
     pub fn never() -> Self {
-        PyTypeEval::new(Type::Never, PyEffects::default())
+        PyTypeEval::with_default_effects(Sourced::inferred(Type::Never))
     }
 
     pub fn raise(exception: Exception) -> Self {
         PyTypeEval::new(
-            Type::NoReturn,
-            PyEffects {
-                exceptions: RaisedExceptions::raise(exception),
-                pureness: Pureness::Impure,
-                completeness: Completeness::Partial,
-                calls: imbl::OrdMap::new(),
-                definitions: imbl::OrdSet::new(),
-            },
+            Sourced::inferred(Type::NoReturn),
+            PyEffects::new().with_exceptions(RaisedExceptions::raise(exception)),
         )
     }
 
     pub fn unknown() -> Self {
         PyTypeEval::new(
-            Type::Any,
-            PyEffects {
-                exceptions: RaisedExceptions::raise(Exception::any()),
-                pureness: Pureness::Impure,
-                completeness: Completeness::Partial,
-                calls: imbl::OrdMap::new(),
-                definitions: imbl::OrdSet::new(),
-            },
+            Sourced::inferred(Type::Any),
+            PyEffects::new()
+                .with_exceptions(RaisedExceptions::raise(Exception::any()))
+                .with_pureness(Pureness::Impure)
+                .with_completeness(Completeness::Partial),
         )
     }
 }
 
 #[macro_export]
-macro_rules! is_type_unreachable {
+macro_rules! is_sourced_type_unreachable {
     ($ty:expr) => {
-        matches!($ty, Type::Never | Type::NoReturn)
+        matches!($ty.data, Type::Never | Type::NoReturn)
     };
-}
-
-#[macro_export]
-macro_rules! pytype_return_unreachable {
-    ($effects:expr, $ty:expr) => {
-        if is_type_unreachable!($ty) {
-            return PyTypeEval::new($ty, $effects);
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! pytype_consume_or_return {
-    ($effects:expr, $eval:expr) => {{
-        let ty = $effects.consume($eval);
-
-        pytype_return_unreachable!($effects, ty);
-
-        ty
-    }};
 }
 
 #[macro_export]
@@ -178,7 +149,7 @@ macro_rules! pytype_consume_or_return_ok {
     ($effects:expr, $eval:expr) => {{
         let ty = $effects.consume($eval);
 
-        if is_type_unreachable!(ty) {
+        if is_sourced_type_unreachable!(ty) {
             return Ok(PyTypeEval::new(ty, $effects));
         }
 

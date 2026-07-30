@@ -1,5 +1,5 @@
 use crate::expressions::PyTypeEval;
-use crate::inference::{Exception, Type};
+use crate::inference::{Sourced, Exception, Type};
 use crate::primitives::Complex64;
 use crate::primitives::Pow;
 use crate::primitives::literals::{LiteralBool, LiteralComplex};
@@ -32,14 +32,14 @@ pub fn call_dunder_neg(literal_complex: &LiteralComplex) -> Type {
 }
 
 pub fn call_unary_op(literal_complex: &LiteralComplex, operator: UnaryOperator) -> PyTypeEval {
-    PyTypeEval::with_default_effects(match operator {
+    PyTypeEval::with_default_effects(Sourced::inferred(match operator {
         UnaryOperator::Invert => {
             return PyTypeEval::raise(Exception::any()); // TODO: fix
         }
         UnaryOperator::Not => call_not(literal_complex),
         UnaryOperator::UAdd => call_dunder_pos(literal_complex),
         UnaryOperator::USub => call_dunder_neg(literal_complex),
-    })
+    }))
 }
 
 pub fn call_binary_op(
@@ -47,7 +47,7 @@ pub fn call_binary_op(
     operator: BinaryOperator,
     right: &LiteralComplex,
 ) -> PyTypeEval {
-    PyTypeEval::with_default_effects(match operator {
+    PyTypeEval::with_default_effects(Sourced::inferred(match operator {
         BinaryOperator::Add => Type::new_complex_literal(LiteralComplex {
             value: left.value + right.value,
         }),
@@ -80,5 +80,5 @@ pub fn call_binary_op(
             return PyTypeEval::raise(Exception::any()); // TODO: fix
         }
         _ => todo!(),
-    })
+    }))
 }

@@ -1,6 +1,6 @@
+use crate::constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use crate::expressions::{self, PyTypeEval};
-use crate::inference::TypeLiteral;
-use apygen_constraint_graph::expressions::{BinaryOperator, UnaryOperator};
+use crate::inference::{Sourced, TypeLiteral};
 
 pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
     match type_literal {
@@ -106,12 +106,12 @@ pub fn call_binary_op(
 
 pub fn call_unary_op(type_literal: &TypeLiteral, operator: UnaryOperator) -> PyTypeEval {
     PyTypeEval::with_default_effects(match type_literal {
-        TypeLiteral::Integer(literal_integer) => {
-            expressions::literal_integer::call_unary_op(literal_integer, operator)
-        }
-        TypeLiteral::Boolean(literal_boolean) => {
-            expressions::literal_boolean::call_unary_op(literal_boolean, operator)
-        }
+        TypeLiteral::Integer(literal_integer) => Sourced::inferred(
+            expressions::literal_integer::call_unary_op(literal_integer, operator),
+        ),
+        TypeLiteral::Boolean(literal_boolean) => Sourced::inferred(
+            expressions::literal_boolean::call_unary_op(literal_boolean, operator),
+        ),
         TypeLiteral::Float(literal_float) => {
             return expressions::literal_float::call_unary_op(literal_float, operator);
         }

@@ -1,8 +1,8 @@
+use crate::constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use crate::expressions::PyTypeEval;
-use crate::inference::{Exception, Type};
+use crate::inference::{Exception, Sourced, Type};
 use crate::primitives::ToPrimitive;
 use crate::primitives::literals::{LiteralBool, LiteralBytes, LiteralInt};
-use apygen_constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use std::sync::Arc;
 
 pub fn as_boolean(literal_bytes: &LiteralBytes) -> bool {
@@ -26,7 +26,9 @@ pub fn call_unary_op(literal_bytes: &LiteralBytes, operator: UnaryOperator) -> P
         UnaryOperator::Invert | UnaryOperator::UAdd | UnaryOperator::USub => {
             PyTypeEval::raise(Exception::any()) // TODO: fix
         }
-        UnaryOperator::Not => PyTypeEval::with_default_effects(call_not(literal_bytes)),
+        UnaryOperator::Not => {
+            PyTypeEval::with_default_effects(Sourced::inferred(call_not(literal_bytes)))
+        }
     }
 }
 
@@ -36,7 +38,7 @@ pub fn call_binary_op(
     right: &LiteralBytes,
 ) -> PyTypeEval {
     PyTypeEval::with_default_effects(match operator {
-        BinaryOperator::Add => Type::new_bytes_literal(LiteralBytes {
+        BinaryOperator::Add => Sourced::inferred(Type::new_bytes_literal(LiteralBytes {
             value: Arc::new(
                 left.value
                     .iter()
@@ -44,18 +46,18 @@ pub fn call_binary_op(
                     .cloned()
                     .collect(),
             ),
-        }),
+        })),
         _ => return PyTypeEval::raise(Exception::any()), // TODO: fix,
     })
 }
 
 pub fn repeat_bytes(bytes: &LiteralBytes, repetitions: &LiteralInt) -> PyTypeEval {
     if let Some(repetitions) = repetitions.value.to_usize() {
-        PyTypeEval::with_default_effects(Type::new_bytes_literal(LiteralBytes {
+        PyTypeEval::with_default_effects(Sourced::inferred(Type::new_bytes_literal(LiteralBytes {
             value: Arc::new(Vec::from_iter(
                 (0..repetitions).flat_map(|_| bytes.value.iter().cloned()),
             )),
-        }))
+        })))
     } else {
         PyTypeEval::unknown()
     }

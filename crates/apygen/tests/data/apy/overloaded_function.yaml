@@ -6,5 +6,37 @@ modules:
     raises: []
     partial: false
     visibility: PUBLIC
-    attributes: {}
-    typing_attributes: {}
+    attributes:
+      add:
+        kind: FUNCTION
+        signature:
+          return_type:
+            reference:
+              id: Any
+              module: typing
+              history_index: 0
+            arguments:
+              []
+          summary: ""
+          description: ""
+          generics: {}
+          parameters: []
+          raises:
+            - exception_type:
+                reference:
+                  id: Any
+                  module: typing
+                  history_index: 0
+                arguments:
+                  []
+              description: ""
+          partial: false
+          pure: false
+          deprecated: false
+          visibility: PUBLIC
+        async: false
+        override: false
+        abstract: false
+        final: false
+    typing_attributes:
+      {}

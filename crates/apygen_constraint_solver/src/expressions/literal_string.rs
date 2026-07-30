@@ -1,8 +1,8 @@
+use crate::constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use crate::expressions::PyTypeEval;
-use crate::inference::{Exception, Type};
+use crate::inference::{Exception, Sourced, Type};
 use crate::primitives::ToPrimitive;
 use crate::primitives::literals::{LiteralBool, LiteralInt, LiteralStr};
-use apygen_constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use std::sync::Arc;
 
 pub fn as_boolean(literal_string: &LiteralStr) -> bool {
@@ -26,7 +26,9 @@ pub fn call_unary_op(literal_string: &LiteralStr, operator: UnaryOperator) -> Py
         UnaryOperator::Invert | UnaryOperator::UAdd | UnaryOperator::USub => {
             PyTypeEval::raise(Exception::any()) // TODO: fix
         }
-        UnaryOperator::Not => PyTypeEval::with_default_effects(call_not(literal_string)),
+        UnaryOperator::Not => {
+            PyTypeEval::with_default_effects(Sourced::inferred(call_not(literal_string)))
+        }
     }
 }
 
@@ -35,7 +37,7 @@ pub fn call_binary_op(
     operator: BinaryOperator,
     right: &LiteralStr,
 ) -> PyTypeEval {
-    PyTypeEval::with_default_effects(match operator {
+    PyTypeEval::with_default_effects(Sourced::inferred(match operator {
         BinaryOperator::Add => Type::new_string_literal({
             let mut value = String::new();
             value.push_str(left.value.as_str());
@@ -45,14 +47,14 @@ pub fn call_binary_op(
             }
         }),
         _ => return PyTypeEval::raise(Exception::any()), // TODO: fix
-    })
+    }))
 }
 
 pub fn repeat_string(string: &LiteralStr, repetitions: &LiteralInt) -> PyTypeEval {
     if let Some(repetitions) = repetitions.value.to_usize() {
-        PyTypeEval::with_default_effects(Type::new_string_literal(LiteralStr {
+        PyTypeEval::with_default_effects(Sourced::inferred(Type::new_string_literal(LiteralStr {
             value: Arc::new(string.value.repeat(repetitions)),
-        }))
+        })))
     } else {
         PyTypeEval::unknown()
     }
