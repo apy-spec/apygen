@@ -1161,7 +1161,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
         to: &Self::Node,
         abstract_state: &Self::AbstractState,
     ) -> Result<Option<Self::AbstractState>, Self::Error> {
-        let (mut new_abstract_state, mut calls) = abstract_state.clone();
+        let (mut new_abstract_state, calls) = abstract_state.clone();
 
         let guards = self
             .constraint_graph
@@ -1462,6 +1462,8 @@ pub fn solve_namespace(
     loop {
         let previous_evaluation_state = analysis_state.program_evaluation.get(namespace).cloned();
 
+        analysis_state.program_evaluation.states.remove(namespace);
+
         let solver_state = analysis(
             &ConstraintSolver::new(
                 &namespace,
@@ -1517,10 +1519,12 @@ pub fn solve_namespace(
         drop(solver_state);
 
         for (qualified_location, call) in new_calls {
+            let mut call_program_evaluation = analysis_state.program_evaluation.clone();
+            call_program_evaluation.extend(&mut call.context.states.into_iter());
             analysis_state.namespace_dependency_graph.add_call(
                 call.target.as_ref().clone(),
                 qualified_location,
-                analysis_state.program_evaluation.join(&call.context),
+                call_program_evaluation,
                 call.arguments,
             );
             analysis_state
