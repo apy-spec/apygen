@@ -1,5 +1,8 @@
+use crate::EvaluationState;
+use crate::analysis::abstract_state::AbstractState;
 use crate::constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use crate::expressions::PyTypeEval;
+use crate::identifiers::Namespace;
 use crate::inference::{Exception, Sourced, Type};
 use crate::primitives::ToPrimitive;
 use crate::primitives::literals::{LiteralBool, LiteralInt, LiteralStr};
@@ -21,7 +24,10 @@ pub fn call_not(literal_string: &LiteralStr) -> Type {
     })
 }
 
-pub fn call_unary_op(literal_string: &LiteralStr, operator: UnaryOperator) -> PyTypeEval {
+pub fn call_unary_op<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>(
+    literal_string: &LiteralStr,
+    operator: UnaryOperator,
+) -> PyTypeEval<S> {
     match operator {
         UnaryOperator::Invert | UnaryOperator::UAdd | UnaryOperator::USub => {
             PyTypeEval::raise(Exception::any()) // TODO: fix
@@ -32,11 +38,11 @@ pub fn call_unary_op(literal_string: &LiteralStr, operator: UnaryOperator) -> Py
     }
 }
 
-pub fn call_binary_op(
+pub fn call_binary_op<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>(
     left: &LiteralStr,
     operator: BinaryOperator,
     right: &LiteralStr,
-) -> PyTypeEval {
+) -> PyTypeEval<S> {
     PyTypeEval::with_default_effects(Sourced::inferred(match operator {
         BinaryOperator::Add => Type::new_string_literal({
             let mut value = String::new();
@@ -50,7 +56,10 @@ pub fn call_binary_op(
     }))
 }
 
-pub fn repeat_string(string: &LiteralStr, repetitions: &LiteralInt) -> PyTypeEval {
+pub fn repeat_string<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>(
+    string: &LiteralStr,
+    repetitions: &LiteralInt,
+) -> PyTypeEval<S> {
     if let Some(repetitions) = repetitions.value.to_usize() {
         PyTypeEval::with_default_effects(Sourced::inferred(Type::new_string_literal(LiteralStr {
             value: Arc::new(string.value.repeat(repetitions)),

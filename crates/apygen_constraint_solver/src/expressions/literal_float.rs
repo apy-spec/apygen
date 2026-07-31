@@ -1,5 +1,8 @@
+use crate::EvaluationState;
+use crate::analysis::abstract_state::AbstractState;
 use crate::constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use crate::expressions::PyTypeEval;
+use crate::identifiers::Namespace;
 use crate::inference::{Exception, Sourced, Type};
 use crate::primitives::Pow;
 use crate::primitives::literals::{LiteralBool, LiteralFloat};
@@ -32,7 +35,10 @@ pub fn call_dunder_neg(literal_float: &LiteralFloat) -> Type {
     })
 }
 
-pub fn call_unary_op(literal_float: &LiteralFloat, operator: UnaryOperator) -> PyTypeEval {
+pub fn call_unary_op<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>(
+    literal_float: &LiteralFloat,
+    operator: UnaryOperator,
+) -> PyTypeEval<S> {
     PyTypeEval::with_default_effects(Sourced::inferred(match operator {
         UnaryOperator::Invert => {
             return PyTypeEval::raise(Exception::any()); // TODO: fix
@@ -43,11 +49,11 @@ pub fn call_unary_op(literal_float: &LiteralFloat, operator: UnaryOperator) -> P
     }))
 }
 
-pub fn call_binary_op(
+pub fn call_binary_op<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>(
     left: &LiteralFloat,
     operator: BinaryOperator,
     right: &LiteralFloat,
-) -> PyTypeEval {
+) -> PyTypeEval<S> {
     PyTypeEval::with_default_effects(Sourced::inferred(match operator {
         BinaryOperator::Add => Type::new_float_literal(LiteralFloat {
             value: left.value + right.value,

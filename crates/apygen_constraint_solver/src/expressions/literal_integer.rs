@@ -1,5 +1,8 @@
+use crate::EvaluationState;
+use crate::analysis::abstract_state::AbstractState;
 use crate::constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use crate::expressions::PyTypeEval;
+use crate::identifiers::Namespace;
 use crate::inference::{Exception, Sourced, Type};
 use crate::primitives::literals::{LiteralBool, LiteralFloat, LiteralInt};
 use crate::primitives::{Pow, PowOutput, Zero};
@@ -8,7 +11,9 @@ pub fn as_boolean(literal_integer: &LiteralInt) -> bool {
     !literal_integer.value.is_zero()
 }
 
-pub fn call_dunder_float(literal_integer: &LiteralInt) -> PyTypeEval {
+pub fn call_dunder_float<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>(
+    literal_integer: &LiteralInt,
+) -> PyTypeEval<S> {
     if let Some(literal_float) = literal_integer.to_literal_float() {
         PyTypeEval::with_default_effects(Sourced::inferred(Type::new_float_literal(literal_float)))
     } else {
@@ -53,11 +58,11 @@ pub fn call_unary_op(literal_integer: &LiteralInt, operator: UnaryOperator) -> T
     }
 }
 
-pub fn call_binary_op(
+pub fn call_binary_op<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>(
     left: &LiteralInt,
     operator: BinaryOperator,
     right: &LiteralInt,
-) -> PyTypeEval {
+) -> PyTypeEval<S> {
     let left_int = &left.value;
     let right_int = &right.value;
     PyTypeEval::with_default_effects(Sourced::inferred(match operator {

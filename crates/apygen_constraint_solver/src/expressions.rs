@@ -1,3 +1,5 @@
+use crate::EvaluationState;
+use crate::analysis::abstract_state::AbstractState;
 use crate::analysis::lattice::Join;
 use crate::calls::Arguments;
 use crate::identifiers::Namespace;
@@ -16,16 +18,32 @@ pub mod literal_none;
 pub mod literal_string;
 pub mod type_literal;
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
-pub struct PyEffects {
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Call<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> {
+    pub target: Arc<Namespace>,
+    pub context: S,
+    pub arguments: Arguments,
+}
+
+impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> Call<S> {
+    pub fn new(target: Arc<Namespace>, context: S, arguments: Arguments) -> Self {
+        Self {
+            target,
+            context,
+            arguments,
+        }
+    }
+}
+
+#[derive(Clone, Join)]
+pub struct PyEffects<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> {
     pub exceptions: RaisedExceptions,
     pub pureness: Pureness,
     pub completeness: Completeness,
-    pub calls: imbl::OrdMap<Arc<Namespace>, imbl::OrdSet<Arguments>>,
-    pub definitions: imbl::OrdSet<(Arc<Namespace>, bool)>,
+    pub calls: imbl::OrdSet<Call<S>>,
 }
 
-impl PyEffects {
+impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> PyEffects<S> {
     pub fn new() -> Self {
         Default::default()
     }
@@ -45,30 +63,35 @@ impl PyEffects {
         self
     }
 
-    pub fn with_calls(
-        mut self,
-        calls: imbl::OrdMap<Arc<Namespace>, imbl::OrdSet<Arguments>>,
-    ) -> Self {
+    pub fn with_calls(mut self, calls: imbl::OrdSet<Call<S>>) -> Self {
         self.calls = calls;
         self
     }
 
-    pub fn with_definitions(mut self, definitions: imbl::OrdSet<(Arc<Namespace>, bool)>) -> Self {
-        self.definitions = definitions;
-        self
-    }
-
-    pub fn consume<T>(&mut self, eval: PyValueEval<T>) -> T {
+    pub fn consume<T>(&mut self, eval: PyValueEval<T, S>) -> T
+    where
+        S: Clone + Ord,
+    {
         self.exceptions = self.exceptions.join(&eval.effects.exceptions);
         self.pureness = self.pureness.join(&eval.effects.pureness);
         self.completeness = self.completeness.join(&eval.effects.completeness);
         self.calls = self.calls.join(&eval.effects.calls);
-        self.definitions = self.definitions.join(&eval.effects.definitions);
         eval.value
     }
 }
 
-impl Display for PyEffects {
+impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> Default for PyEffects<S> {
+    fn default() -> Self {
+        Self {
+            exceptions: Default::default(),
+            pureness: Default::default(),
+            completeness: Default::default(),
+            calls: Default::default(),
+        }
+    }
+}
+
+impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> Display for PyEffects<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -78,14 +101,14 @@ impl Display for PyEffects {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
-pub struct PyValueEval<T> {
+#[derive(Default, Clone, Join)]
+pub struct PyValueEval<T, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> {
     pub value: T,
-    pub effects: PyEffects,
+    pub effects: PyEffects<S>,
 }
 
-impl<T> PyValueEval<T> {
-    pub fn new(value: T, effects: PyEffects) -> Self {
+impl<T, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> PyValueEval<T, S> {
+    pub fn new(value: T, effects: PyEffects<S>) -> Self {
         PyValueEval { value, effects }
     }
 
@@ -93,28 +116,33 @@ impl<T> PyValueEval<T> {
         PyValueEval::new(value, PyEffects::default())
     }
 
-    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> PyValueEval<U> {
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> PyValueEval<U, S> {
         PyValueEval {
             value: f(self.value),
             effects: self.effects,
         }
     }
 
-    pub fn extend_effects(mut self, effects: &PyEffects) -> Self {
+    pub fn extend_effects(mut self, effects: &PyEffects<S>) -> Self
+    where
+        S: Clone + Ord,
+    {
         self.effects = self.effects.join(effects);
         self
     }
 }
 
-impl<T: Display> Display for PyValueEval<T> {
+impl<T: Display, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> Display
+    for PyValueEval<T, S>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "({} ➤ {})", self.value, self.effects)
     }
 }
 
-pub type PyTypeEval = PyValueEval<Sourced<Type>>;
+pub type PyTypeEval<S> = PyValueEval<Sourced<Type>, S>;
 
-impl PyTypeEval {
+impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> PyTypeEval<S> {
     pub fn never() -> Self {
         PyTypeEval::with_default_effects(Sourced::inferred(Type::Never))
     }

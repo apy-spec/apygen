@@ -1,9 +1,12 @@
+use crate::EvaluationState;
+use crate::analysis::abstract_state::AbstractState;
+use crate::constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use crate::expressions::PyTypeEval;
-use crate::inference::{Sourced, Exception, Type};
+use crate::identifiers::Namespace;
+use crate::inference::{Exception, Sourced, Type};
 use crate::primitives::Complex64;
 use crate::primitives::Pow;
 use crate::primitives::literals::{LiteralBool, LiteralComplex};
-use apygen_constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 
 pub fn as_boolean(literal_complex: &LiteralComplex) -> bool {
     literal_complex.value.re != 0.0 || literal_complex.value.im != 0.0
@@ -31,7 +34,10 @@ pub fn call_dunder_neg(literal_complex: &LiteralComplex) -> Type {
     })
 }
 
-pub fn call_unary_op(literal_complex: &LiteralComplex, operator: UnaryOperator) -> PyTypeEval {
+pub fn call_unary_op<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>(
+    literal_complex: &LiteralComplex,
+    operator: UnaryOperator,
+) -> PyTypeEval<S> {
     PyTypeEval::with_default_effects(Sourced::inferred(match operator {
         UnaryOperator::Invert => {
             return PyTypeEval::raise(Exception::any()); // TODO: fix
@@ -42,11 +48,11 @@ pub fn call_unary_op(literal_complex: &LiteralComplex, operator: UnaryOperator) 
     }))
 }
 
-pub fn call_binary_op(
+pub fn call_binary_op<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>(
     left: &LiteralComplex,
     operator: BinaryOperator,
     right: &LiteralComplex,
-) -> PyTypeEval {
+) -> PyTypeEval<S> {
     PyTypeEval::with_default_effects(Sourced::inferred(match operator {
         BinaryOperator::Add => Type::new_complex_literal(LiteralComplex {
             value: left.value + right.value,

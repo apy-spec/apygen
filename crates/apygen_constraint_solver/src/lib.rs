@@ -14,7 +14,7 @@ use crate::constraint_graph::{
     Constraint, ConstraintGraph, ConstraintNode, Guard, ModuleDependentGraph,
 };
 use crate::expressions::literal_class::method_resolution_order;
-use crate::expressions::{PyEffects, PyTypeEval, gen_bool_value, type_literal};
+use crate::expressions::{Call, PyEffects, PyTypeEval, gen_bool_value, type_literal};
 use crate::identifiers::smol_str::format_smolstr;
 use crate::identifiers::{Location, NamedQualifiedLocation, QualifiedLocation};
 use crate::inference::{
@@ -46,9 +46,6 @@ pub struct EvaluationState {
     pub return_value: Sourced<Type>,
     pub raised_exceptions: RaisedExceptions,
     pub defined_variables: DefinedVariables,
-    pub calls:
-        imbl::OrdMap<Arc<Namespace>, imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>>,
-    pub definitions: imbl::OrdSet<(Arc<Namespace>, bool)>,
 }
 
 impl EvaluationState {
@@ -215,7 +212,7 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     pub fn find_type(
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &impl AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
         module: &SmolStr,
         name: &SmolStr,
     ) -> Result<Type, EvaluationError> {
@@ -228,11 +225,13 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    pub fn evaluate_expression_variable_definition(
+    pub fn evaluate_expression_variable_definition<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expression_variable_definition: &ExpressionVariableDefinition,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let namespace = expression_variable_definition.namespace();
 
         let Some(evaluation_state) = abstract_state.get(namespace) else {
@@ -252,11 +251,13 @@ impl<'a> ExpressionEvaluator<'a> {
         ))
     }
 
-    pub fn evaluate_expression_variable_reference(
+    pub fn evaluate_expression_variable_reference<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expression_variable_reference: &ExpressionVariableReference,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         if let Some(evaluation_state) = abstract_state.get(self.namespace) {
             if let Some(sourced_ty) =
                 evaluation_state.get_attribute(&expression_variable_reference.name)
@@ -293,11 +294,13 @@ impl<'a> ExpressionEvaluator<'a> {
         )))
     }
 
-    pub fn evaluate_expression_annotated(
+    pub fn evaluate_expression_annotated<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expression_annotated: &ExpressionAnnotated,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
         let annotation_sourced_ty = pytype_consume_or_return_ok!(
@@ -328,11 +331,13 @@ impl<'a> ExpressionEvaluator<'a> {
         ))
     }
 
-    pub fn evaluate_expression_function(
+    pub fn evaluate_expression_function<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expression_function: &ExpressionFunction,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let function_namespace =
             Namespace::NamedProgramEntity(expression_function.program_entity.clone());
 
@@ -345,16 +350,17 @@ impl<'a> ExpressionEvaluator<'a> {
                     is_async: expression_function.is_async,
                 }),
             }))),
-            PyEffects::new()
-                .with_definitions(imbl::OrdSet::unit((Arc::new(function_namespace), false))),
+            PyEffects::new(),
         ))
     }
 
-    pub fn evaluate_expression_class(
+    pub fn evaluate_expression_class<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expression_class: &ExpressionClass,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let class_namespace =
             Namespace::NamedProgramEntity(expression_class.program_entity.clone());
 
@@ -368,16 +374,17 @@ impl<'a> ExpressionEvaluator<'a> {
                     is_abstract: false,
                 }),
             }))),
-            PyEffects::new()
-                .with_definitions(imbl::OrdSet::unit((Arc::new(class_namespace), true))),
+            PyEffects::new(),
         ))
     }
 
-    pub fn evaluate_expression_import(
+    pub fn evaluate_expression_import<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expression_import: &ExpressionImport,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let namespace = Namespace::Module(expression_import.module.clone());
 
         if abstract_state.contains(&namespace) {
@@ -394,13 +401,15 @@ impl<'a> ExpressionEvaluator<'a> {
     }
 
     /// References: https://docs.python.org/3/howto/descriptor.html
-    fn evaluate_attributes(
+    fn evaluate_attributes<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         value_ty: &Type,
         name: &SmolStr,
         instance_arguments: Option<&imbl::Vector<Arc<Type>>>,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         match value_ty {
             Type::Instance(type_instance) => self.evaluate_attributes(
                 abstract_state,
@@ -483,11 +492,13 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    pub fn evaluate_expression_attribute(
+    pub fn evaluate_expression_attribute<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expression_attribute: &ExpressionAttribute,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
         let value_sourced_ty = pytype_consume_or_return_ok!(
@@ -503,11 +514,13 @@ impl<'a> ExpressionEvaluator<'a> {
         )
     }
 
-    pub fn evaluate_expression_subscript(
+    pub fn evaluate_expression_subscript<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expression_subscript: &ExpressionSubscript,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
         let value_sourced_ty = pytype_consume_or_return_ok!(
@@ -540,12 +553,14 @@ impl<'a> ExpressionEvaluator<'a> {
         Ok(PyTypeEval::new(sourced_ty, effects))
     }
 
-    pub fn evaluate_call(
+    pub fn evaluate_call<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         ty: &Type,
         arguments: Arguments,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let Type::Literal(literal) = ty else {
             return Ok(PyTypeEval::unknown()); // TODO: add support for unions, etc
         };
@@ -563,10 +578,11 @@ impl<'a> ExpressionEvaluator<'a> {
                     Sourced::inferred(evaluation_state.return_value.data.clone()),
                     PyEffects::new()
                         .with_exceptions(evaluation_state.raised_exceptions.clone())
-                        .with_calls(imbl::OrdMap::unit(
+                        .with_calls(imbl::OrdSet::unit(Call::new(
                             Arc::new(function_namespace),
-                            imbl::OrdSet::unit(arguments),
-                        )),
+                            abstract_state.clone(),
+                            arguments,
+                        ))),
                 ))
             }
             TypeLiteral::Method(literal_method) => self.evaluate_call(
@@ -590,11 +606,13 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    pub fn evaluate_expression_call(
+    pub fn evaluate_expression_call<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expression_call: &ExpressionCall,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
         let sourced_ty = pytype_consume_or_return_ok!(
@@ -630,11 +648,13 @@ impl<'a> ExpressionEvaluator<'a> {
         self.evaluate_call(abstract_state, &sourced_ty.data, arguments)
     }
 
-    pub fn evaluate_expression_unary(
+    pub fn evaluate_expression_unary<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expression_unary: &ExpressionUnary,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
         let operand_sourced_ty = pytype_consume_or_return_ok!(
@@ -656,13 +676,15 @@ impl<'a> ExpressionEvaluator<'a> {
         Ok(PyTypeEval::new(sourced_ty, effects))
     }
 
-    pub fn evaluate_binary_operation(
+    pub fn evaluate_binary_operation<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         left_ty: &Type,
         operator: BinaryOperator,
         right_ty: &Type,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         match (left_ty, right_ty) {
             (Type::Literal(left), Type::Literal(right)) => Ok(type_literal::call_binary_op(
                 left.as_ref(),
@@ -777,11 +799,13 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    pub fn evaluate_expression_binary(
+    pub fn evaluate_expression_binary<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expression_binary: &ExpressionBinary,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
         let left_sourced_ty = pytype_consume_or_return_ok!(
@@ -806,11 +830,13 @@ impl<'a> ExpressionEvaluator<'a> {
         Ok(PyTypeEval::new(sourced_ty, effects))
     }
 
-    pub fn evaluate_expression(
+    pub fn evaluate_expression<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expression: &Expression,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let Some(evaluation_state) = abstract_state.get(self.namespace) else {
             return Err(EvaluationError::NamespaceReferenceError(
                 self.namespace.clone(),
@@ -885,11 +911,14 @@ impl<'a> ExpressionEvaluator<'a> {
         }
     }
 
-    pub fn evaluate_expressions<'e>(
+    pub fn evaluate_expressions<
+        'e,
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
         &self,
-        abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        abstract_state: &S,
         expressions: impl IntoIterator<Item = &'e Expression>,
-    ) -> Result<PyTypeEval, EvaluationError> {
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut eval = PyTypeEval::with_default_effects(Sourced::specified(Type::Never));
 
         for expression in expressions {
@@ -926,8 +955,20 @@ impl<'s> ConstraintSolver<'s> {
 
 impl<'s> GraphAnalyser for ConstraintSolver<'s> {
     type Node = ConstraintNode;
-    type AbstractState =
-        AbstractStateProxy<'s, Namespace, EvaluationState, ProgramEvaluation<EvaluationState>>;
+    type AbstractState = (
+        AbstractStateProxy<'s, Namespace, EvaluationState, ProgramEvaluation<EvaluationState>>,
+        imbl::OrdSet<(
+            QualifiedLocation,
+            Call<
+                AbstractStateProxy<
+                    's,
+                    Namespace,
+                    EvaluationState,
+                    ProgramEvaluation<EvaluationState>,
+                >,
+            >,
+        )>,
+    );
     type AnalysisState = SolverState<Self::Node, Self::AbstractState>;
     type Error = Infallible;
 
@@ -956,15 +997,19 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
-        let mut program_evaluation = analysis_state.get_clone(node).unwrap_or_else(|| {
-            AbstractStateProxy::new(
-                self.program_evaluation,
-                ProgramEvaluation::new(imbl::OrdMap::unit(
-                    self.namespace.clone(),
-                    EvaluationState::default(),
-                )),
-            )
-        });
+        let (mut program_evaluation, mut calls) =
+            analysis_state.get_clone(node).unwrap_or_else(|| {
+                (
+                    AbstractStateProxy::new(
+                        self.program_evaluation,
+                        ProgramEvaluation::new(imbl::OrdMap::unit(
+                            self.namespace.clone(),
+                            EvaluationState::default(),
+                        )),
+                    ),
+                    imbl::OrdSet::default(),
+                )
+            });
 
         match &node {
             ConstraintNode::Entry => {
@@ -1054,21 +1099,14 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                     .raised_exceptions
                                     .join(&eval.effects.exceptions);
                                 if let Some(location) = location {
-                                    for (call_namespace, arguments) in eval.effects.calls {
-                                        evaluation_state.calls =
-                                            evaluation_state.calls.join(&imbl::OrdMap::unit(
-                                                call_namespace,
-                                                imbl::OrdMap::unit(
-                                                    QualifiedLocation::new(
-                                                        location.clone(),
-                                                        Arc::new(self.namespace.clone()),
-                                                    ),
-                                                    arguments,
-                                                ),
-                                            ));
-                                    }
-                                    for definition in eval.effects.definitions {
-                                        evaluation_state.definitions.insert(definition);
+                                    for call in eval.effects.calls {
+                                        calls.insert((
+                                            QualifiedLocation::new(
+                                                location.clone(),
+                                                Arc::new(self.namespace.clone()),
+                                            ),
+                                            call,
+                                        ));
                                     }
                                 }
                             }
@@ -1113,7 +1151,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
             _ => {}
         }
 
-        Ok(program_evaluation)
+        Ok((program_evaluation, calls))
     }
 
     fn update_abstract_state(
@@ -1123,7 +1161,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
         to: &Self::Node,
         abstract_state: &Self::AbstractState,
     ) -> Result<Option<Self::AbstractState>, Self::Error> {
-        let mut new_abstract_state = abstract_state.clone();
+        let (mut new_abstract_state, mut calls) = abstract_state.clone();
 
         let guards = self
             .constraint_graph
@@ -1203,9 +1241,9 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 program_evaluation.return_value = Sourced::default();
                 program_evaluation.defined_variables.names.clear();
             }
-            Ok(Some(new_abstract_state))
+            Ok(Some((new_abstract_state, calls)))
         } else {
-            Ok(Some(new_abstract_state))
+            Ok(Some((new_abstract_state, calls)))
         }
     }
 
@@ -1233,20 +1271,22 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
         &self,
         _analysis_state: &Self::AnalysisState,
         _node: &Self::Node,
-        left: &Self::AbstractState,
-        right: &Self::AbstractState,
+        (left_abstract_state, left_calls): &Self::AbstractState,
+        (right_abstract_state, right_calls): &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error> {
         assert!(std::ptr::addr_eq(
-            left.abstract_state,
+            left_abstract_state.abstract_state,
             self.program_evaluation
         ));
         assert!(std::ptr::addr_eq(
-            right.abstract_state,
+            right_abstract_state.abstract_state,
             self.program_evaluation
         ));
 
-        let mut new_abstract_state =
-            AbstractStateProxy::new(self.program_evaluation, left.proxy.join(&right.proxy));
+        let mut new_abstract_state = AbstractStateProxy::new(
+            self.program_evaluation,
+            left_abstract_state.proxy.join(&right_abstract_state.proxy),
+        );
 
         if let Some(evaluation_state) = new_abstract_state.get(&self.namespace) {
             let new_evaluations = evaluation_state
@@ -1289,12 +1329,16 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 .types = new_evaluations;
         }
 
-        Ok(new_abstract_state)
+        Ok((new_abstract_state, left_calls.join(&right_calls)))
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join, Default)]
 pub struct NamespaceData {
+    pub calls: imbl::OrdMap<
+        QualifiedLocation,
+        imbl::OrdSet<(ProgramEvaluation<EvaluationState>, Arguments)>,
+    >,
     pub dependents: imbl::OrdSet<Namespace>,
     pub dependencies: imbl::OrdSet<Namespace>,
 }
@@ -1302,10 +1346,7 @@ pub struct NamespaceData {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
 pub struct NamespaceDependencyGraph {
     nodes: imbl::OrdMap<Namespace, NamespaceData>,
-    edges: imbl::OrdMap<
-        (Namespace, Namespace),
-        imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>,
-    >,
+    edges: imbl::OrdSet<(Namespace, Namespace)>,
 }
 
 impl NamespaceDependencyGraph {
@@ -1318,7 +1359,7 @@ impl Default for NamespaceDependencyGraph {
     fn default() -> Self {
         Self {
             nodes: imbl::OrdMap::default(),
-            edges: imbl::OrdMap::default(),
+            edges: imbl::OrdSet::default(),
         }
     }
 }
@@ -1327,20 +1368,23 @@ impl NamespaceDependencyGraph {
     pub fn nodes(&self) -> &imbl::OrdMap<Namespace, NamespaceData> {
         &self.nodes
     }
-    pub fn edges(
-        &self,
-    ) -> &imbl::OrdMap<
-        (Namespace, Namespace),
-        imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>,
-    > {
+    pub fn edges(&self) -> &imbl::OrdSet<(Namespace, Namespace)> {
         &self.edges
     }
-    pub fn add_dependency(
+    pub fn add_call(
         &mut self,
-        dependency: Namespace,
-        node: Namespace,
-        calls: imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>,
+        namespace: Namespace,
+        caller: QualifiedLocation,
+        context: ProgramEvaluation<EvaluationState>,
+        arguments: Arguments,
     ) {
+        let namespace_data = self.nodes.entry(namespace).or_default();
+        namespace_data.calls = namespace_data.calls.join(&imbl::OrdMap::unit(
+            caller,
+            imbl::OrdSet::unit((context, arguments)),
+        ));
+    }
+    pub fn add_dependency(&mut self, dependency: Namespace, node: Namespace) {
         self.nodes
             .entry(dependency.clone())
             .or_default()
@@ -1351,8 +1395,7 @@ impl NamespaceDependencyGraph {
             .or_default()
             .dependencies
             .insert(dependency.clone());
-        let existing_calls = self.edges.entry((dependency, node)).or_default();
-        *existing_calls = existing_calls.join(&calls);
+        self.edges.insert((dependency, node));
     }
     pub fn remove_dependency(&mut self, dependency: &Namespace, node: &Namespace) {
         self.edges.remove(&(dependency.clone(), node.clone()));
@@ -1374,7 +1417,7 @@ impl Display for NamespaceDependencyGraph {
 impl Graph for NamespaceDependencyGraph {
     type Node = Namespace;
     type NodeData = NamespaceData;
-    type EdgeData = imbl::OrdMap<QualifiedLocation, imbl::OrdSet<Arguments>>;
+    type EdgeData = ();
 
     fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
         self.nodes.iter()
@@ -1383,9 +1426,7 @@ impl Graph for NamespaceDependencyGraph {
     fn edge_data_iter(
         &self,
     ) -> impl Iterator<Item = ((&Self::Node, &Self::Node), &Self::EdgeData)> {
-        self.edges
-            .iter()
-            .map(|((from, to), edge_data)| ((from, to), edge_data))
+        self.edges.iter().map(|(from, to)| ((from, to), &()))
     }
 }
 
@@ -1431,12 +1472,12 @@ pub fn solve_namespace(
         )?;
 
         let evaluation_state =
-            if let Some(program_evaluation) = solver_state.get(&ConstraintNode::TypeExit) {
+            if let Some((program_evaluation, _)) = solver_state.get(&ConstraintNode::TypeExit) {
                 let mut evaluation_state = program_evaluation.get_clone_or_default(namespace);
 
                 if let Some(exception_evaluation_state) = solver_state
                     .get(&ConstraintNode::ExceptionExit)
-                    .and_then(|program_evaluation| program_evaluation.get(namespace))
+                    .and_then(|(program_evaluation, _)| program_evaluation.get(namespace))
                 {
                     evaluation_state.types = evaluation_state
                         .types
@@ -1450,28 +1491,46 @@ pub fn solve_namespace(
             } else {
                 solver_state
                     .get(&ConstraintNode::ExceptionExit)
-                    .and_then(|program_evaluation| program_evaluation.get(namespace).cloned())
+                    .and_then(|(program_evaluation, _)| program_evaluation.get(namespace))
+                    .cloned()
                     .unwrap_or_default()
             };
 
-        let new_abstract_state = solver_state.get(&ConstraintNode::Exit).cloned(); // TODO: should always exist
+        let (new_abstract_state, new_calls) = solver_state.get(&ConstraintNode::Exit).unwrap(); // TODO: should always exist
+
+        let proxy_states = new_abstract_state.proxy.clone();
+        let new_calls = new_calls
+            .iter()
+            .map(|(qualified_location, call)| {
+                (
+                    qualified_location.clone(),
+                    Call::new(
+                        call.target.clone(),
+                        call.context.proxy.clone(),
+                        call.arguments.clone(),
+                    ),
+                )
+            })
+            .collect::<imbl::OrdSet<(QualifiedLocation, Call<ProgramEvaluation<EvaluationState>>)>>(
+            );
 
         drop(solver_state);
 
-        if let Some(new_abstract_state) = new_abstract_state {
-            let proxy_states = new_abstract_state.proxy;
+        for (qualified_location, call) in new_calls {
+            analysis_state.namespace_dependency_graph.add_call(
+                call.target.as_ref().clone(),
+                qualified_location,
+                analysis_state.program_evaluation.join(&call.context),
+                call.arguments,
+            );
             analysis_state
-                .program_evaluation
-                .extend(&mut proxy_states.states.into_iter());
+                .namespace_dependency_graph
+                .add_dependency(call.target.as_ref().clone(), namespace.clone());
         }
 
-        for (called_namespace, calls) in &evaluation_state.calls {
-            analysis_state.namespace_dependency_graph.add_dependency(
-                called_namespace.as_ref().clone(),
-                namespace.clone(),
-                calls.clone(),
-            );
-        }
+        analysis_state
+            .program_evaluation
+            .extend(&mut proxy_states.states.into_iter());
 
         let evaluation_state: &EvaluationState = analysis_state
             .program_evaluation
@@ -1482,11 +1541,9 @@ pub fn solve_namespace(
         }
 
         for (sub_namespace, subgraph) in &constraint_graph.subgraphs {
-            analysis_state.namespace_dependency_graph.add_dependency(
-                namespace.clone(),
-                sub_namespace.as_ref().clone(),
-                imbl::OrdMap::default(),
-            );
+            analysis_state
+                .namespace_dependency_graph
+                .add_dependency(namespace.clone(), sub_namespace.as_ref().clone());
             solve_namespace(sub_namespace, subgraph, analysis_state)?;
         }
     }
@@ -1602,7 +1659,6 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
                 analysis_state.namespace_dependency_graph.add_dependency(
                     Namespace::Module(module_name.clone()),
                     Namespace::Module(dependent_module_name.clone()),
-                    imbl::OrdMap::default(),
                 );
             }
         }

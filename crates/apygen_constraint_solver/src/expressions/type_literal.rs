@@ -1,5 +1,8 @@
+use crate::EvaluationState;
+use crate::analysis::abstract_state::AbstractState;
 use crate::constraint_graph::expressions::{BinaryOperator, UnaryOperator};
 use crate::expressions::{self, PyTypeEval};
+use crate::identifiers::Namespace;
 use crate::inference::{Sourced, TypeLiteral};
 
 pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
@@ -36,11 +39,11 @@ pub fn as_boolean(type_literal: &TypeLiteral) -> Option<bool> {
         TypeLiteral::ImportedModule(_) => None,
     }
 }
-pub fn call_binary_op(
+pub fn call_binary_op<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>(
     left: &TypeLiteral,
     operator: BinaryOperator,
     right: &TypeLiteral,
-) -> PyTypeEval {
+) -> PyTypeEval<S> {
     match (left, right) {
         (TypeLiteral::Integer(left), TypeLiteral::Integer(right)) => {
             expressions::literal_integer::call_binary_op(left, operator, right)
@@ -104,7 +107,10 @@ pub fn call_binary_op(
     }
 }
 
-pub fn call_unary_op(type_literal: &TypeLiteral, operator: UnaryOperator) -> PyTypeEval {
+pub fn call_unary_op<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>(
+    type_literal: &TypeLiteral,
+    operator: UnaryOperator,
+) -> PyTypeEval<S> {
     PyTypeEval::with_default_effects(match type_literal {
         TypeLiteral::Integer(literal_integer) => Sourced::inferred(
             expressions::literal_integer::call_unary_op(literal_integer, operator),

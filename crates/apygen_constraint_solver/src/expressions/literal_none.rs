@@ -1,4 +1,7 @@
+use crate::analysis::abstract_state::AbstractState;
+use crate::identifiers::Namespace;
 use crate::constraint_graph::expressions::UnaryOperator;
+use crate::EvaluationState;
 use crate::expressions::PyTypeEval;
 use crate::inference::{Exception, Sourced, Type};
 use crate::primitives::literals::LiteralBool;
@@ -19,7 +22,7 @@ pub fn call_not() -> Type {
     })
 }
 
-pub fn call_unary_op(operator: UnaryOperator) -> PyTypeEval {
+pub fn call_unary_op<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>>(operator: UnaryOperator) -> PyTypeEval<S> {
     match operator {
         UnaryOperator::Invert | UnaryOperator::UAdd | UnaryOperator::USub => {
             PyTypeEval::raise(Exception::any()) // TODO: fix
