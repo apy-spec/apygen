@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt::Debug;
 
 pub trait AbstractState {
@@ -90,6 +91,30 @@ impl<'a, K, A, P: AbstractState<Key = K, AbstractValue = A> + PartialEq> Partial
 impl<'a, K, A, P: AbstractState<Key = K, AbstractValue = A> + PartialEq> Eq
     for AbstractStateProxy<'a, K, A, P>
 {
+}
+
+impl<'a, K, A, P: AbstractState<Key = K, AbstractValue = A> + Ord> PartialOrd
+    for AbstractStateProxy<'a, K, A, P>
+{
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<'a, K, A, P: AbstractState<Key = K, AbstractValue = A> + Ord> Ord
+    for AbstractStateProxy<'a, K, A, P>
+{
+    fn cmp(&self, other: &Self) -> Ordering {
+        let self_ptr = self.abstract_state as *const dyn AbstractState<Key = K, AbstractValue = A>
+            as *const ();
+        let other_ptr = other.abstract_state as *const dyn AbstractState<Key = K, AbstractValue = A>
+            as *const ();
+
+        match self_ptr.cmp(&other_ptr) {
+            Ordering::Equal => self.proxy.cmp(&other.proxy),
+            ordering => ordering,
+        }
+    }
 }
 
 impl<'a, K, A, P: AbstractState<Key = K, AbstractValue = A> + Clone> Clone
