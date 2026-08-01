@@ -1459,6 +1459,9 @@ pub fn solve_namespace(
     constraint_graph: &ConstraintGraph,
     analysis_state: &mut ModuleConstraintSolverAnalysisState,
 ) -> Result<(), Infallible> {
+    let mut previous_calls: Option<
+        imbl::OrdSet<(QualifiedLocation, Call<ProgramEvaluation<EvaluationState>>)>,
+    > = None;
     loop {
         let previous_evaluation_state = analysis_state.program_evaluation.states.remove(namespace);
 
@@ -1516,7 +1519,7 @@ pub fn solve_namespace(
 
         drop(solver_state);
 
-        for (qualified_location, call) in new_calls {
+        for (qualified_location, call) in new_calls.clone() {
             let mut call_program_evaluation = analysis_state.program_evaluation.clone();
             call_program_evaluation.extend(&mut call.context.states.into_iter());
             analysis_state.namespace_dependency_graph.add_call(
@@ -1538,9 +1541,13 @@ pub fn solve_namespace(
             .program_evaluation
             .insert(namespace.clone(), evaluation_state);
 
-        if Some(evaluation_state) == previous_evaluation_state.as_ref() {
+        if Some(evaluation_state) == previous_evaluation_state.as_ref()
+            && Some(&new_calls) == previous_calls.as_ref()
+        {
             break;
         }
+
+        previous_calls = Some(new_calls);
 
         for (sub_namespace, subgraph) in &constraint_graph.subgraphs {
             analysis_state
@@ -1585,7 +1592,16 @@ impl<'a> ModuleConstraintSolver<'a> {
 
 impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     type Node = SmolStr;
-    type InputState = BTreeMap<Namespace, BTreeMap<ExpressionVariableDefinition, Sourced<Type>>>;
+    type InputState = BTreeMap<
+        Namespace,
+        (
+            BTreeMap<ExpressionVariableDefinition, Sourced<Type>>,
+            imbl::OrdMap<
+                QualifiedLocation,
+                imbl::OrdSet<(ProgramEvaluation<EvaluationState>, Arguments)>,
+            >,
+        ),
+    >;
     type OutputState = BTreeMap<Namespace, EvaluationState>;
     type AnalysisState = ModuleConstraintSolverAnalysisState;
     type Error = Infallible;
@@ -1702,20 +1718,28 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
 
                 (
                     namespace.clone(),
-                    constraint_graph
-                        .specification
-                        .arguments
-                        .iter()
-                        .map(|(variable, expressions)| {
-                            (
-                                variable.clone(),
-                                evaluator
-                                    .evaluate_expressions(&mut program_evaluation, expressions)
-                                    .map(|eval| eval.value)
-                                    .unwrap_or(Sourced::inferred(Type::Any)), // TODO: fix
-                            )
-                        })
-                        .collect(),
+                    (
+                        constraint_graph
+                            .specification
+                            .arguments
+                            .iter()
+                            .map(|(variable, expressions)| {
+                                (
+                                    variable.clone(),
+                                    evaluator
+                                        .evaluate_expressions(&mut program_evaluation, expressions)
+                                        .map(|eval| eval.value)
+                                        .unwrap_or(Sourced::inferred(Type::Any)), // TODO: fix
+                                )
+                            })
+                            .collect(),
+                        analysis_state
+                            .namespace_dependency_graph
+                            .nodes()
+                            .get(namespace)
+                            .map(|namespace_data| namespace_data.calls.clone())
+                            .unwrap_or_default(),
+                    ),
                 )
             })
             .collect())
