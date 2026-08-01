@@ -1235,13 +1235,6 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
 
         if should_ignore {
             Ok(None)
-        } else if matches!(to, ConstraintNode::ExceptionExit) {
-            if let Some(program_evaluation) = new_abstract_state.get_mut(self.namespace) {
-                program_evaluation.types.clear();
-                program_evaluation.return_value = Sourced::default();
-                program_evaluation.defined_variables.names.clear();
-            }
-            Ok(Some((new_abstract_state, calls)))
         } else {
             Ok(Some((new_abstract_state, calls)))
         }
