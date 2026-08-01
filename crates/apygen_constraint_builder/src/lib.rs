@@ -175,7 +175,6 @@ impl OrdJoin for ReturnStatus {}
 pub struct ProgramEntityAbstractEnvironment {
     pub return_status: ReturnStatus,
     pub current_nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>,
-    pub variable_locations: imbl::OrdMap<SmolStr, imbl::OrdSet<Location>>,
     pub nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
     pub edges: imbl::OrdMap<(ConstraintNode, ConstraintNode), imbl::OrdSet<Guard>>,
     pub imports: imbl::OrdSet<SmolStr>,
@@ -271,42 +270,6 @@ impl Display for ProgramEntityKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProgramEntityAbstractParentState<'a> {
-    pub state: &'a ProgramEntityAbstractEnvironment,
-    pub entity: &'a ProgramEntity,
-    pub parent: Option<&'a ProgramEntityAbstractParentState<'a>>,
-}
-
-impl<'a> ProgramEntityAbstractParentState<'a> {
-    pub fn new(
-        state: &'a ProgramEntityAbstractEnvironment,
-        entity: &'a ProgramEntity,
-        parent: Option<&'a ProgramEntityAbstractParentState<'a>>,
-    ) -> Self {
-        Self {
-            state,
-            entity,
-            parent,
-        }
-    }
-
-    pub fn previous_locations(
-        &self,
-        variable_name: &SmolStr,
-    ) -> Option<(&Arc<Namespace>, &imbl::OrdSet<Location>)> {
-        if let Some(locations) = self.state.variable_locations.get(variable_name) {
-            return Some((&self.entity.namespace, locations));
-        }
-
-        if let Some(parent) = &self.parent {
-            return parent.previous_locations(variable_name);
-        }
-
-        None
-    }
-}
-
 pub fn drain<K: Clone + Ord, V: Clone>(
     map: &mut imbl::OrdMap<K, V>,
     f: impl Fn(&(K, V)) -> bool,
@@ -346,7 +309,6 @@ pub struct ConstraintsBuilder<'a> {
     pub line_index: &'a LineIndex,
     pub program_entity: &'a ProgramEntity,
     pub specification: &'a ConstraintGraphSpecification,
-    pub abstract_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
 }
 
 impl<'a> ConstraintsBuilder<'a> {
@@ -355,14 +317,12 @@ impl<'a> ConstraintsBuilder<'a> {
         line_index: &'a LineIndex,
         program_entity: &'a ProgramEntity,
         specification: &'a ConstraintGraphSpecification,
-        abstract_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
     ) -> ConstraintsBuilder<'a> {
         ConstraintsBuilder {
             cfg,
             line_index,
             program_entity,
             specification,
-            abstract_parent_state,
         }
     }
 
@@ -395,23 +355,6 @@ impl<'a> ConstraintsBuilder<'a> {
         } else {
             Some(filtered_guards)
         }
-    }
-
-    pub fn previous_locations<'l>(
-        &'l self,
-        abstract_environment: &'l ProgramEntityAbstractEnvironment,
-        variable_name: &SmolStr,
-    ) -> Option<(&'l Arc<Namespace>, &'l imbl::OrdSet<Location>)> {
-        if let Some(previous_locations) = abstract_environment.variable_locations.get(variable_name)
-        {
-            return Some((&self.program_entity.namespace, previous_locations));
-        }
-
-        if let Some(parent) = &self.abstract_parent_state {
-            return parent.previous_locations(variable_name);
-        }
-
-        None
     }
 
     pub fn create_include_constraint(
@@ -506,10 +449,6 @@ impl<'a> ConstraintsBuilder<'a> {
             type_expression,
             Arc::new(Expression::VariableDefinition(expression_variable)),
         );
-
-        abstract_environment
-            .variable_locations
-            .insert(variable_name, imbl::OrdSet::unit(location));
     }
 
     pub fn assign_empty_constraint(
@@ -1185,11 +1124,6 @@ impl<'a> ConstraintsBuilder<'a> {
                 return_type,
                 exceptions: imbl::OrdSet::default(),
             },
-            Some(&ProgramEntityAbstractParentState::new(
-                &target_abstract_environment,
-                self.program_entity,
-                self.abstract_parent_state,
-            )),
         );
 
         self.assign_variable(
@@ -1242,11 +1176,6 @@ impl<'a> ConstraintsBuilder<'a> {
             self.line_index,
             &class_program_entity,
             ConstraintGraphSpecification::default(),
-            Some(&ProgramEntityAbstractParentState::new(
-                &target_abstract_environment,
-                self.program_entity,
-                self.abstract_parent_state,
-            )),
         );
 
         self.assign_variable(
@@ -1372,10 +1301,6 @@ impl<'a> ConstraintsBuilder<'a> {
                 );
 
                 let mut location = self.gen_location(&alias.name);
-
-                target_abstract_environment
-                    .variable_locations
-                    .insert(identifier.clone(), imbl::OrdSet::unit(location.clone()));
 
                 let mut expression_option = Some(Arc::new(Expression::VariableDefinition(
                     ExpressionVariableDefinition::new(NamedQualifiedLocation::new(
@@ -1756,13 +1681,6 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
             .current_nodes
             .insert(ConstraintNode::Entry, imbl::OrdSet::default());
 
-        for argument in self.specification.arguments.keys() {
-            entry_state.variable_locations.insert(
-                argument.named_qualified_location.name.clone(),
-                imbl::OrdSet::unit(argument.named_qualified_location.location.clone()),
-            );
-        }
-
         analysis_state
             .abstract_states
             .insert(ProgramPoint::Entry, entry_state);
@@ -1822,7 +1740,6 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                 .all(|edge_kind| matches!(edge_kind, CfgEdgeKind::UnhandledException));
 
             if are_all_exceptions {
-                target_abstract_environment.variable_locations.clear();
                 target_abstract_environment.nodes.clear();
                 target_abstract_environment.edges.clear();
                 target_abstract_environment.imports.clear();
@@ -2030,15 +1947,9 @@ pub fn analyse_cfg<'a>(
     line_index: &'a LineIndex,
     program_entity: &ProgramEntity,
     specification: ConstraintGraphSpecification,
-    program_entity_analysis_parent_state: Option<&'a ProgramEntityAbstractParentState<'a>>,
 ) -> CfgAnalysis {
-    let constraint_builder = ConstraintsBuilder::new(
-        cfg,
-        line_index,
-        program_entity,
-        &specification,
-        program_entity_analysis_parent_state,
-    );
+    let constraint_builder =
+        ConstraintsBuilder::new(cfg, line_index, program_entity, &specification);
 
     let mut program_entity_analysis_state =
         analysis(&constraint_builder, &mut DummyAnalysisObserver)
@@ -2055,11 +1966,38 @@ pub fn analyse_cfg<'a>(
     }
 }
 
+pub fn create_constraint_graph(
+    cfg_analysis: CfgAnalysis,
+) -> (ConstraintGraph, imbl::OrdSet<SmolStr>) {
+    let mut imports = cfg_analysis.environment.imports;
+    let constraint_graph = ConstraintGraph::new(
+        cfg_analysis.specification.clone(),
+        cfg_analysis
+            .environment
+            .sub_program_entities
+            .into_iter()
+            .map(|(sub_program_entity, sub_cfg_analysis)| {
+                let (sub_constraint_graph, sub_imports) = create_constraint_graph(sub_cfg_analysis);
+                imports.extend(sub_imports);
+                (sub_program_entity.namespace, sub_constraint_graph)
+            })
+            .collect(),
+        cfg_analysis.environment.nodes.clone(),
+        cfg_analysis.environment.edges.into_iter().fold(
+            imbl::OrdMap::default(),
+            |mut acc, ((from, to), guards)| {
+                acc.entry(from).or_default().insert(to, guards);
+                acc
+            },
+        ),
+    );
+    (constraint_graph, imports)
+}
+
 pub fn analyse_module<'a>(
     module_loader: &impl ModuleLoader<Error: Debug>,
-    parent_state: Option<&ProgramEntityAbstractParentState>,
     module_name: &SmolStr,
-) -> Option<(ProgramEntity, CfgAnalysis)> {
+) -> Option<(ConstraintGraph, imbl::OrdSet<SmolStr>)> {
     let source = module_loader.load(&module_name).ok()?;
     let module = parse_module(&source).ok()?;
     let line_index = LineIndex::from_source_text(&source);
@@ -2073,93 +2011,33 @@ pub fn analyse_module<'a>(
         &line_index,
         &program_entity,
         ConstraintGraphSpecification::default(),
-        parent_state,
     );
-    Some((program_entity, cfg_analysis))
-}
-
-pub fn get_imports(cfg_analysis: &CfgAnalysis) -> BTreeSet<SmolStr> {
-    cfg_analysis
-        .environment
-        .imports
-        .iter()
-        .cloned()
-        .chain(
-            cfg_analysis
-                .environment
-                .sub_program_entities
-                .values()
-                .flat_map(|cfg_analysis| get_imports(cfg_analysis)),
-        )
-        .collect()
-}
-
-pub fn create_constraint_graph(cfg_analysis: CfgAnalysis) -> ConstraintGraph {
-    ConstraintGraph::new(
-        cfg_analysis.specification.clone(),
-        cfg_analysis
-            .environment
-            .sub_program_entities
-            .into_iter()
-            .map(|(program_entity, cfg_analysis)| {
-                (
-                    program_entity.namespace,
-                    create_constraint_graph(cfg_analysis),
-                )
-            })
-            .collect(),
-        cfg_analysis.environment.nodes.clone(),
-        cfg_analysis.environment.edges.into_iter().fold(
-            imbl::OrdMap::default(),
-            |mut acc, ((from, to), guards)| {
-                acc.entry(from).or_default().insert(to, guards);
-                acc
-            },
-        ),
-    )
+    Some(create_constraint_graph(cfg_analysis))
 }
 
 pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
     module_loader: &C,
     initial_modules: impl Iterator<Item = SmolStr>,
 ) -> ModuleDependentGraph {
-    let (builtins_entity, builtins_cfg_analysis) =
-        analyse_module(module_loader, None, &BUILTINS_MODULE)
-            .expect("builtins module should be analysable");
-
-    let builtin_parent_state = &ProgramEntityAbstractParentState::new(
-        &builtins_cfg_analysis.environment,
-        &builtins_entity,
-        None,
-    );
-
-    let builtins_imports = get_imports(&builtins_cfg_analysis);
-
     let mut dependent_graph = ModuleDependentGraph::default();
-    for builtins_import in &builtins_imports {
-        dependent_graph.add_dependent(builtins_import.clone(), BUILTINS_MODULE);
-    }
-
     let mut worklist = initial_modules
-        .chain(builtins_imports)
-        .filter(|import| *import != BUILTINS_MODULE)
+        .chain(std::iter::once(BUILTINS_MODULE))
         .collect::<BTreeSet<_>>();
 
     while !worklist.is_empty() {
         let analysed_modules = worklist
             .into_par_iter()
             .filter_map(|module_name| {
-                let (_, cfg_analysis) =
-                    analyse_module(module_loader, Some(builtin_parent_state), &module_name)?;
-                let imports = get_imports(&cfg_analysis);
-                let constraint_graph = create_constraint_graph(cfg_analysis);
+                let (constraint_graph, imports) = analyse_module(module_loader, &module_name)?;
                 Some((module_name, constraint_graph, imports))
             })
             .collect::<Vec<_>>();
 
         worklist = BTreeSet::new();
         for (module_name, constraint_graph, imports) in analysed_modules {
-            dependent_graph.add_dependent(BUILTINS_MODULE, module_name.clone());
+            if module_name != BUILTINS_MODULE {
+                dependent_graph.add_dependent(BUILTINS_MODULE, module_name.clone());
+            }
 
             for import in imports {
                 if import == BUILTINS_MODULE {
@@ -2176,11 +2054,6 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
             dependent_graph.nodes.insert(module_name, constraint_graph);
         }
     }
-
-    dependent_graph.insert(
-        BUILTINS_MODULE,
-        create_constraint_graph(builtins_cfg_analysis),
-    );
 
     dependent_graph
 }
