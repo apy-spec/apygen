@@ -116,6 +116,7 @@ digraph "literal_str" {
     "Constraint(location=55:0)" -> "Constraint(location=56:0)" [label="#succeed((2) * (multiple_str))"];
     "Constraint(location=55:0)" -> "ExceptionExit" [label="#raise((2) * (multiple_str))"];
     "Constraint(location=56:0)" -> "Constraint()";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "Exit";
 }

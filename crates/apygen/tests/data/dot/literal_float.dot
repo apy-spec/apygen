@@ -167,6 +167,7 @@ digraph "literal_float" {
     "Constraint(location=54:0)" -> "Constraint(location=55:0)" [label="#succeed(@(big_float_neg_value))"];
     "Constraint(location=54:0)" -> "ExceptionExit" [label="#raise(@(big_float_neg_value))"];
     "Constraint(location=55:0)" -> "Constraint()";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "Exit";
 }

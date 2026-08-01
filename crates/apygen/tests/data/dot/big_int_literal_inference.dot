@@ -137,6 +137,7 @@ digraph "big_int_literal_inference" {
     "Constraint(location=48:0)" -> "Constraint(location=49:0)" [label="#succeed((assign) ^ (static_bitwise_xor))"];
     "Constraint(location=48:0)" -> "ExceptionExit" [label="#raise((assign) ^ (static_bitwise_xor))"];
     "Constraint(location=49:0)" -> "Constraint()";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "Exit";
 }

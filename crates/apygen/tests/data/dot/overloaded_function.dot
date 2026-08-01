@@ -36,6 +36,7 @@ digraph "overloaded_function" {
     "Constraint(location=9:4)" -> "Constraint(location=12:4)" [label="#succeed(#function(identifier=overloaded_function[add@{12:4}], async=false))"];
     "Constraint(location=9:4)" -> "ExceptionExit" [label="#raise(#function(identifier=overloaded_function[add@{12:4}], async=false))"];
     "Constraint(location=12:4)" -> "Constraint()";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "Exit";
 }
@@ -43,12 +44,14 @@ digraph "overloaded_function[add@{5:4}]" {
     "Constraint()" [label="#return(None)"];
     "Entry" -> "Constraint()";
     "Constraint()" -> "TypeExit";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
 }
 digraph "overloaded_function[add@{9:4}]" {
     "Constraint()" [label="#return(None)"];
     "Entry" -> "Constraint()";
     "Constraint()" -> "TypeExit";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
 }
 digraph "overloaded_function[add@{12:4}]" {
@@ -56,6 +59,7 @@ digraph "overloaded_function[add@{12:4}]" {
     "Entry" -> "Constraint(location=13:4)" [label="#succeed((x) + (y))"];
     "Entry" -> "ExceptionExit" [label="#raise((x) + (y))"];
     "Constraint(location=13:4)" -> "TypeExit";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "Exit";
 }

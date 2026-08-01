@@ -43,6 +43,7 @@ digraph "simple_class_init" {
     "Constraint(location=14:0)" -> "Constraint(location=15:0)" [label="#succeed((point).y)"];
     "Constraint(location=14:0)" -> "ExceptionExit" [label="#raise((point).y)"];
     "Constraint(location=15:0)" -> "Constraint()";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "Exit";
 }
@@ -53,6 +54,7 @@ digraph "simple_class_init[Point@{1:6}]" {
     "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=simple_class_init[Point@{1:6}][__init__@{5:8}], async=false))"];
     "Constraint()" -> "TypeExit";
     "Constraint(location=5:8)" -> "Constraint()";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "Exit";
 }
@@ -60,5 +62,6 @@ digraph "simple_class_init[Point@{1:6}][__init__@{5:8}]" {
     "Constraint()" [label="#return(None)"];
     "Entry" -> "Constraint()";
     "Constraint()" -> "TypeExit";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
 }

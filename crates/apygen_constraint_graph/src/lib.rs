@@ -18,6 +18,7 @@ pub mod expressions;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Guard {
+    ForwardReference,
     IsTrue(Arc<Expression>),
     IsFalse(Arc<Expression>),
     Succeed(Arc<Expression>),
@@ -30,6 +31,7 @@ pub enum Guard {
 impl Display for Guard {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Guard::ForwardReference => write!(f, "#forward_reference"),
             Guard::IsTrue(expression) => write!(f, "#is_true({})", expression),
             Guard::IsFalse(expression) => write!(f, "#is_false({})", expression),
             Guard::Succeed(expression) => write!(f, "#succeed({})", expression),

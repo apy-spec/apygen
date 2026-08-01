@@ -61,6 +61,7 @@ digraph "int_conversion" {
     "Constraint(location=14:0)" -> "Constraint(location=15:0)" [label="#succeed((bool)(y))"];
     "Constraint(location=14:0)" -> "ExceptionExit" [label="#raise((bool)(y))"];
     "Constraint(location=15:0)" -> "Constraint()";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "Exit";
 }

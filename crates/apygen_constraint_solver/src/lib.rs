@@ -46,6 +46,7 @@ pub struct EvaluationState {
     pub return_value: Sourced<Type>,
     pub raised_exceptions: RaisedExceptions,
     pub defined_variables: DefinedVariables,
+    pub type_variables: imbl::OrdMap<SmolStr, imbl::OrdSet<(Arc<Namespace>, Location)>>,
 }
 
 impl EvaluationState {
@@ -1175,6 +1176,16 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
 
         for guard in guards {
             match guard {
+                Guard::ForwardReference => {
+                    let evaluation_state =
+                        new_abstract_state.get_or_insert_default(self.namespace.clone());
+                    evaluation_state.type_variables = evaluation_state
+                        .type_variables
+                        .clone()
+                        .union(evaluation_state.defined_variables.names.clone());
+                    evaluation_state.defined_variables.names.clear();
+                    should_ignore = false;
+                }
                 Guard::IsTrue(expression) => {
                     let eval = self
                         .evaluator(EvaluatorMode::Normal)
@@ -1496,11 +1507,10 @@ pub fn solve_namespace(
                     .unwrap_or_default()
             };
 
-        let (proxy_states, new_calls) =
-            solver_state
-                .get(&ConstraintNode::Exit)
-                .map(|(program_evaluation, calls)| {
-                    (
+        let (proxy_states, new_calls) = solver_state
+            .get(&ConstraintNode::Exit)
+            .map(|(program_evaluation, calls)| {
+                (
                         program_evaluation.proxy.clone(),
                         calls
                             .iter()
@@ -1519,8 +1529,8 @@ pub fn solve_namespace(
                                 Call<ProgramEvaluation<EvaluationState>>,
                             )>>(),
                     )
-                })
-                .unwrap_or_else(|| (ProgramEvaluation::default(), imbl::OrdSet::default()));
+            })
+            .unwrap_or_else(|| (ProgramEvaluation::default(), imbl::OrdSet::default()));
 
         drop(solver_state);
 

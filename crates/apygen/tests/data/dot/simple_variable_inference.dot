@@ -48,6 +48,7 @@ digraph "simple_variable_inference" {
     "Constraint(location=8:0)" -> "Constraint(location=9:0)" [label="#succeed((left_int) + (right_int))"];
     "Constraint(location=8:0)" -> "ExceptionExit" [label="#raise((left_int) + (right_int))"];
     "Constraint(location=9:0)" -> "Constraint()";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "Exit";
 }

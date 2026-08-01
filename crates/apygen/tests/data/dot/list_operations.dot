@@ -35,6 +35,7 @@ digraph "list_operations" {
     "Constraint(location=3:0)" -> "Constraint(location=4:0)" [label="#succeed((ls)[1])"];
     "Constraint(location=3:0)" -> "ExceptionExit" [label="#raise((ls)[1])"];
     "Constraint(location=4:0)" -> "Constraint()";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "Exit";
 }

@@ -317,6 +317,7 @@ impl<'a> ConstraintsBuilder<'a> {
         let filtered_guards: imbl::OrdSet<_> = guards
             .iter()
             .filter(|guard| match guard {
+                Guard::ForwardReference => true,
                 Guard::IsTrue(_) => edge_kinds.contains(&CfgEdgeKind::Conditional(true)),
                 Guard::IsFalse(_) => edge_kinds.contains(&CfgEdgeKind::Conditional(false)),
                 Guard::Succeed(_) => edge_kinds
@@ -1672,6 +1673,10 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
                         );
                     }
                     target_abstract_environment.edges.insert(
+                        (ConstraintNode::TypeExit, ConstraintNode::Entry),
+                        imbl::OrdSet::unit(Guard::ForwardReference),
+                    );
+                    target_abstract_environment.edges.insert(
                         (ConstraintNode::TypeExit, ConstraintNode::Exit),
                         imbl::OrdSet::default(),
                     );
@@ -1993,6 +1998,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise(#class(identifier=builtins[int@{1:6}]))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:6)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2005,6 +2011,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=builtins[int@{1:6}][__add__@{2:8}], async=false))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=2:8)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2014,6 +2021,7 @@ mod tests {
             "Constraint()" [label="#return(None)"];
             "Entry" -> "Constraint()";
             "Constraint()" -> "TypeExit";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
         }
         "##};
@@ -2060,6 +2068,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise(#import(some_module))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:7)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2085,6 +2094,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise(#import(some_module))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:22)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2116,6 +2126,7 @@ mod tests {
             "Constraint(location=1:7)" -> "Constraint(location=1:19)" [label="#succeed(#import(some_module.submodule))"];
             "Constraint(location=1:7)" -> "ExceptionExit" [label="#raise(#import(some_module.submodule))"];
             "Constraint(location=1:19)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2150,6 +2161,7 @@ mod tests {
             "Constraint(location=1:20)" -> "Constraint(location=1:32)" [label="#succeed(#import(some_module.submodule))"];
             "Constraint(location=1:20)" -> "ExceptionExit" [label="#raise(#import(some_module.submodule))"];
             "Constraint(location=1:32)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2181,6 +2193,7 @@ mod tests {
             "Constraint(location=1:7)" -> "Constraint(location=1:20)" [label="#succeed(#import(another_module))"];
             "Constraint(location=1:7)" -> "ExceptionExit" [label="#raise(#import(another_module))"];
             "Constraint(location=1:20)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2212,6 +2225,7 @@ mod tests {
             "Constraint(location=1:22)" -> "Constraint(location=1:45)" [label="#succeed(#import(another_module))"];
             "Constraint(location=1:22)" -> "ExceptionExit" [label="#raise(#import(another_module))"];
             "Constraint(location=1:45)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2233,6 +2247,7 @@ mod tests {
             "Entry" -> "Constraint(location=1:0)";
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
         }
         "##},
@@ -2253,6 +2268,7 @@ mod tests {
             "Entry" -> "Constraint(location=1:0)";
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
         }
         "##},
@@ -2274,6 +2290,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) + (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2296,6 +2313,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) - (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2318,6 +2336,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) * (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2340,6 +2359,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) @ (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2362,6 +2382,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) / (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2384,6 +2405,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) // (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2406,6 +2428,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) % (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2428,6 +2451,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) ** (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2450,6 +2474,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) << (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2472,6 +2497,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) >> (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2494,6 +2520,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) | (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2516,6 +2543,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) ^ (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2538,6 +2566,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) & (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2560,6 +2589,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) and (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2582,6 +2612,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) or (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2604,6 +2635,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) == (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2626,6 +2658,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) != (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2648,6 +2681,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) < (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2670,6 +2704,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) > (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2692,6 +2727,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) <= (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2714,6 +2750,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) >= (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2736,6 +2773,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) is (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2758,6 +2796,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) is not (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2780,6 +2819,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) in (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2802,6 +2842,7 @@ mod tests {
             "Entry" -> "ExceptionExit" [label="#raise((42) not in (67))"];
             "Constraint()" -> "TypeExit";
             "Constraint(location=1:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2830,6 +2871,7 @@ mod tests {
             "Constraint(location=1:0)" -> "Constraint(location=3:0)" [label="#succeed((a) + (a))"];
             "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise((a) + (a))"];
             "Constraint(location=3:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2870,6 +2912,7 @@ mod tests {
             "Constraint(location=6:4)" -> "Constraint(location=8:0)" [label="#succeed(a)"];
             "Constraint(location=6:4)" -> "ExceptionExit" [label="#raise(a)"];
             "Constraint(location=8:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2909,6 +2952,7 @@ mod tests {
             "Constraint(location=6:0)" -> "Constraint()";
             "Constraint(location=6:0, id=#empty)" -> "Constraint(location=6:0)" [label="#succeed(a)"];
             "Constraint(location=6:0, id=#empty)" -> "ExceptionExit" [label="#raise(a)"];
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2939,6 +2983,7 @@ mod tests {
             "Constraint(location=1:4)" -> "Constraint(location=4:0)" [label="#succeed((add_two)(42, 67))"];
             "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise((add_two)(42, 67))"];
             "Constraint(location=4:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2949,6 +2994,7 @@ mod tests {
             "Entry" -> "Constraint(location=2:4)" [label="#succeed((a) + (b))"];
             "Entry" -> "ExceptionExit" [label="#raise((a) + (b))"];
             "Constraint(location=2:4)" -> "TypeExit";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2983,6 +3029,7 @@ mod tests {
             "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise((foo)())"];
             "Constraint(location=4:0)" -> "Constraint(location=6:0)";
             "Constraint(location=6:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -2993,6 +3040,7 @@ mod tests {
             "Entry" -> "Constraint(location=2:4)" [label="#succeed(CONST)"];
             "Entry" -> "ExceptionExit" [label="#raise(CONST)"];
             "Constraint(location=2:4)" -> "TypeExit";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -3027,6 +3075,7 @@ mod tests {
             "Constraint(location=4:0)" -> "Constraint(location=6:0)" [label="#succeed((foo)())"];
             "Constraint(location=4:0)" -> "ExceptionExit" [label="#raise((foo)())"];
             "Constraint(location=6:0)" -> "Constraint()";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }
@@ -3037,6 +3086,7 @@ mod tests {
             "Entry" -> "Constraint(location=2:4)" [label="#succeed(CONST)"];
             "Entry" -> "ExceptionExit" [label="#raise(CONST)"];
             "Constraint(location=2:4)" -> "TypeExit";
+            "TypeExit" -> "Entry" [label="#forward_reference"];
             "TypeExit" -> "Exit";
             "ExceptionExit" -> "Exit";
         }

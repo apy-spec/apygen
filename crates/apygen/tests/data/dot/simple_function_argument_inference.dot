@@ -37,6 +37,7 @@ digraph "simple_function_argument_inference" {
     "Constraint(location=5:0)" -> "Constraint(location=6:0)" [label="#succeed((add_two)(a, b))"];
     "Constraint(location=5:0)" -> "ExceptionExit" [label="#raise((add_two)(a, b))"];
     "Constraint(location=6:0)" -> "Constraint()";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "Exit";
 }
@@ -45,6 +46,7 @@ digraph "simple_function_argument_inference[add_two@{1:4}]" {
     "Entry" -> "Constraint(location=2:4)" [label="#succeed((x) + (y))"];
     "Entry" -> "ExceptionExit" [label="#raise((x) + (y))"];
     "Constraint(location=2:4)" -> "TypeExit";
+    "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
     "ExceptionExit" -> "Exit";
 }
