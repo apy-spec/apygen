@@ -1460,9 +1460,7 @@ pub fn solve_namespace(
     analysis_state: &mut ModuleConstraintSolverAnalysisState,
 ) -> Result<(), Infallible> {
     loop {
-        let previous_evaluation_state = analysis_state.program_evaluation.get(namespace).cloned();
-
-        analysis_state.program_evaluation.states.remove(namespace);
+        let previous_evaluation_state = analysis_state.program_evaluation.states.remove(namespace);
 
         let solver_state = analysis(
             &ConstraintSolver::new(
