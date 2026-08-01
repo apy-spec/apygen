@@ -1221,6 +1221,10 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                         .evaluate_expression(&new_abstract_state, expression)
                         .unwrap_or(PyTypeEval::unknown());
 
+                    if eval.effects.exceptions.exceptions.is_empty() {
+                        continue;
+                    }
+
                     let evaluation_state =
                         new_abstract_state.get_or_insert_default(self.namespace.clone());
 
@@ -1492,23 +1496,31 @@ pub fn solve_namespace(
                     .unwrap_or_default()
             };
 
-        let (new_abstract_state, new_calls) = solver_state.get(&ConstraintNode::Exit).unwrap(); // TODO: should always exist
-
-        let proxy_states = new_abstract_state.proxy.clone();
-        let new_calls = new_calls
-            .iter()
-            .map(|(qualified_location, call)| {
-                (
-                    qualified_location.clone(),
-                    Call::new(
-                        call.target.clone(),
-                        call.context.proxy.clone(),
-                        call.arguments.clone(),
-                    ),
-                )
-            })
-            .collect::<imbl::OrdSet<(QualifiedLocation, Call<ProgramEvaluation<EvaluationState>>)>>(
-            );
+        let (proxy_states, new_calls) =
+            solver_state
+                .get(&ConstraintNode::Exit)
+                .map(|(program_evaluation, calls)| {
+                    (
+                        program_evaluation.proxy.clone(),
+                        calls
+                            .iter()
+                            .map(|(qualified_location, call)| {
+                                (
+                                    qualified_location.clone(),
+                                    Call::new(
+                                        call.target.clone(),
+                                        call.context.proxy.clone(),
+                                        call.arguments.clone(),
+                                    ),
+                                )
+                            })
+                            .collect::<imbl::OrdSet<(
+                                QualifiedLocation,
+                                Call<ProgramEvaluation<EvaluationState>>,
+                            )>>(),
+                    )
+                })
+                .unwrap_or_else(|| (ProgramEvaluation::default(), imbl::OrdSet::default()));
 
         drop(solver_state);
 
