@@ -6,7 +6,7 @@ use crate::primitives::literals::{
 };
 pub use apygen_analysis as analysis;
 use apygen_analysis::abstract_state::AbstractState;
-use apygen_analysis::fmt::{fmt_set};
+use apygen_analysis::fmt::{fmt_display_set, fmt_set};
 use imbl::ordmap::Entry;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
@@ -1005,7 +1005,7 @@ impl TypeInstance {
             program_evaluation.get(&Namespace::Module(module_name.clone()))?;
         let ty = namespace_evaluation.get_attribute(variable_name)?;
 
-        let Type::Literal(type_literal) = &ty.data else {
+        let Type::Literal(type_literal) = &ty.as_value()?.data else {
             return None;
         };
 
@@ -1479,7 +1479,7 @@ impl DefinedVariables {
 }
 
 impl Display for DefinedVariables {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         fmt_set(f, self.names.iter(), |f, (name, locations)| {
             write!(f, "{}: ", name)?;
             fmt_set(f, locations.iter(), |f, (program_entity, location)| {
@@ -1489,9 +1489,73 @@ impl Display for DefinedVariables {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
+pub struct Deferred<T, E: Ord> {
+    pub value: T,
+    pub expressions: imbl::OrdSet<Arc<E>>,
+}
+
+impl<T, E: Ord> Deferred<T, E> {
+    pub fn new(value: T, expressions: imbl::OrdSet<Arc<E>>) -> Self {
+        Self { value, expressions }
+    }
+
+    pub fn known(value: T) -> Self {
+        Self::new(value, imbl::OrdSet::default())
+    }
+
+    pub fn unknown(expressions: imbl::OrdSet<Arc<E>>) -> Self
+    where
+        T: Default,
+    {
+        Self::new(T::default(), expressions)
+    }
+
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Deferred<U, E> {
+        Deferred::new(f(self.value), self.expressions)
+    }
+
+    pub fn as_value(&self) -> Option<&T> {
+        if self.expressions.is_empty() {
+            Some(&self.value)
+        } else {
+            None
+        }
+    }
+
+    pub fn to_value(self) -> Option<T> {
+        if self.expressions.is_empty() {
+            Some(self.value)
+        } else {
+            None
+        }
+    }
+}
+
+impl<T: Default, E: Ord> Default for Deferred<T, E> {
+    fn default() -> Self {
+        Self::new(T::default(), imbl::OrdSet::default())
+    }
+}
+
+impl<T: Display, E: Ord + Display> Display for Deferred<T, E> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.expressions.is_empty() {
+            write!(f, "{}", self.value)
+        } else {
+            write!(f, "{} ⊔ #deferred", self.value)?;
+            fmt_display_set(f, self.expressions.iter())
+        }
+    }
+}
+
 pub trait NamespaceEvaluation {
-    fn attributes(&self) -> impl Iterator<Item = (&SmolStr, Sourced<Type>)>;
-    fn get_attribute(&self, name: &SmolStr) -> Option<Sourced<Type>> {
+    type Expression: Ord;
+
+    fn attributes(
+        &self,
+    ) -> impl Iterator<Item = (&SmolStr, Deferred<Sourced<Type>, Self::Expression>)>;
+    fn get_attribute(&self, name: &SmolStr) -> Option<Deferred<Sourced<Type>, Self::Expression>> {
         for (variable_name, ty) in self.attributes() {
             if variable_name == name {
                 return Some(ty);
@@ -1499,8 +1563,8 @@ pub trait NamespaceEvaluation {
         }
         None
     }
-    fn raised_exceptions(&self) -> &RaisedExceptions;
-    fn return_value(&self) -> &Sourced<Type>;
+    fn raised_exceptions(&self) -> &Deferred<RaisedExceptions, Self::Expression>;
+    fn return_value(&self) -> &Deferred<Sourced<Type>, Self::Expression>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]

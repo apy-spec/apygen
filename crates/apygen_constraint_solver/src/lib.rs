@@ -18,10 +18,11 @@ use crate::expressions::{Call, PyEffects, PyTypeEval, gen_bool_value, type_liter
 use crate::identifiers::smol_str::format_smolstr;
 use crate::identifiers::{Location, NamedQualifiedLocation, QualifiedLocation};
 use crate::inference::{
-    BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, DefinedVariables, Exception, ExceptionOrigin,
-    FunctionType, ImportedModuleType, LiteralClass, LiteralFunction, LiteralImportedModule,
-    LiteralMethod, NamespaceEvaluation, ProgramEvaluation, RaisedExceptions, Source, Sourced,
-    StructuralDepth, StructuralWidth, Type, TypeInstance, TypeLiteral, WIDTH_LIMIT,
+    BUILTINS_MODULE, Base, ClassType, DEPTH_LIMIT, Deferred, DefinedVariables, Exception,
+    ExceptionOrigin, FunctionType, ImportedModuleType, LiteralClass, LiteralFunction,
+    LiteralImportedModule, LiteralMethod, NamespaceEvaluation, ProgramEvaluation, RaisedExceptions,
+    Source, Sourced, StructuralDepth, StructuralWidth, Type, TypeInstance, TypeLiteral,
+    WIDTH_LIMIT,
 };
 use imbl::ordmap::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -42,9 +43,9 @@ pub mod expressions;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
 pub struct EvaluationState {
-    pub types: imbl::OrdMap<Arc<Expression>, Sourced<Type>>,
-    pub return_value: Sourced<Type>,
-    pub raised_exceptions: RaisedExceptions,
+    pub types: imbl::OrdMap<Arc<Expression>, Deferred<Sourced<Type>, Expression>>,
+    pub return_value: Deferred<Sourced<Type>, Expression>,
+    pub raised_exceptions: Deferred<RaisedExceptions, Expression>,
     pub defined_variables: DefinedVariables,
     pub type_variables: imbl::OrdMap<SmolStr, imbl::OrdSet<(Arc<Namespace>, Location)>>,
 }
@@ -54,8 +55,8 @@ impl EvaluationState {
         &self,
         variable_name: &SmolStr,
         locations: &imbl::OrdSet<(Arc<Namespace>, Location)>,
-    ) -> Option<Sourced<Type>> {
-        let mut ty = Sourced::specified(Type::Never);
+    ) -> Option<Deferred<Sourced<Type>, Expression>> {
+        let mut ty = Deferred::known(Sourced::specified(Type::Never));
         for (namespace, location) in locations {
             let variable = Expression::VariableDefinition(ExpressionVariableDefinition::new(
                 NamedQualifiedLocation::new(
@@ -94,7 +95,11 @@ impl Display for EvaluationState {
 }
 
 impl NamespaceEvaluation for EvaluationState {
-    fn attributes(&self) -> impl Iterator<Item = (&SmolStr, Sourced<Type>)> {
+    type Expression = Expression;
+
+    fn attributes(
+        &self,
+    ) -> impl Iterator<Item = (&SmolStr, Deferred<Sourced<Type>, Self::Expression>)> {
         self.defined_variables
             .names
             .iter()
@@ -107,18 +112,18 @@ impl NamespaceEvaluation for EvaluationState {
             })
     }
 
-    fn get_attribute(&self, name: &SmolStr) -> Option<Sourced<Type>> {
+    fn get_attribute(&self, name: &SmolStr) -> Option<Deferred<Sourced<Type>, Self::Expression>> {
         self.defined_variables
             .names
             .get(name)
             .map(|locations| self.get_variable_type(name, locations).unwrap_or_default())
     }
 
-    fn raised_exceptions(&self) -> &RaisedExceptions {
+    fn raised_exceptions(&self) -> &Deferred<RaisedExceptions, Self::Expression> {
         &self.raised_exceptions
     }
 
-    fn return_value(&self) -> &Sourced<Type> {
+    fn return_value(&self) -> &Deferred<Sourced<Type>, Self::Expression> {
         &self.return_value
     }
 }
@@ -186,6 +191,8 @@ pub enum EvaluatorMode {
 
 #[derive(Debug, Clone, Error)]
 pub enum EvaluationError {
+    #[error("the expression uses a deferred expression")]
+    Deferred,
     #[error("the expression is an invalid annotation")]
     InvalidAnnotation,
     #[error("failed to get the reference to the qualified name {module}.{id}")]
@@ -210,6 +217,15 @@ impl<'a> ExpressionEvaluator<'a> {
 
     pub fn with_mode(&self, mode: EvaluatorMode) -> Self {
         Self::new(mode, self.namespace)
+    }
+
+    pub fn extract_deferred<T: Clone>(
+        deferred: Deferred<T, Expression>,
+    ) -> Result<T, EvaluationError> {
+        match deferred.to_value() {
+            Some(sourced) => Ok(sourced),
+            None => Err(EvaluationError::Deferred),
+        }
     }
 
     pub fn find_type(
@@ -241,7 +257,7 @@ impl<'a> ExpressionEvaluator<'a> {
             ));
         };
 
-        Ok(PyTypeEval::with_default_effects(
+        Ok(PyTypeEval::with_default_effects(Self::extract_deferred(
             evaluation_state
                 .types
                 .get(&Expression::VariableDefinition(
@@ -249,7 +265,7 @@ impl<'a> ExpressionEvaluator<'a> {
                 ))
                 .cloned()
                 .unwrap_or_default(),
-        ))
+        )?))
     }
 
     pub fn evaluate_expression_variable_reference<
@@ -260,10 +276,12 @@ impl<'a> ExpressionEvaluator<'a> {
         expression_variable_reference: &ExpressionVariableReference,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         if let Some(evaluation_state) = abstract_state.get(self.namespace) {
-            if let Some(sourced_ty) =
+            if let Some(deferred_ty) =
                 evaluation_state.get_attribute(&expression_variable_reference.name)
             {
-                return Ok(PyTypeEval::with_default_effects(sourced_ty));
+                return Ok(PyTypeEval::with_default_effects(Self::extract_deferred(
+                    deferred_ty,
+                )?));
             }
         };
 
@@ -447,12 +465,14 @@ impl<'a> ExpressionEvaluator<'a> {
                             Namespace::NamedProgramEntity(class.value.program_entity.clone());
 
                         let Some(evaluation_state) = abstract_state.get(&class_namespace) else {
-                            return Ok(PyTypeEval::unknown());
+                            return Err(EvaluationError::Deferred);
                         };
 
-                        let Some(mut sourced_ty) = evaluation_state.get_attribute(name) else {
+                        let Some(deferred_ty) = evaluation_state.get_attribute(name) else {
                             continue;
                         };
+
+                        let mut sourced_ty = Self::extract_deferred(deferred_ty)?;
 
                         if let Type::Literal(type_literal) = &sourced_ty.data {
                             if let TypeLiteral::Function(literal_function) = type_literal.as_ref() {
@@ -576,9 +596,15 @@ impl<'a> ExpressionEvaluator<'a> {
                 };
 
                 Ok(PyTypeEval::new(
-                    Sourced::inferred(evaluation_state.return_value.data.clone()),
+                    Sourced::inferred(
+                        Self::extract_deferred(evaluation_state.return_value.clone())?
+                            .data
+                            .clone(),
+                    ),
                     PyEffects::new()
-                        .with_exceptions(evaluation_state.raised_exceptions.clone())
+                        .with_exceptions(Self::extract_deferred(
+                            evaluation_state.raised_exceptions.clone(),
+                        )?)
                         .with_calls(imbl::OrdSet::unit(Call::new(
                             Arc::new(function_namespace),
                             abstract_state.clone(),
@@ -844,8 +870,10 @@ impl<'a> ExpressionEvaluator<'a> {
             ));
         };
 
-        if let Some(sourced_ty) = evaluation_state.types.get(expression) {
-            return Ok(PyTypeEval::with_default_effects(sourced_ty.clone()));
+        if let Some(deferred_ty) = evaluation_state.types.get(expression) {
+            return Ok(PyTypeEval::with_default_effects(Self::extract_deferred(
+                deferred_ty.clone(),
+            )?));
         }
 
         match expression {
@@ -952,6 +980,45 @@ impl<'s> ConstraintSolver<'s> {
     pub fn evaluator(&self, mode: EvaluatorMode) -> ExpressionEvaluator<'_> {
         ExpressionEvaluator::new(mode, self.namespace)
     }
+
+    pub fn evaluate_expression<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
+        &self,
+        mode: EvaluatorMode,
+        program_evaluation: &S,
+        expression: &Expression,
+    ) -> Deferred<PyTypeEval<S>, Expression> {
+        match self
+            .evaluator(mode)
+            .evaluate_expression(program_evaluation, expression)
+        {
+            Ok(eval) => Deferred::known(eval),
+            Err(_) => Deferred::unknown(imbl::OrdSet::unit(Arc::new(expression.clone()))),
+        }
+    }
+
+    pub fn evaluate_expressions<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
+        &self,
+        mode: EvaluatorMode,
+        program_evaluation: &S,
+        expressions: &imbl::OrdSet<Expression>,
+    ) -> Deferred<PyTypeEval<S>, Expression> {
+        match self
+            .evaluator(mode)
+            .evaluate_expressions(program_evaluation, expressions)
+        {
+            Ok(eval) => Deferred::known(eval),
+            Err(_) => Deferred::unknown(
+                expressions
+                    .iter()
+                    .map(|expression| Arc::new(expression.clone()))
+                    .collect(),
+            ),
+        }
+    }
 }
 
 impl<'s> GraphAnalyser for ConstraintSolver<'s> {
@@ -1022,37 +1089,44 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     .map(|(variable, expressions)| {
                         (
                             variable.clone(),
-                            self.evaluator(EvaluatorMode::Normal)
-                                .evaluate_expressions(&program_evaluation, expressions)
-                                .map(|eval| eval.value)
-                                .unwrap_or(Sourced::inferred(Type::Any)), // TODO: fix
+                            self.evaluate_expressions(
+                                EvaluatorMode::Normal,
+                                &program_evaluation,
+                                expressions,
+                            )
+                            .map(|eval| eval.value),
                         )
                     })
                     .collect();
 
-                let raised_exceptions = RaisedExceptions::new(
+                let raised_exceptions = Deferred::known(RaisedExceptions::new(
                     specification
                         .exceptions
                         .iter()
                         .map(|expression| {
                             Exception::new(
-                                self.evaluator(EvaluatorMode::Normal)
-                                    .evaluate_expression(&program_evaluation, expression)
-                                    .map(|eval| eval.value)
-                                    .unwrap_or(Sourced::inferred(Type::Any)), // TODO: fix
+                                self.evaluate_expression(
+                                    EvaluatorMode::Normal,
+                                    &program_evaluation,
+                                    expression,
+                                )
+                                .map(|eval| eval.value)
+                                .value, // TODO: fix
                                 ExceptionOrigin::Specified,
                             )
                         })
                         .collect(),
-                );
+                ));
 
                 let return_value = if !specification.return_type.is_empty() {
-                    self.evaluator(EvaluatorMode::Normal)
-                        .evaluate_expressions(&program_evaluation, &specification.return_type)
-                        .map(|eval| eval.value)
-                        .unwrap_or(Sourced::inferred(Type::Any)) // TODO: fix
+                    self.evaluate_expressions(
+                        EvaluatorMode::Normal,
+                        &program_evaluation,
+                        &specification.return_type,
+                    )
+                    .map(|eval| eval.value)
                 } else {
-                    Sourced::inferred(Type::Never)
+                    Deferred::known(Sourced::inferred(Type::Never))
                 };
 
                 let evaluation_state =
@@ -1081,10 +1155,14 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     for constraint in constraints {
                         match constraint {
                             Constraint::Type(type_constraint) => {
-                                let eval = self
-                                    .evaluator(EvaluatorMode::Normal)
-                                    .evaluate_expression(&program_evaluation, &type_constraint.left)
-                                    .unwrap_or(PyTypeEval::unknown());
+                                let deferred = self.evaluate_expression(
+                                    EvaluatorMode::Normal,
+                                    &program_evaluation,
+                                    &type_constraint.left,
+                                );
+                                let deferred_ty = deferred.clone().map(|eval| eval.value);
+                                let deferred_raised_exceptions =
+                                    deferred.clone().map(|eval| eval.effects.exceptions);
 
                                 let evaluation_state = program_evaluation
                                     .get_or_insert_default(self.namespace.clone());
@@ -1092,46 +1170,49 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                 evaluation_state
                                     .types
                                     .entry(type_constraint.right.clone())
-                                    .and_modify(|previous_eval| {
-                                        *previous_eval = previous_eval.join(&eval.value)
+                                    .and_modify(|previous_deferred| {
+                                        *previous_deferred = previous_deferred.join(&deferred_ty)
                                     })
-                                    .or_insert(eval.value);
+                                    .or_insert(deferred_ty);
                                 evaluation_state.raised_exceptions = evaluation_state
                                     .raised_exceptions
-                                    .join(&eval.effects.exceptions);
+                                    .join(&deferred_raised_exceptions);
                                 if let Some(location) = location {
-                                    for call in eval.effects.calls {
+                                    for call in deferred.value.effects.calls {
                                         calls.insert((
                                             QualifiedLocation::new(
                                                 location.clone(),
                                                 Arc::new(self.namespace.clone()),
                                             ),
-                                            call,
+                                            call.clone(),
                                         ));
                                     }
                                 }
                             }
                             Constraint::Return(return_constraint) => {
-                                let eval = self
-                                    .evaluator(EvaluatorMode::Normal)
-                                    .evaluate_expression(
-                                        &program_evaluation,
-                                        &return_constraint.expression,
-                                    )
-                                    .unwrap_or(PyTypeEval::unknown());
+                                let deferred = self.evaluate_expression(
+                                    EvaluatorMode::Normal,
+                                    &program_evaluation,
+                                    &return_constraint.expression,
+                                );
+                                let deferred_ty = deferred.clone().map(|eval| eval.value);
+                                let deferred_raised_exceptions =
+                                    deferred.map(|eval| eval.effects.exceptions);
 
                                 let evaluation_state = program_evaluation
                                     .get_or_insert_default(self.namespace.clone());
 
                                 if !matches!(
-                                    evaluation_state.return_value.source,
+                                    // TODO: fix
+                                    evaluation_state.return_value.value.source,
                                     Source::Specified
                                 ) {
-                                    evaluation_state.return_value = eval.value;
+                                    evaluation_state.return_value =
+                                        Deferred::known(deferred_ty.value);
                                 }
                                 evaluation_state.raised_exceptions = evaluation_state
                                     .raised_exceptions
-                                    .join(&eval.effects.exceptions);
+                                    .join(&deferred_raised_exceptions);
                             }
                             Constraint::DefinedVariable(expression) => {
                                 let evaluation_state = program_evaluation
@@ -1187,53 +1268,65 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     should_ignore = false;
                 }
                 Guard::IsTrue(expression) => {
-                    let eval = self
-                        .evaluator(EvaluatorMode::Normal)
-                        .evaluate_expression(&new_abstract_state, expression)
-                        .unwrap_or(PyTypeEval::unknown());
+                    let deferred = self.evaluate_expression(
+                        EvaluatorMode::Normal,
+                        &new_abstract_state,
+                        &expression,
+                    );
 
-                    if let Some(bool_value) = gen_bool_value(&eval.value.data) {
-                        if !bool_value {
-                            continue;
+                    if let Some(eval) = deferred.to_value() {
+                        if let Some(bool_value) = gen_bool_value(&eval.value.data) {
+                            if !bool_value {
+                                continue;
+                            }
                         }
                     }
 
                     should_ignore = false;
                 }
                 Guard::IsFalse(expression) => {
-                    let eval = self
-                        .evaluator(EvaluatorMode::Normal)
-                        .evaluate_expression(&new_abstract_state, expression)
-                        .unwrap_or(PyTypeEval::unknown());
+                    let deferred = self.evaluate_expression(
+                        EvaluatorMode::Normal,
+                        &new_abstract_state,
+                        &expression,
+                    );
 
-                    if let Some(bool_value) = gen_bool_value(&eval.value.data) {
-                        if bool_value {
-                            continue;
+                    if let Some(eval) = deferred.to_value() {
+                        if let Some(bool_value) = gen_bool_value(&eval.value.data) {
+                            if bool_value {
+                                continue;
+                            }
                         }
                     }
 
                     should_ignore = false;
                 }
                 Guard::Succeed(expression) => {
-                    let eval = self
-                        .evaluator(EvaluatorMode::Normal)
-                        .evaluate_expression(&new_abstract_state, expression)
-                        .unwrap_or(PyTypeEval::unknown());
+                    let deferred = self.evaluate_expression(
+                        EvaluatorMode::Normal,
+                        &new_abstract_state,
+                        &expression,
+                    );
 
-                    if is_sourced_type_unreachable!(eval.value) {
-                        continue;
+                    if let Some(eval) = deferred.to_value() {
+                        if is_sourced_type_unreachable!(eval.value) {
+                            continue;
+                        }
                     }
 
                     should_ignore = false;
                 }
                 Guard::Raise { expression, .. } => {
-                    let eval = self
-                        .evaluator(EvaluatorMode::Normal)
-                        .evaluate_expression(&new_abstract_state, expression)
-                        .unwrap_or(PyTypeEval::unknown());
+                    let deferred = self.evaluate_expression(
+                        EvaluatorMode::Normal,
+                        &new_abstract_state,
+                        &expression,
+                    );
 
-                    if eval.effects.exceptions.exceptions.is_empty() {
-                        continue;
+                    if let Some(eval) = deferred.as_value() {
+                        if eval.effects.exceptions.exceptions.is_empty() {
+                            continue;
+                        }
                     }
 
                     let evaluation_state =
@@ -1241,7 +1334,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
 
                     evaluation_state.raised_exceptions = evaluation_state
                         .raised_exceptions
-                        .join(&eval.effects.exceptions);
+                        .join(&deferred.map(|eval| eval.effects.exceptions));
 
                     should_ignore = false;
                 }
@@ -1301,9 +1394,9 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 .types
                 .clone()
                 .into_iter()
-                .map(|(expression, mut sourced_ty)| {
-                    while sourced_ty.data.width() > WIDTH_LIMIT {
-                        sourced_ty = match sourced_ty.data {
+                .map(|(expression, mut deferred)| {
+                    while deferred.value.data.width() > WIDTH_LIMIT {
+                        deferred.value = match deferred.value.data {
                             Type::Union(type_union) => {
                                 let mut new_ty = Type::Never;
                                 for ty in type_union.into_types() {
@@ -1323,11 +1416,11 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                         };
                     }
 
-                    if sourced_ty.data.depth() > DEPTH_LIMIT {
-                        sourced_ty = Sourced::inferred(Type::Any);
+                    if deferred.value.data.depth() > DEPTH_LIMIT {
+                        deferred.value = Sourced::inferred(Type::Any);
                     }
 
-                    (expression, sourced_ty)
+                    (expression, deferred)
                 })
                 .collect();
 
@@ -1511,24 +1604,24 @@ pub fn solve_namespace(
             .get(&ConstraintNode::Exit)
             .map(|(program_evaluation, calls)| {
                 (
-                        program_evaluation.proxy.clone(),
-                        calls
-                            .iter()
-                            .map(|(qualified_location, call)| {
-                                (
-                                    qualified_location.clone(),
-                                    Call::new(
-                                        call.target.clone(),
-                                        call.context.proxy.clone(),
-                                        call.arguments.clone(),
-                                    ),
-                                )
-                            })
-                            .collect::<imbl::OrdSet<(
-                                QualifiedLocation,
-                                Call<ProgramEvaluation<EvaluationState>>,
-                            )>>(),
-                    )
+                    program_evaluation.proxy.clone(),
+                    calls
+                        .iter()
+                        .map(|(qualified_location, call)| {
+                            (
+                                qualified_location.clone(),
+                                Call::new(
+                                    call.target.clone(),
+                                    call.context.proxy.clone(),
+                                    call.arguments.clone(),
+                                ),
+                            )
+                        })
+                        .collect::<imbl::OrdSet<(
+                            QualifiedLocation,
+                            Call<ProgramEvaluation<EvaluationState>>,
+                        )>>(),
+                )
             })
             .unwrap_or_else(|| (ProgramEvaluation::default(), imbl::OrdSet::default()));
 

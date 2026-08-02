@@ -21,15 +21,7 @@ modules:
           description: ""
           generics: {}
           parameters: []
-          raises:
-            - exception_type:
-                reference:
-                  id: Any
-                  module: typing
-                  history_index: 0
-                arguments:
-                  []
-              description: ""
+          raises: []
           partial: false
           pure: false
           deprecated: false

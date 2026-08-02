@@ -159,8 +159,10 @@ pub fn convert_literal_function<N: NamespaceEvaluation + Clone>(
     }
 
     signature.parameters = apy::v1::Parameters::try_from(parameters).ok()?;
-    signature.raises =
-        convert_exceptions(program_evaluation, &evaluation_state.raised_exceptions())?;
+    signature.raises = convert_exceptions(
+        program_evaluation,
+        &evaluation_state.raised_exceptions().value,
+    )?;
 
     let function = apy::v1::Function::new(apy::OneOrMany::one(signature));
 
@@ -202,7 +204,7 @@ pub fn convert_literal_class<N: NamespaceEvaluation + Clone>(
             )?)
             .with_raises(convert_exceptions(
                 program_evaluation,
-                &evaluation_state.raised_exceptions(),
+                &evaluation_state.raised_exceptions().value,
             )?),
     )
 }
@@ -525,7 +527,10 @@ pub fn convert_abstract_environment<N: NamespaceEvaluation + Clone>(
         BTreeMap::new();
 
     for (attribute_name, ty) in namespace_evaluation.attributes() {
-        let Some(attribute) = convert_attribute(program_evaluation, &ty.data) else {
+        let Some(attribute) = convert_attribute(
+            program_evaluation,
+            &ty.to_value().map(|ty| ty.data).unwrap_or(Type::Any),
+        ) else {
             debug!("Skipping attribute {}", attribute_name);
             continue;
         };

@@ -101,7 +101,7 @@ impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> Display
     }
 }
 
-#[derive(Default, Clone, Join)]
+#[derive(Clone, Join)]
 pub struct PyValueEval<T, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> {
     pub value: T,
     pub effects: PyEffects<S>,
@@ -129,6 +129,14 @@ impl<T, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> PyVa
     {
         self.effects = self.effects.join(effects);
         self
+    }
+}
+
+impl<T: Default, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> Default
+    for PyValueEval<T, S>
+{
+    fn default() -> Self {
+        Self::new(Default::default(), Default::default())
     }
 }
 
