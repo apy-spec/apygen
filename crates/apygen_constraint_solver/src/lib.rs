@@ -5,8 +5,9 @@ use crate::analysis::{DependencyGraphAnalyser, DummyAnalysisObserver, GraphAnaly
 use crate::calls::Arguments;
 use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
-    ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionImport, ExpressionSubscript,
-    ExpressionUnary, ExpressionVariableDefinition, ExpressionVariableReference, Namespace, SmolStr,
+    ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionImport, ExpressionOverride,
+    ExpressionSubscript, ExpressionUnary, ExpressionVariableDefinition,
+    ExpressionVariableReference, Namespace, SmolStr,
 };
 use crate::constraint_graph::graph::Graph;
 use crate::constraint_graph::graph::dot::DiGraphDot;
@@ -68,6 +69,15 @@ impl EvaluationState {
             ty = ty.join(&self.types.get(&variable).cloned()?);
         }
         Some(ty)
+    }
+
+    pub fn get_type_attribute(
+        &self,
+        name: &SmolStr,
+    ) -> Option<Deferred<Sourced<Type>, Expression>> {
+        self.type_variables
+            .get(name)
+            .map(|locations| self.get_variable_type(name, locations).unwrap_or_default())
     }
 }
 
@@ -276,9 +286,11 @@ impl<'a> ExpressionEvaluator<'a> {
         expression_variable_reference: &ExpressionVariableReference,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         if let Some(evaluation_state) = abstract_state.get(self.namespace) {
-            if let Some(deferred_ty) =
+            if let Some(deferred_ty) = if matches!(self.mode, EvaluatorMode::Normal) {
                 evaluation_state.get_attribute(&expression_variable_reference.name)
-            {
+            } else {
+                evaluation_state.get_type_attribute(&expression_variable_reference.name)
+            } {
                 return Ok(PyTypeEval::with_default_effects(Self::extract_deferred(
                     deferred_ty,
                 )?));
@@ -303,14 +315,18 @@ impl<'a> ExpressionEvaluator<'a> {
                 );
         }
 
-        Ok(PyTypeEval::raise(Exception::new(
-            Sourced::inferred(Self::find_type(
-                abstract_state,
-                &BUILTINS_MODULE,
-                &SmolStr::new_static("NameError"),
-            )?),
-            ExceptionOrigin::Specified, // TODO: fix origin
-        )))
+        if matches!(self.mode, EvaluatorMode::Normal) {
+            Ok(PyTypeEval::raise(Exception::new(
+                Sourced::inferred(Self::find_type(
+                    abstract_state,
+                    &BUILTINS_MODULE,
+                    &SmolStr::new_static("NameError"),
+                )?),
+                ExceptionOrigin::Specified, // TODO: fix origin
+            )))
+        } else {
+            Err(EvaluationError::InvalidAnnotation)
+        }
     }
 
     pub fn evaluate_expression_annotated<
@@ -348,6 +364,16 @@ impl<'a> ExpressionEvaluator<'a> {
             })),
             effects,
         ))
+    }
+
+    pub fn evaluate_expression_override<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
+        &self,
+        abstract_state: &S,
+        expression_override: &ExpressionOverride,
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
+        self.evaluate_expression(abstract_state, &expression_override.previous)
     }
 
     pub fn evaluate_expression_function<
@@ -888,7 +914,9 @@ impl<'a> ExpressionEvaluator<'a> {
             Expression::Annotated(expression_annotated) => {
                 self.evaluate_expression_annotated(abstract_state, expression_annotated)
             }
-            Expression::Override(_) => Ok(PyTypeEval::unknown()),
+            Expression::Override(expression_override) => {
+                self.evaluate_expression_override(abstract_state, expression_override)
+            }
             Expression::Function(expression_function) => {
                 self.evaluate_expression_function(abstract_state, expression_function)
             }
@@ -1140,7 +1168,13 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                             variable.named_qualified_location.location.clone(),
                         )),
                     );
-
+                    evaluation_state.type_variables.insert(
+                        variable.named_qualified_location.name.clone(),
+                        imbl::OrdSet::unit((
+                            variable.named_qualified_location.namespace.clone(),
+                            variable.named_qualified_location.location.clone(),
+                        )),
+                    );
                     evaluation_state.types.insert(
                         Arc::new(Expression::VariableDefinition(variable.clone())),
                         sourced_ty,
@@ -1219,6 +1253,13 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                     .get_or_insert_default(self.namespace.clone());
 
                                 evaluation_state.defined_variables.names.insert(
+                                    expression.named_qualified_location.name.clone(),
+                                    imbl::OrdSet::unit((
+                                        expression.named_qualified_location.namespace.clone(),
+                                        expression.named_qualified_location.location.clone(),
+                                    )),
+                                );
+                                evaluation_state.type_variables.insert(
                                     expression.named_qualified_location.name.clone(),
                                     imbl::OrdSet::unit((
                                         expression.named_qualified_location.namespace.clone(),
@@ -2158,6 +2199,27 @@ mod tests {
             #variables = {}
             #raise = {}
             #return = Inferred(5)
+        "##},
+    )]
+    #[case::forward_annotation(
+        indoc! {r##"
+        a: A
+
+        class A:
+            b = 5
+        "##},
+        indoc! {r##"
+        module:
+            A@{module[3:6]} = Inferred(class(module[A@{3:6}]))
+            a@{module[1:0]} = Inferred(@class(module[A@{3:6}])) ⊔ #deferred{#annotated(A)}
+            #variables = {A: {module[3:6]}}
+            #raise = {} ⊔ #deferred{#annotated(A)}
+            #return = Inferred(None)
+        module[A@{3:6}]:
+            b@{module[A@{3:6}][4:4]} = Inferred(5)
+            #variables = {b: {module[A@{3:6}][4:4]}}
+            #raise = {}
+            #return = Inferred(None)
         "##},
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_expressions: &str) {

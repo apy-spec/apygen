@@ -25,7 +25,7 @@ digraph "DependentGraph" {
 }
 digraph "int_conversion" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=1:0)" [label="5 ⊑ x@{int_conversion[1:0]} ∧ #defined(x@{int_conversion[1:0]})"];
+    "Constraint(location=1:0)" [label="#override(previous=#annotated(int), new=5) ⊑ x@{int_conversion[1:0]} ∧ #defined(x@{int_conversion[1:0]})"];
     "Constraint(location=3:0)" [label="(int)(x) ⊑ a@{int_conversion[3:0]} ∧ #defined(a@{int_conversion[3:0]})"];
     "Constraint(location=4:0)" [label="(float)(x) ⊑ b@{int_conversion[4:0]} ∧ #defined(b@{int_conversion[4:0]})"];
     "Constraint(location=5:0)" [label="(complex)(x) ⊑ c@{int_conversion[5:0]} ∧ #defined(c@{int_conversion[5:0]})"];
@@ -37,7 +37,8 @@ digraph "int_conversion" {
     "Constraint(location=13:0)" [label="(complex)(y) ⊑ h@{int_conversion[13:0]} ∧ #defined(h@{int_conversion[13:0]})"];
     "Constraint(location=14:0)" [label="(str)(y) ⊑ i@{int_conversion[14:0]} ∧ #defined(i@{int_conversion[14:0]})"];
     "Constraint(location=15:0)" [label="(bool)(y) ⊑ j@{int_conversion[15:0]} ∧ #defined(j@{int_conversion[15:0]})"];
-    "Entry" -> "Constraint(location=1:0)";
+    "Entry" -> "Constraint(location=1:0)" [label="#succeed(#override(previous=#annotated(int), new=5))"];
+    "Entry" -> "ExceptionExit" [label="#raise(#override(previous=#annotated(int), new=5))"];
     "Constraint()" -> "TypeExit";
     "Constraint(location=1:0)" -> "Constraint(location=3:0)" [label="#succeed((int)(x))"];
     "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise((int)(x))"];

@@ -25,10 +25,11 @@ digraph "DependentGraph" {
 }
 digraph "list_operations" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=1:0)" [label="None ⊑ ls@{list_operations[1:0]} ∧ #defined(ls@{list_operations[1:0]})"];
+    "Constraint(location=1:0)" [label="#override(previous=#annotated((list)[int]), new=None) ⊑ ls@{list_operations[1:0]} ∧ #defined(ls@{list_operations[1:0]})"];
     "Constraint(location=3:0)" [label="(ls)[0] ⊑ first@{list_operations[3:0]} ∧ #defined(first@{list_operations[3:0]})"];
     "Constraint(location=4:0)" [label="(ls)[1] ⊑ second@{list_operations[4:0]} ∧ #defined(second@{list_operations[4:0]})"];
-    "Entry" -> "Constraint(location=1:0)";
+    "Entry" -> "Constraint(location=1:0)" [label="#succeed(#override(previous=#annotated((list)[int]), new=None))"];
+    "Entry" -> "ExceptionExit" [label="#raise(#override(previous=#annotated((list)[int]), new=None))"];
     "Constraint()" -> "TypeExit";
     "Constraint(location=1:0)" -> "Constraint(location=3:0)" [label="#succeed((ls)[0])"];
     "Constraint(location=1:0)" -> "ExceptionExit" [label="#raise((ls)[0])"];

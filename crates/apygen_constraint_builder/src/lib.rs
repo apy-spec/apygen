@@ -415,6 +415,7 @@ impl<'a> ConstraintsBuilder<'a> {
         location: Location,
         variable_name: SmolStr,
         type_expression: Arc<Expression>,
+        initialised: bool,
     ) {
         let expression_variable = ExpressionVariableDefinition::new(NamedQualifiedLocation::new(
             variable_name.clone(),
@@ -425,7 +426,11 @@ impl<'a> ConstraintsBuilder<'a> {
         self.create_include_constraint(
             abstract_environment,
             location.clone(),
-            imbl::OrdSet::unit(Constraint::DefinedVariable(expression_variable.clone())),
+            if initialised {
+                imbl::OrdSet::unit(Constraint::DefinedVariable(expression_variable.clone()))
+            } else {
+                imbl::OrdSet::default()
+            },
             type_expression,
             Arc::new(Expression::VariableDefinition(expression_variable)),
         );
@@ -1017,6 +1022,7 @@ impl<'a> ConstraintsBuilder<'a> {
                 function_qualified_location,
                 stmt_function_def.is_async,
             ))),
+            true,
         );
 
         target_abstract_environment
@@ -1068,6 +1074,7 @@ impl<'a> ConstraintsBuilder<'a> {
             Arc::new(Expression::Class(ExpressionClass::new(
                 class_qualified_location.clone(),
             ))),
+            true,
         );
 
         target_abstract_environment
@@ -1168,6 +1175,7 @@ impl<'a> ConstraintsBuilder<'a> {
                     Arc::new(Expression::Import(ExpressionImport::new(
                         module_name.clone(),
                     ))),
+                    true,
                 );
                 target_abstract_environment.imports.insert(module_name);
             } else {
@@ -1293,6 +1301,7 @@ impl<'a> ConstraintsBuilder<'a> {
                         self.gen_location(target_expr),
                         target_name,
                         type_expression.clone(),
+                        true,
                     );
                 }
                 AssignmentTarget::Attribute { .. } => {}
@@ -1332,12 +1341,21 @@ impl<'a> ConstraintsBuilder<'a> {
             todo!("add the right error");
         };
 
-        let Some(value) = &stmt_ann_assign.value else {
-            return Ok(target_abstract_environment);
-        };
+        let annotation_expression =
+            Expression::Annotated(ExpressionAnnotated::new(Arc::new(self.evaluate_expr(
+                namespace,
+                &target_abstract_environment,
+                &stmt_ann_assign.annotation,
+            )?)));
 
-        let type_expression =
-            Arc::new(self.evaluate_expr(namespace, &target_abstract_environment, value)?);
+        let type_expression = if let Some(value) = &stmt_ann_assign.value {
+            Expression::Override(ExpressionOverride::new(
+                Arc::new(annotation_expression),
+                Arc::new(self.evaluate_expr(namespace, &target_abstract_environment, value)?),
+            ))
+        } else {
+            annotation_expression
+        };
 
         match target {
             AssignmentTarget::Name(target_name) => {
@@ -1345,7 +1363,8 @@ impl<'a> ConstraintsBuilder<'a> {
                     &mut target_abstract_environment,
                     self.gen_location(stmt_ann_assign.target.as_ref()),
                     target_name,
-                    type_expression.clone(),
+                    Arc::new(type_expression),
+                    stmt_ann_assign.value.is_some(),
                 );
             }
             AssignmentTarget::Attribute { .. } => {}

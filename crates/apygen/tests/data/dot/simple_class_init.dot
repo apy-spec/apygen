@@ -26,16 +26,18 @@ digraph "DependentGraph" {
 digraph "simple_class_init" {
     "Constraint()" [label="#return(None)"];
     "Constraint(location=1:6)" [label="#class(identifier=simple_class_init[Point@{1:6}]) ⊑ Point@{simple_class_init[1:6]} ∧ #defined(Point@{simple_class_init[1:6]})"];
-    "Constraint(location=9:0)" [label="3 ⊑ a@{simple_class_init[9:0]} ∧ #defined(a@{simple_class_init[9:0]})"];
-    "Constraint(location=10:0)" [label="4 ⊑ b@{simple_class_init[10:0]} ∧ #defined(b@{simple_class_init[10:0]})"];
+    "Constraint(location=9:0)" [label="#override(previous=#annotated(int), new=3) ⊑ a@{simple_class_init[9:0]} ∧ #defined(a@{simple_class_init[9:0]})"];
+    "Constraint(location=10:0)" [label="#override(previous=#annotated(int), new=4) ⊑ b@{simple_class_init[10:0]} ∧ #defined(b@{simple_class_init[10:0]})"];
     "Constraint(location=12:0)" [label="(Point)(a, b) ⊑ point@{simple_class_init[12:0]} ∧ #defined(point@{simple_class_init[12:0]})"];
     "Constraint(location=14:0)" [label="(point).x ⊑ point_x@{simple_class_init[14:0]} ∧ #defined(point_x@{simple_class_init[14:0]})"];
     "Constraint(location=15:0)" [label="(point).y ⊑ point_y@{simple_class_init[15:0]} ∧ #defined(point_y@{simple_class_init[15:0]})"];
     "Entry" -> "Constraint(location=1:6)" [label="#succeed(#class(identifier=simple_class_init[Point@{1:6}]))"];
     "Entry" -> "ExceptionExit" [label="#raise(#class(identifier=simple_class_init[Point@{1:6}]))"];
     "Constraint()" -> "TypeExit";
-    "Constraint(location=1:6)" -> "Constraint(location=9:0)";
-    "Constraint(location=9:0)" -> "Constraint(location=10:0)";
+    "Constraint(location=1:6)" -> "Constraint(location=9:0)" [label="#succeed(#override(previous=#annotated(int), new=3))"];
+    "Constraint(location=1:6)" -> "ExceptionExit" [label="#raise(#override(previous=#annotated(int), new=3))"];
+    "Constraint(location=9:0)" -> "Constraint(location=10:0)" [label="#succeed(#override(previous=#annotated(int), new=4))"];
+    "Constraint(location=9:0)" -> "ExceptionExit" [label="#raise(#override(previous=#annotated(int), new=4))"];
     "Constraint(location=10:0)" -> "Constraint(location=12:0)" [label="#succeed((Point)(a, b))"];
     "Constraint(location=10:0)" -> "ExceptionExit" [label="#raise((Point)(a, b))"];
     "Constraint(location=12:0)" -> "Constraint(location=14:0)" [label="#succeed((point).x)"];
@@ -49,10 +51,16 @@ digraph "simple_class_init" {
 }
 digraph "simple_class_init[Point@{1:6}]" {
     "Constraint()" [label="#return(None)"];
+    "Constraint(location=2:4)" [label="#annotated(int) ⊑ x@{simple_class_init[Point@{1:6}][2:4]}"];
+    "Constraint(location=3:4)" [label="#annotated(int) ⊑ y@{simple_class_init[Point@{1:6}][3:4]}"];
     "Constraint(location=5:8)" [label="#function(identifier=simple_class_init[Point@{1:6}][__init__@{5:8}], async=false) ⊑ __init__@{simple_class_init[Point@{1:6}][5:8]} ∧ #defined(__init__@{simple_class_init[Point@{1:6}][5:8]})"];
-    "Entry" -> "Constraint(location=5:8)" [label="#succeed(#function(identifier=simple_class_init[Point@{1:6}][__init__@{5:8}], async=false))"];
-    "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=simple_class_init[Point@{1:6}][__init__@{5:8}], async=false))"];
+    "Entry" -> "Constraint(location=2:4)" [label="#succeed(#annotated(int))"];
+    "Entry" -> "ExceptionExit" [label="#raise(#annotated(int))"];
     "Constraint()" -> "TypeExit";
+    "Constraint(location=2:4)" -> "Constraint(location=3:4)" [label="#succeed(#annotated(int))"];
+    "Constraint(location=2:4)" -> "ExceptionExit" [label="#raise(#annotated(int))"];
+    "Constraint(location=3:4)" -> "Constraint(location=5:8)" [label="#succeed(#function(identifier=simple_class_init[Point@{1:6}][__init__@{5:8}], async=false))"];
+    "Constraint(location=3:4)" -> "ExceptionExit" [label="#raise(#function(identifier=simple_class_init[Point@{1:6}][__init__@{5:8}], async=false))"];
     "Constraint(location=5:8)" -> "Constraint()";
     "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";

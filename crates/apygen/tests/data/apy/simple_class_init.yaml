@@ -50,12 +50,11 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Literal
-            module: typing
+            id: int
+            module: builtins
             history_index: 0
           arguments:
-            - value:
-                int: "3"
+            []
         description: ""
         initialised: true
         readonly: false
@@ -66,12 +65,11 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Literal
-            module: typing
+            id: int
+            module: builtins
             history_index: 0
           arguments:
-            - value:
-                int: "4"
+            []
         description: ""
         initialised: true
         readonly: false

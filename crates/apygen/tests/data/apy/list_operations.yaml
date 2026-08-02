@@ -24,7 +24,13 @@ modules:
         visibility: PUBLIC
       ls:
         kind: VARIABLE
-        type: None
+        type:
+          reference:
+            id: Any
+            module: typing
+            history_index: 0
+          arguments:
+            []
         description: ""
         initialised: true
         readonly: false
