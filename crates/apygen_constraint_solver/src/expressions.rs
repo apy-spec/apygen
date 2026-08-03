@@ -2,8 +2,11 @@ use crate::EvaluationState;
 use crate::analysis::abstract_state::AbstractState;
 use crate::analysis::lattice::Join;
 use crate::calls::Arguments;
+use crate::constraint_graph::expressions::{Expression, ExpressionVariableDefinition};
 use crate::identifiers::Namespace;
-use crate::inference::{Completeness, Exception, Pureness, RaisedExceptions, Sourced, Type};
+use crate::inference::{
+    Completeness, Deferred, Exception, Pureness, RaisedExceptions, Sourced, Type,
+};
 use std::fmt::Display;
 use std::sync::Arc;
 
@@ -35,12 +38,40 @@ impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> Call<S>
     }
 }
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+pub struct Definition {
+    pub parameters: imbl::Vector<(
+        ExpressionVariableDefinition,
+        Deferred<Sourced<Type>, Expression>,
+    )>,
+    pub exceptions: Deferred<RaisedExceptions, Expression>,
+    pub return_value: Deferred<Sourced<Type>, Expression>,
+}
+
+impl Definition {
+    pub fn new(
+        parameters: imbl::Vector<(
+            ExpressionVariableDefinition,
+            Deferred<Sourced<Type>, Expression>,
+        )>,
+        exceptions: Deferred<RaisedExceptions, Expression>,
+        return_value: Deferred<Sourced<Type>, Expression>,
+    ) -> Self {
+        Self {
+            parameters,
+            exceptions,
+            return_value,
+        }
+    }
+}
+
 #[derive(Clone, Join)]
 pub struct PyEffects<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> {
     pub exceptions: RaisedExceptions,
     pub pureness: Pureness,
     pub completeness: Completeness,
     pub calls: imbl::OrdSet<Call<S>>,
+    pub definitions: imbl::OrdSet<(Namespace, Definition)>,
 }
 
 impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> PyEffects<S> {
@@ -68,6 +99,11 @@ impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> PyEffec
         self
     }
 
+    pub fn with_definitions(mut self, definitions: imbl::OrdSet<(Namespace, Definition)>) -> Self {
+        self.definitions = definitions;
+        self
+    }
+
     pub fn consume<T>(&mut self, eval: PyValueEval<T, S>) -> T
     where
         S: Clone + Ord,
@@ -76,6 +112,7 @@ impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> PyEffec
         self.pureness = self.pureness.join(&eval.effects.pureness);
         self.completeness = self.completeness.join(&eval.effects.completeness);
         self.calls = self.calls.join(&eval.effects.calls);
+        self.definitions = self.definitions.join(&eval.effects.definitions);
         eval.value
     }
 }
@@ -87,6 +124,7 @@ impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> Default
             pureness: Default::default(),
             completeness: Default::default(),
             calls: Default::default(),
+            definitions: Default::default(),
         }
     }
 }
@@ -185,7 +223,7 @@ macro_rules! pytype_consume_or_return_ok {
     ($effects:expr, $eval:expr) => {{
         let ty = $effects.consume($eval);
 
-        if is_sourced_type_unreachable!(ty) {
+        if matches!(ty.source, Source::Inferred) && is_sourced_type_unreachable!(ty) {
             return Ok(PyTypeEval::new(ty, $effects));
         }
 

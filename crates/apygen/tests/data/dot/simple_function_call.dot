@@ -25,12 +25,12 @@ digraph "DependentGraph" {
 }
 digraph "simple_function_call" {
     "Constraint()" [label="#return(None)"];
-    "Constraint(location=1:4)" [label="#function(identifier=simple_function_call[add_two@{1:4}], async=false) ⊑ add_two@{simple_function_call[1:4]} ∧ #defined(add_two@{simple_function_call[1:4]})"];
+    "Constraint(location=1:4)" [label="#function(simple_function_call[add_two@{1:4}](x@{simple_function_call[add_two@{1:4}][1:12]}: #annotated(int), y@{simple_function_call[add_two@{1:4}][1:20]}: #annotated(int)) -> #annotated(int)) ⊑ add_two@{simple_function_call[1:4]} ∧ #defined(add_two@{simple_function_call[1:4]})"];
     "Constraint(location=4:0)" [label="#override(previous=#annotated(int), new=3) ⊑ a@{simple_function_call[4:0]} ∧ #defined(a@{simple_function_call[4:0]})"];
     "Constraint(location=5:0)" [label="#override(previous=#annotated(int), new=4) ⊑ b@{simple_function_call[5:0]} ∧ #defined(b@{simple_function_call[5:0]})"];
     "Constraint(location=6:0)" [label="(add_two)(a, b) ⊑ result@{simple_function_call[6:0]} ∧ #defined(result@{simple_function_call[6:0]})"];
-    "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(identifier=simple_function_call[add_two@{1:4}], async=false))"];
-    "Entry" -> "ExceptionExit" [label="#raise(#function(identifier=simple_function_call[add_two@{1:4}], async=false))"];
+    "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(simple_function_call[add_two@{1:4}](x@{simple_function_call[add_two@{1:4}][1:12]}: #annotated(int), y@{simple_function_call[add_two@{1:4}][1:20]}: #annotated(int)) -> #annotated(int)))"];
+    "Entry" -> "ExceptionExit" [label="#raise(#function(simple_function_call[add_two@{1:4}](x@{simple_function_call[add_two@{1:4}][1:12]}: #annotated(int), y@{simple_function_call[add_two@{1:4}][1:20]}: #annotated(int)) -> #annotated(int)))"];
     "Constraint()" -> "TypeExit";
     "Constraint(location=1:4)" -> "Constraint(location=4:0)" [label="#succeed(#override(previous=#annotated(int), new=3))"];
     "Constraint(location=1:4)" -> "ExceptionExit" [label="#raise(#override(previous=#annotated(int), new=3))"];

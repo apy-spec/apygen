@@ -145,18 +145,7 @@ pub fn convert_literal_function<N: NamespaceEvaluation + Clone>(
 
     let mut signature = apy::v1::Signature::new(apy::v1::Type::Instance(convert_type_any()));
 
-    let mut parameters: Vec<apy::v1::Parameter> = Vec::new();
-    for parameter in &literal_function.value.parameters {
-        parameters.push(
-            apy::v1::Parameter::new(
-                Identifier::parse(parameter.name.as_ref()),
-                parameter.kind,
-                convert_type(program_evaluation, &Arc::new(Type::Any))?,
-            )
-            .with_deprecated(parameter.deprecation.is_deprecated())
-            .with_optional(parameter.is_optional),
-        )
-    }
+    let parameters: Vec<apy::v1::Parameter> = Vec::new();
 
     signature.parameters = apy::v1::Parameters::try_from(parameters).ok()?;
     signature.raises = convert_exceptions(

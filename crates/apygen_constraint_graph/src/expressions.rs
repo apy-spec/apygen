@@ -1,4 +1,4 @@
-use crate::analysis::fmt::fmt_display_sequence;
+use crate::analysis::fmt::{fmt_display_iterator, fmt_display_sequence, fmt_wrapped};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
@@ -98,16 +98,50 @@ impl Display for ExpressionOverride {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Parameter {
+    pub name: ExpressionVariableDefinition,
+
+    pub kind: ParameterKind,
+
+    pub is_optional: bool,
+}
+
+impl Parameter {
+    pub fn new(name: ExpressionVariableDefinition, kind: ParameterKind, is_optional: bool) -> Self {
+        Self {
+            name,
+            kind,
+            is_optional,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExpressionFunction {
     pub program_entity: NamedQualifiedLocation,
+
+    pub parameters: imbl::Vector<(Parameter, Option<Arc<Expression>>)>,
+
+    pub exceptions: imbl::OrdSet<Arc<Expression>>,
+
+    pub return_value: Option<Arc<Expression>>,
 
     pub is_async: bool,
 }
 
 impl ExpressionFunction {
-    pub fn new(program_entity: NamedQualifiedLocation, is_async: bool) -> Self {
+    pub fn new(
+        program_entity: NamedQualifiedLocation,
+        parameters: imbl::Vector<(Parameter, Option<Arc<Expression>>)>,
+        exceptions: imbl::OrdSet<Arc<Expression>>,
+        return_value: Option<Arc<Expression>>,
+        is_async: bool,
+    ) -> Self {
         Self {
             program_entity,
+            parameters,
+            exceptions,
+            return_value,
             is_async,
         }
     }
@@ -115,11 +149,33 @@ impl ExpressionFunction {
 
 impl Display for ExpressionFunction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
+        f.write_str("#function(")?;
+        if self.is_async {
+            f.write_str("async ")?;
+        }
+        write!(f, "{}", self.program_entity)?;
+        fmt_wrapped(
             f,
-            "#function(identifier={}, async={})",
-            self.program_entity, self.is_async
-        )
+            self.parameters.iter(),
+            ", ",
+            "(",
+            ")",
+            |f, (parameter, expression)| {
+                if let Some(expression) = expression {
+                    write!(f, "{}: {}", parameter.name, expression)
+                } else {
+                    write!(f, "{}", parameter.name)
+                }
+            },
+        )?;
+        if let Some(return_type) = &self.return_value {
+            write!(f, " -> {}", return_type)?;
+        }
+        if !self.exceptions.is_empty() {
+            f.write_str(" raises ")?;
+            fmt_display_iterator(f, self.exceptions.iter(), " ⊔ ")?;
+        }
+        f.write_str(")")
     }
 }
 
@@ -229,15 +285,6 @@ pub struct ExpressionGeneric {
     pub is_covariant: bool,
 
     pub is_contravariant: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Parameter {
-    pub name: SmolStr,
-
-    pub kind: ParameterKind,
-
-    pub is_optional: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

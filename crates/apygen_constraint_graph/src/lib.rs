@@ -138,31 +138,8 @@ impl Display for ConstraintNode {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
-pub struct ConstraintGraphSpecification {
-    pub arguments: imbl::OrdMap<ExpressionVariableDefinition, imbl::OrdSet<Expression>>,
-    pub return_type: imbl::OrdSet<Expression>,
-    pub exceptions: imbl::OrdSet<Expression>,
-}
-
-impl Display for ConstraintGraphSpecification {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str("{arguments: ")?;
-        fmt_set(f, self.arguments.iter(), |f, (variable, types)| {
-            write!(f, "{}: ", variable)?;
-            fmt_display_iterator(f, types.iter(), " ⊔ ")
-        })?;
-        f.write_str(", return_type: ")?;
-        fmt_display_set(f, self.return_type.iter())?;
-        f.write_str(", exceptions: ")?;
-        fmt_display_set(f, self.exceptions.iter())?;
-        f.write_str("}")
-    }
-}
-
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConstraintGraph {
-    pub specification: ConstraintGraphSpecification,
     pub subgraphs: imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
     pub nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
     pub edges: imbl::OrdMap<ConstraintNode, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>>,
@@ -170,13 +147,11 @@ pub struct ConstraintGraph {
 
 impl ConstraintGraph {
     pub fn new(
-        specification: ConstraintGraphSpecification,
         subgraphs: imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
         nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
         edges: imbl::OrdMap<ConstraintNode, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>>,
     ) -> Self {
         Self {
-            specification,
             subgraphs,
             nodes,
             edges,
@@ -208,7 +183,6 @@ impl Join for ConstraintGraph {
     // Manual implementation to avoid macro recursion
     fn join(&self, other: &Self) -> Self {
         Self::new(
-            self.specification.join(&other.specification),
             self.subgraphs.join(&other.subgraphs),
             self.nodes.join(&other.nodes),
             self.edges.join(&other.edges),

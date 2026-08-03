@@ -282,8 +282,6 @@ pub struct FunctionType {
 
     pub generics: imbl::OrdMap<String, GenericType>,
 
-    pub parameters: imbl::Vector<Parameter>,
-
     pub is_async: bool,
 }
 
@@ -295,16 +293,13 @@ impl Display for FunctionType {
 
 impl StructuralDepth for FunctionType {
     fn depth(&self) -> usize {
-        1 + self
-            .parameters
-            .depth()
-            .max(iter_depth(self.generics.values()))
+        1 + iter_depth(self.generics.values())
     }
 }
 
 impl StructuralWidth for FunctionType {
     fn width(&self) -> usize {
-        self.parameters.width() + iter_width(self.generics.values())
+        iter_width(self.generics.values())
     }
 }
 
