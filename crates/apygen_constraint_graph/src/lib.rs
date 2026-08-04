@@ -1,14 +1,13 @@
-use imbl::ordmap::Entry;
-use std::fmt::{Debug, Display, Formatter};
-use std::sync::Arc;
-
 use crate::analysis::fmt::fmt_iterator;
-use crate::analysis::fmt::{fmt_display_iterator, fmt_display_set, fmt_set};
 use crate::analysis::lattice::Join;
 use crate::expressions::{Expression, ExpressionVariableDefinition};
 use crate::graph::Graph;
 use crate::graph::dot::{DiGraphDot, escape_dot};
 use crate::identifiers::{Location, Namespace, SmolStr};
+use imbl::ordmap::Entry;
+use std::fmt::{Debug, Display, Formatter};
+use std::sync::Arc;
+
 pub use apygen_analysis as analysis;
 pub use apygen_graph as graph;
 pub use apygen_identifiers as identifiers;
