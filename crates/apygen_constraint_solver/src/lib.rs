@@ -1498,13 +1498,36 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EdgeCall {
+    pub location: Location,
+    pub context: ProgramEvaluation<EvaluationState>,
+    pub arguments: Arguments,
+}
+
+impl EdgeCall {
+    pub fn new(
+        location: Location,
+        context: ProgramEvaluation<EvaluationState>,
+        arguments: Arguments,
+    ) -> Self {
+        Self {
+            location,
+            context,
+            arguments,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EdgeKind {
+    Definition,
+    Call(EdgeCall),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct NamespaceData {
     pub definition: Definition,
-    pub calls: imbl::OrdMap<
-        QualifiedLocation,
-        imbl::OrdSet<(ProgramEvaluation<EvaluationState>, Arguments)>,
-    >,
     pub dependents: imbl::OrdSet<Namespace>,
     pub dependencies: imbl::OrdSet<Namespace>,
 }
@@ -1512,7 +1535,7 @@ pub struct NamespaceData {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct NamespaceDependencyGraph {
     nodes: imbl::OrdMap<Namespace, NamespaceData>,
-    edges: imbl::OrdSet<(Namespace, Namespace)>,
+    edges: imbl::OrdMap<(Namespace, Namespace), imbl::OrdSet<EdgeKind>>,
 }
 
 impl NamespaceDependencyGraph {
@@ -1525,7 +1548,7 @@ impl Default for NamespaceDependencyGraph {
     fn default() -> Self {
         Self {
             nodes: imbl::OrdMap::default(),
-            edges: imbl::OrdSet::default(),
+            edges: imbl::OrdMap::default(),
         }
     }
 }
@@ -1534,23 +1557,10 @@ impl NamespaceDependencyGraph {
     pub fn nodes(&self) -> &imbl::OrdMap<Namespace, NamespaceData> {
         &self.nodes
     }
-    pub fn edges(&self) -> &imbl::OrdSet<(Namespace, Namespace)> {
+    pub fn edges(&self) -> &imbl::OrdMap<(Namespace, Namespace), imbl::OrdSet<EdgeKind>> {
         &self.edges
     }
-    pub fn add_call(
-        &mut self,
-        namespace: Namespace,
-        caller: QualifiedLocation,
-        context: ProgramEvaluation<EvaluationState>,
-        arguments: Arguments,
-    ) {
-        let namespace_data = self.nodes.entry(namespace).or_default();
-        namespace_data.calls = namespace_data.calls.join(&imbl::OrdMap::unit(
-            caller,
-            imbl::OrdSet::unit((context, arguments)),
-        ));
-    }
-    pub fn add_dependency(&mut self, dependency: Namespace, node: Namespace) {
+    pub fn add_dependency(&mut self, dependency: Namespace, node: Namespace, edge_kind: EdgeKind) {
         self.nodes
             .entry(dependency.clone())
             .or_default()
@@ -1561,7 +1571,10 @@ impl NamespaceDependencyGraph {
             .or_default()
             .dependencies
             .insert(dependency.clone());
-        self.edges.insert((dependency, node));
+        self.edges
+            .entry((dependency, node))
+            .or_default()
+            .insert(edge_kind);
     }
     pub fn remove_dependency(&mut self, dependency: &Namespace, node: &Namespace) {
         self.edges.remove(&(dependency.clone(), node.clone()));
@@ -1583,7 +1596,7 @@ impl Display for NamespaceDependencyGraph {
 impl Graph for NamespaceDependencyGraph {
     type Node = Namespace;
     type NodeData = NamespaceData;
-    type EdgeData = ();
+    type EdgeData = imbl::OrdSet<EdgeKind>;
 
     fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
         self.nodes.iter()
@@ -1592,7 +1605,9 @@ impl Graph for NamespaceDependencyGraph {
     fn edge_data_iter(
         &self,
     ) -> impl Iterator<Item = ((&Self::Node, &Self::Node), &Self::EdgeData)> {
-        self.edges.iter().map(|(from, to)| ((from, to), &()))
+        self.edges
+            .iter()
+            .map(|((from, to), edge_data)| ((from, to), edge_data))
     }
 }
 
@@ -1625,10 +1640,11 @@ pub fn solve_namespace(
     definition: &Definition,
     constraint_graph: &ConstraintGraph,
     abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+    namespace_dependency_graph: &NamespaceDependencyGraph,
 ) -> Result<
     (
         ProgramEvaluation<EvaluationState>,
-        BTreeMap<QualifiedLocation, Call<ProgramEvaluation<EvaluationState>>>,
+        BTreeMap<Namespace, EdgeCall>,
         BTreeMap<Namespace, Definition>,
     ),
     Infallible,
@@ -1638,10 +1654,67 @@ pub fn solve_namespace(
     let mut definitions = BTreeMap::default();
 
     let mut previous_evaluation_state: Option<EvaluationState> = None;
-    let mut previous_calls: Option<
-        BTreeMap<QualifiedLocation, Call<ProgramEvaluation<EvaluationState>>>,
-    > = None;
-    let mut previous_definitions: Option<BTreeMap<Namespace, Definition>> = None;
+    let mut previous_calls = namespace_dependency_graph
+        .nodes()
+        .get(namespace)
+        .map(|namespace_data| {
+            namespace_data
+                .dependencies
+                .iter()
+                .flat_map(|dependency| {
+                    namespace_dependency_graph
+                        .edges()
+                        .get(&(dependency.clone(), namespace.clone()))
+                        .map(|edge_kinds| {
+                            edge_kinds
+                                .iter()
+                                .filter_map(|edge_kind| match edge_kind {
+                                    EdgeKind::Definition => None,
+                                    EdgeKind::Call(call) => {
+                                        Some((dependency.clone(), call.clone()))
+                                    }
+                                })
+                                .collect::<BTreeMap<_, _>>()
+                        })
+                        .unwrap_or_default()
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let mut previous_definitions = namespace_dependency_graph
+        .nodes()
+        .get(namespace)
+        .map(|namespace_data| {
+            namespace_data
+                .dependents
+                .iter()
+                .filter_map(|dependent| {
+                    namespace_dependency_graph
+                        .edges()
+                        .get(&(namespace.clone(), dependent.clone()))
+                        .and_then(|edge_kinds| {
+                            if edge_kinds
+                                .iter()
+                                .any(|edge_kind| matches!(edge_kind, EdgeKind::Definition))
+                            {
+                                Some((
+                                    dependent.clone(),
+                                    namespace_dependency_graph
+                                        .nodes()
+                                        .get(dependent)
+                                        .map(|dependent_namespace_data| {
+                                            dependent_namespace_data.definition.clone()
+                                        })
+                                        .unwrap_or_default(),
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                })
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
     loop {
         abstract_state_proxy.insert(namespace.clone(), EvaluationState::default());
 
@@ -1690,8 +1763,12 @@ pub fn solve_namespace(
                         .into_iter()
                         .map(|(qualified_location, call)| {
                             (
-                                qualified_location,
-                                Call::new(call.target, call.context.proxy, call.arguments),
+                                call.target.as_ref().clone(),
+                                EdgeCall::new(
+                                    qualified_location.location,
+                                    call.context.proxy,
+                                    call.arguments,
+                                ),
                             )
                         })
                         .collect(),
@@ -1707,8 +1784,8 @@ pub fn solve_namespace(
             .clone();
 
         if Some(&new_evaluation_state) == previous_evaluation_state.as_ref()
-            && Some(&new_calls) == previous_calls.as_ref()
-            && Some(&new_definitions) == previous_definitions.as_ref()
+            && new_calls == previous_calls
+            && new_definitions == previous_definitions
         {
             calls.extend(new_calls);
             definitions.extend(new_definitions);
@@ -1727,6 +1804,7 @@ pub fn solve_namespace(
                         .unwrap_or(&Definition::default()),
                     subgraph,
                     &abstract_state_proxy,
+                    &namespace_dependency_graph,
                 )
             })
             .try_reduce(
@@ -1753,8 +1831,8 @@ pub fn solve_namespace(
         definitions = sub_definitions;
 
         previous_evaluation_state = Some(new_evaluation_state);
-        previous_calls = Some(new_calls);
-        previous_definitions = Some(new_definitions);
+        previous_calls = new_calls;
+        previous_definitions = new_definitions;
     }
 }
 
@@ -1790,16 +1868,7 @@ impl<'a> ModuleConstraintSolver<'a> {
 
 impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     type Node = SmolStr;
-    type InputState = BTreeMap<
-        Namespace,
-        (
-            Definition,
-            imbl::OrdMap<
-                QualifiedLocation,
-                imbl::OrdSet<(ProgramEvaluation<EvaluationState>, Arguments)>,
-            >,
-        ),
-    >;
+    type InputState = BTreeMap<Namespace, (Definition, BTreeMap<Namespace, EdgeCall>)>;
     type OutputState = BTreeMap<Namespace, EvaluationState>;
     type AnalysisState = ModuleConstraintSolverAnalysisState;
     type Error = Infallible;
@@ -1875,6 +1944,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
                 analysis_state.namespace_dependency_graph.add_dependency(
                     Namespace::Module(module_name.clone()),
                     Namespace::Module(dependent_module_name.clone()),
+                    EdgeKind::Definition,
                 );
             }
         }
@@ -1895,19 +1965,14 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
             &Definition::default(),
             constraint_graph,
             &new_analysis_state.program_evaluation,
+            &new_analysis_state.namespace_dependency_graph,
         )?;
-        for (qualified_location, call) in new_calls {
-            new_analysis_state.namespace_dependency_graph.add_call(
-                call.target.as_ref().clone(),
-                qualified_location,
-                call.context,
-                call.arguments,
-            );
+        for (target_namespace, call) in new_calls {
             new_analysis_state
                 .namespace_dependency_graph
-                .add_dependency(call.target.as_ref().clone(), namespace.clone());
+                .add_dependency(target_namespace, namespace.clone(), EdgeKind::Call(call));
         }
-        for (namespace, definition) in new_definitions {
+        for (namespace, definition) in &new_definitions {
             new_analysis_state
                 .namespace_dependency_graph
                 .add_dependency(
@@ -1917,13 +1982,14 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
                         .as_ref()
                         .clone(),
                     namespace.clone(),
+                    EdgeKind::Definition,
                 );
             new_analysis_state
                 .namespace_dependency_graph
                 .nodes
-                .entry(namespace)
+                .entry(namespace.clone())
                 .or_default()
-                .definition = definition;
+                .definition = definition.clone();
         }
         new_analysis_state
             .program_evaluation
@@ -1949,7 +2015,28 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
                     .map(|namespace_data| {
                         (
                             namespace_data.definition.clone(),
-                            namespace_data.calls.clone(),
+                            namespace_data
+                                .dependencies
+                                .iter()
+                                .flat_map(|dependency| {
+                                    analysis_state
+                                        .namespace_dependency_graph
+                                        .edges()
+                                        .get(&(dependency.clone(), namespace.clone()))
+                                        .map(|edge_kinds| {
+                                            edge_kinds
+                                                .iter()
+                                                .filter_map(|edge_kind| match edge_kind {
+                                                    EdgeKind::Definition => None,
+                                                    EdgeKind::Call(call) => {
+                                                        Some((dependency.clone(), call.clone()))
+                                                    }
+                                                })
+                                                .collect::<BTreeMap<_, _>>()
+                                        })
+                                        .unwrap_or_default()
+                                })
+                                .collect::<BTreeMap<_, _>>(),
                         )
                     })
                     .unwrap_or_default();
