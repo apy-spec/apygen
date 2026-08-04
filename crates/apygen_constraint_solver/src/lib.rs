@@ -1750,9 +1750,6 @@ pub fn solve_namespace(
 
     let mut previous_evaluation_state: Option<EvaluationState> = None;
     let mut previous_calls = namespace_dependency_graph.calls(namespace).collect();
-    let mut previous_definitions = namespace_dependency_graph
-        .sub_definitions(namespace)
-        .collect();
     loop {
         abstract_state_proxy.insert(namespace.clone(), EvaluationState::default());
 
@@ -1823,16 +1820,13 @@ pub fn solve_namespace(
 
         if Some(&new_evaluation_state) == previous_evaluation_state.as_ref()
             && new_calls == previous_calls
-            && new_definitions == previous_definitions
         {
             calls.extend(new_calls);
             definitions.extend(new_definitions);
             return Ok((abstract_state_proxy.proxy, calls, definitions));
         }
 
-        let sub_namespace_dependency_graph = namespace_dependency_graph
-            .with_calls(calls)
-            .with_sub_definitions(definitions);
+        let sub_namespace_dependency_graph = namespace_dependency_graph.with_calls(calls);
 
         let (sub_program_evaluation, sub_calls, sub_definitions) = constraint_graph
             .subgraphs
@@ -1874,7 +1868,6 @@ pub fn solve_namespace(
 
         previous_evaluation_state = Some(new_evaluation_state);
         previous_calls = new_calls;
-        previous_definitions = new_definitions;
     }
 }
 
