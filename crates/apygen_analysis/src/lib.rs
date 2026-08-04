@@ -17,7 +17,7 @@ pub trait GraphAnalyser {
     fn next_nodes(
         &self,
         node: &Self::Node,
-    ) -> Result<impl Iterator<Item=&Self::Node>, Self::Error>;
+    ) -> Result<impl Iterator<Item = &Self::Node>, Self::Error>;
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error>;
     fn analyse_node(
@@ -153,6 +153,7 @@ pub trait DependencyGraphAnalyser {
     type Node;
     type InputState;
     type OutputState;
+    type AbstractState;
     type AnalysisState;
     type Error;
 
@@ -173,6 +174,11 @@ pub trait DependencyGraphAnalyser {
         &self,
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
+    ) -> Result<Self::AbstractState, Self::Error>;
+    fn merge(
+        &self,
+        analysis_state: &Self::AnalysisState,
+        abstract_state: Self::AbstractState,
     ) -> Result<Self::AnalysisState, Self::Error>;
     fn get_input_state(
         &self,
@@ -219,7 +225,9 @@ pub fn dependencies_analysis<
 
         observer.before_node_analysis(&analysis_state, &worklist, &node);
 
-        let new_analysis_state = analyser.analyse_node(&analysis_state, &node)?;
+        let abstract_state = analyser.analyse_node(&analysis_state, &node)?;
+
+        let new_analysis_state = analyser.merge(&analysis_state, abstract_state)?;
 
         for dependency in analyser.dependency_nodes(&new_analysis_state, &node)? {
             if analyser.get_input_state(&analysis_state, dependency)?

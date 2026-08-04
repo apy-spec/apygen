@@ -177,7 +177,12 @@ pub fn par_dependencies_analysis<
 
         let new_analysis_state = worklist
             .par_iter()
-            .map(|node| analyser.analyse_node(&analysis_state, node))
+            .map(|node| {
+                Ok(analyser.merge(
+                    &analysis_state,
+                    analyser.analyse_node(&analysis_state, &node)?,
+                )?)
+            })
             .try_reduce(
                 || A::default(),
                 |acc, new_analysis_state| Ok(acc.join(&new_analysis_state)),
