@@ -1320,6 +1320,21 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 Guard::ForwardReference => {
                     let evaluation_state =
                         new_abstract_state.get_or_insert_default(self.namespace.clone());
+
+                    if evaluation_state
+                        .types
+                        .values()
+                        .all(|ty| ty.expressions.is_empty())
+                        && evaluation_state.raised_exceptions.expressions.is_empty()
+                        && evaluation_state
+                            .return_value
+                            .as_ref()
+                            .map(|return_value| return_value.expressions.is_empty())
+                            .unwrap_or(true)
+                    {
+                        continue;
+                    }
+
                     evaluation_state.type_variables = evaluation_state
                         .type_variables
                         .clone()
