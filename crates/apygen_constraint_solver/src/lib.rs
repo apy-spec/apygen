@@ -1543,26 +1543,68 @@ impl NamespaceDependencyGraph {
         Self::default()
     }
 
-    pub fn calls(&self, namespace: &Namespace) -> impl Iterator<Item = (Namespace, EdgeCall)> {
+    pub fn with_calls(
+        &self,
+        calls: impl IntoIterator<Item = ((Namespace, Namespace), EdgeCall)>,
+    ) -> Self {
+        let mut new_graph = self.clone();
+        for ((dependency, namespace), call) in calls {
+            new_graph.add_dependency(dependency, namespace.clone(), EdgeKind::Call(call));
+        }
+        new_graph
+    }
+
+    pub fn with_sub_definitions(
+        &self,
+        sub_definitions: impl IntoIterator<Item = (Namespace, Definition)>,
+    ) -> Self {
+        let mut new_graph = self.clone();
+        for (namespace, definition) in sub_definitions {
+            new_graph.add_dependency(
+                namespace
+                    .parent()
+                    .expect("should always exist")
+                    .as_ref()
+                    .clone(),
+                namespace.clone(),
+                EdgeKind::Definition,
+            );
+            new_graph
+                .nodes
+                .entry(namespace.clone())
+                .or_default()
+                .definition = definition.clone();
+        }
+        new_graph
+    }
+
+    pub fn calls(
+        &self,
+        namespace: &Namespace,
+    ) -> impl Iterator<Item = ((Namespace, Namespace), EdgeCall)> {
         self.nodes
             .get(namespace)
             .into_iter()
-            .flat_map(|namespace_data| {
-                namespace_data.dependencies.iter().flat_map(|dependency| {
-                    self.edges
-                        .get(&(dependency.clone(), namespace.clone()))
-                        .into_iter()
-                        .flat_map(move |edge_kinds| {
-                            edge_kinds
-                                .iter()
-                                .filter_map(move |edge_kind| match edge_kind {
-                                    EdgeKind::Definition => None,
-                                    EdgeKind::Call(call) => {
-                                        Some((dependency.clone(), call.clone()))
-                                    }
-                                })
-                        })
-                })
+            .flat_map(move |namespace_data| {
+                namespace_data
+                    .dependencies
+                    .iter()
+                    .flat_map(move |dependency| {
+                        self.edges
+                            .get(&(dependency.clone(), namespace.clone()))
+                            .into_iter()
+                            .flat_map(move |edge_kinds| {
+                                edge_kinds
+                                    .iter()
+                                    .filter_map(move |edge_kind| match edge_kind {
+                                        EdgeKind::Definition => None,
+                                        EdgeKind::Call(call) => Some((
+                                            (dependency.clone(), namespace.clone()),
+                                            call.clone(),
+                                        )),
+                                    })
+                            })
+                    })
             })
     }
 
@@ -1697,7 +1739,7 @@ pub fn solve_namespace(
 ) -> Result<
     (
         ProgramEvaluation<EvaluationState>,
-        BTreeMap<Namespace, EdgeCall>,
+        BTreeMap<(Namespace, Namespace), EdgeCall>,
         BTreeMap<Namespace, Definition>,
     ),
     Infallible,
@@ -1759,7 +1801,7 @@ pub fn solve_namespace(
                         .into_iter()
                         .map(|(qualified_location, call)| {
                             (
-                                call.target.as_ref().clone(),
+                                (call.target.as_ref().clone(), namespace.clone()),
                                 EdgeCall::new(
                                     qualified_location.location,
                                     call.context.proxy,
@@ -1788,6 +1830,10 @@ pub fn solve_namespace(
             return Ok((abstract_state_proxy.proxy, calls, definitions));
         }
 
+        let sub_namespace_dependency_graph = namespace_dependency_graph
+            .with_calls(calls)
+            .with_sub_definitions(definitions);
+
         let (sub_program_evaluation, sub_calls, sub_definitions) = constraint_graph
             .subgraphs
             .iter()
@@ -1800,7 +1846,7 @@ pub fn solve_namespace(
                         .unwrap_or(&Definition::default()),
                     subgraph,
                     &abstract_state_proxy,
-                    &namespace_dependency_graph,
+                    &sub_namespace_dependency_graph,
                 )
             })
             .try_reduce(
@@ -1864,7 +1910,7 @@ impl<'a> ModuleConstraintSolver<'a> {
 
 impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     type Node = SmolStr;
-    type InputState = BTreeMap<Namespace, (Definition, BTreeMap<Namespace, EdgeCall>)>;
+    type InputState = BTreeMap<Namespace, (Definition, BTreeMap<(Namespace, Namespace), EdgeCall>)>;
     type OutputState = BTreeMap<Namespace, EvaluationState>;
     type AnalysisState = ModuleConstraintSolverAnalysisState;
     type Error = Infallible;
@@ -1963,30 +2009,10 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
             &new_analysis_state.program_evaluation,
             &new_analysis_state.namespace_dependency_graph,
         )?;
-        for (target_namespace, call) in new_calls {
-            new_analysis_state
-                .namespace_dependency_graph
-                .add_dependency(target_namespace, namespace.clone(), EdgeKind::Call(call));
-        }
-        for (namespace, definition) in &new_definitions {
-            new_analysis_state
-                .namespace_dependency_graph
-                .add_dependency(
-                    namespace
-                        .parent()
-                        .expect("should always exist")
-                        .as_ref()
-                        .clone(),
-                    namespace.clone(),
-                    EdgeKind::Definition,
-                );
-            new_analysis_state
-                .namespace_dependency_graph
-                .nodes
-                .entry(namespace.clone())
-                .or_default()
-                .definition = definition.clone();
-        }
+        new_analysis_state.namespace_dependency_graph = new_analysis_state
+            .namespace_dependency_graph
+            .with_calls(new_calls)
+            .with_sub_definitions(new_definitions);
         new_analysis_state
             .program_evaluation
             .states
