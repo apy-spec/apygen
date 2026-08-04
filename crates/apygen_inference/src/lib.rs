@@ -1559,7 +1559,7 @@ pub trait NamespaceEvaluation {
         None
     }
     fn raised_exceptions(&self) -> &Deferred<RaisedExceptions, Self::Expression>;
-    fn return_value(&self) -> &Deferred<Sourced<Type>, Self::Expression>;
+    fn return_value(&self) -> &Option<Deferred<Sourced<Type>, Self::Expression>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
@@ -1614,7 +1614,7 @@ impl<N: NamespaceEvaluation + Display> Display for ProgramEvaluation<N> {
     }
 }
 
-impl<N: NamespaceEvaluation + Clone> AbstractState for ProgramEvaluation<N> {
+impl<N: NamespaceEvaluation + Clone + Send + Sync> AbstractState for ProgramEvaluation<N> {
     type Key = Namespace;
     type AbstractValue = N;
 

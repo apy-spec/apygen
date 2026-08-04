@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::fmt::Debug;
 
-pub trait AbstractState {
+pub trait AbstractState: Sync {
     type Key;
     type AbstractValue;
 

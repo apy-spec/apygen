@@ -42,20 +42,20 @@ impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> Call<S>
 pub struct Definition {
     pub parameters: imbl::Vector<(
         ExpressionVariableDefinition,
-        Deferred<Sourced<Type>, Expression>,
+        Option<Deferred<Sourced<Type>, Expression>>,
     )>,
     pub exceptions: Deferred<RaisedExceptions, Expression>,
-    pub return_value: Deferred<Sourced<Type>, Expression>,
+    pub return_value: Option<Deferred<Sourced<Type>, Expression>>,
 }
 
 impl Definition {
     pub fn new(
         parameters: imbl::Vector<(
             ExpressionVariableDefinition,
-            Deferred<Sourced<Type>, Expression>,
+            Option<Deferred<Sourced<Type>, Expression>>,
         )>,
         exceptions: Deferred<RaisedExceptions, Expression>,
-        return_value: Deferred<Sourced<Type>, Expression>,
+        return_value: Option<Deferred<Sourced<Type>, Expression>>,
     ) -> Self {
         Self {
             parameters,

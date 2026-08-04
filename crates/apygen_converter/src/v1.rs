@@ -133,7 +133,7 @@ pub fn convert_literal_dict(literal_dict: &LiteralDict) -> apy::v1::TypeInstance
     )))
 }
 
-pub fn convert_literal_function<N: NamespaceEvaluation + Clone>(
+pub fn convert_literal_function<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     literal_function: &LiteralFunction,
 ) -> Option<apy::v1::Function> {
@@ -158,7 +158,7 @@ pub fn convert_literal_function<N: NamespaceEvaluation + Clone>(
     Some(function)
 }
 
-pub fn convert_literal_class<N: NamespaceEvaluation + Clone>(
+pub fn convert_literal_class<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     literal_class: &LiteralClass,
 ) -> Option<apy::v1::Class> {
@@ -198,7 +198,7 @@ pub fn convert_literal_class<N: NamespaceEvaluation + Clone>(
     )
 }
 
-pub fn convert_literal_type_alias<N: NamespaceEvaluation + Clone>(
+pub fn convert_literal_type_alias<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     literal_type_alias: &LiteralTypeAlias,
 ) -> Option<apy::v1::TypeAlias> {
@@ -208,14 +208,14 @@ pub fn convert_literal_type_alias<N: NamespaceEvaluation + Clone>(
     )?))
 }
 
-pub fn convert_literal_generic<N: NamespaceEvaluation + Clone>(
+pub fn convert_literal_generic<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     literal_generic: &LiteralGeneric,
 ) -> Option<apy::v1::Generic> {
     Some(apy::v1::Generic::new(literal_generic.value.kind))
 }
 
-pub fn convert_literal_imported_module<N: NamespaceEvaluation + Clone>(
+pub fn convert_literal_imported_module<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     literal_imported_module: &LiteralImportedModule,
 ) -> Option<apy::v1::ImportedModule> {
@@ -234,7 +234,7 @@ pub enum ConvertedTypeLiteral {
     ImportedModule(apy::v1::ImportedModule),
 }
 
-pub fn convert_type_literal<N: NamespaceEvaluation + Clone>(
+pub fn convert_type_literal<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     type_literal: &TypeLiteral,
 ) -> Option<ConvertedTypeLiteral> {
@@ -317,7 +317,7 @@ pub fn convert_type_no_return() -> apy::v1::TypeInstance {
     )
 }
 
-pub fn convert_type_instance<N: NamespaceEvaluation + Clone>(
+pub fn convert_type_instance<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     type_instance: &TypeInstance,
 ) -> Option<apy::v1::TypeInstance> {
@@ -349,7 +349,7 @@ pub fn convert_type_instance<N: NamespaceEvaluation + Clone>(
     )
 }
 
-pub fn convert_type_union<N: NamespaceEvaluation + Clone>(
+pub fn convert_type_union<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     type_union: &TypeUnion,
 ) -> Option<apy::v1::TypeInstance> {
@@ -380,7 +380,7 @@ pub fn convert_type_intersection() -> apy::v1::TypeInstance {
     )
 }
 
-pub fn convert_type<N: NamespaceEvaluation + Clone>(
+pub fn convert_type<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     ty: &Type,
 ) -> Option<apy::v1::Type> {
@@ -438,7 +438,7 @@ pub fn convert_type<N: NamespaceEvaluation + Clone>(
     }))
 }
 
-pub fn convert_exceptions<N: NamespaceEvaluation + Clone>(
+pub fn convert_exceptions<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     raises: &RaisedExceptions,
 ) -> Option<Vec<apy::v1::Exception>> {
@@ -452,7 +452,7 @@ pub fn convert_exceptions<N: NamespaceEvaluation + Clone>(
         .collect()
 }
 
-pub fn convert_attribute<N: NamespaceEvaluation + Clone>(
+pub fn convert_attribute<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     attribute_type: &Type,
 ) -> Option<apy::v1::Attribute> {
@@ -508,7 +508,7 @@ pub fn convert_attribute<N: NamespaceEvaluation + Clone>(
     Some(apy::v1::Attribute::Variable(apy::v1::Variable::new(ty)))
 }
 
-pub fn convert_abstract_environment<N: NamespaceEvaluation + Clone>(
+pub fn convert_abstract_environment<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     namespace_evaluation: &N,
 ) -> Option<BTreeMap<apy::v1::Identifier, apy::OneOrMany<apy::v1::Attribute>>> {
@@ -532,7 +532,7 @@ pub fn convert_abstract_environment<N: NamespaceEvaluation + Clone>(
     Some(attributes)
 }
 
-pub fn convert_module<N: NamespaceEvaluation + Clone>(
+pub fn convert_module<N: NamespaceEvaluation + Clone + Send + Sync>(
     program_evaluation: &ProgramEvaluation<N>,
     module: &SmolStr,
 ) -> Option<apy::v1::Module> {
