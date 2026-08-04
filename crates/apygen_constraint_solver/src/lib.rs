@@ -1525,17 +1525,17 @@ pub enum EdgeKind {
     Call(EdgeCall),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NamespaceData {
     pub definition: Definition,
     pub dependents: imbl::OrdSet<Namespace>,
     pub dependencies: imbl::OrdSet<Namespace>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamespaceDependencyGraph {
-    nodes: imbl::OrdMap<Namespace, NamespaceData>,
-    edges: imbl::OrdMap<(Namespace, Namespace), imbl::OrdSet<EdgeKind>>,
+    nodes: imbl::HashMap<Namespace, NamespaceData>,
+    edges: imbl::HashMap<(Namespace, Namespace), imbl::OrdSet<EdgeKind>>,
 }
 
 impl NamespaceDependencyGraph {
@@ -1600,17 +1600,17 @@ impl NamespaceDependencyGraph {
 impl Default for NamespaceDependencyGraph {
     fn default() -> Self {
         Self {
-            nodes: imbl::OrdMap::default(),
-            edges: imbl::OrdMap::default(),
+            nodes: imbl::HashMap::default(),
+            edges: imbl::HashMap::default(),
         }
     }
 }
 
 impl NamespaceDependencyGraph {
-    pub fn nodes(&self) -> &imbl::OrdMap<Namespace, NamespaceData> {
+    pub fn nodes(&self) -> &imbl::HashMap<Namespace, NamespaceData> {
         &self.nodes
     }
-    pub fn edges(&self) -> &imbl::OrdMap<(Namespace, Namespace), imbl::OrdSet<EdgeKind>> {
+    pub fn edges(&self) -> &imbl::HashMap<(Namespace, Namespace), imbl::OrdSet<EdgeKind>> {
         &self.edges
     }
     pub fn add_dependency(&mut self, dependency: Namespace, node: Namespace, edge_kind: EdgeKind) {
@@ -1832,7 +1832,7 @@ pub fn solve_namespace(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ModuleConstraintSolverAnalysisState {
     pub program_evaluation: ProgramEvaluation<EvaluationState>,
     pub namespace_dependency_graph: NamespaceDependencyGraph,
