@@ -1496,6 +1496,47 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
             left_definitions.join(&right_definitions),
         ))
     }
+
+    fn optimise(
+        &self,
+        analysis_state: &mut Self::AnalysisState,
+        worklist: &mut BTreeSet<Self::Node>,
+    ) -> Result<(), Self::Error> {
+        let mut marked = BTreeSet::new();
+
+        for worklist_node in worklist.iter() {
+            if marked.contains(worklist_node) {
+                continue;
+            }
+
+            let mut to_remove = BTreeSet::from_iter([worklist_node]);
+            while let Some(node) = to_remove.pop_first() {
+                for next_node in self.next_nodes(node)? {
+                    if next_node != worklist_node
+                        && *next_node != ConstraintNode::Entry
+                        && analysis_state.abstract_states.contains_key(next_node)
+                        && self
+                            .constraint_graph
+                            .predecessor_iter(next_node)
+                            .all(|predecessor| predecessor == node || marked.contains(predecessor))
+                    {
+                        marked.insert(next_node);
+                        to_remove.insert(next_node);
+                    }
+                }
+            }
+        }
+
+        *worklist = worklist
+            .extract_if(.., |node| !marked.contains(node))
+            .collect();
+
+        for node in marked {
+            analysis_state.abstract_states.remove(node);
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -2362,7 +2403,7 @@ mod tests {
             A@{module[3:6]} = Inferred(class(module[A@{3:6}]))
             a@{module[1:0]} = Inferred(@class(module[A@{3:6}])) ⊔ #deferred{#annotated(A)}
             #variables = {A: {module[3:6]}}
-            #raise = {} ⊔ #deferred{#annotated(A)}
+            #raise = {}
             #return = Inferred(None)
         module[A@{3:6}]:
             b@{module[A@{3:6}][4:4]} = Inferred(5)

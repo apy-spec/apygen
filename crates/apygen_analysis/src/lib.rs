@@ -14,10 +14,10 @@ pub trait GraphAnalyser {
     type Error;
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error>;
-    fn next_nodes<'a>(
-        &'a self,
-        node: &'a Self::Node,
-    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error>;
+    fn next_nodes(
+        &self,
+        node: &Self::Node,
+    ) -> Result<impl Iterator<Item=&Self::Node>, Self::Error>;
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error>;
     fn analyse_node(
@@ -51,6 +51,14 @@ pub trait GraphAnalyser {
         left: &Self::AbstractState,
         right: &Self::AbstractState,
     ) -> Result<Self::AbstractState, Self::Error>;
+
+    fn optimise(
+        &self,
+        _analysis_state: &mut Self::AnalysisState,
+        _worklist: &mut BTreeSet<Self::Node>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 pub trait AnalysisObserver<N, S> {
@@ -130,6 +138,8 @@ pub fn analysis<
         }
 
         observer.after_node_analysis(&analysis_state, &worklist, &node);
+
+        analyser.optimise(&mut analysis_state, &mut worklist)?;
 
         observer.after_iteration(&analysis_state, &worklist);
     }

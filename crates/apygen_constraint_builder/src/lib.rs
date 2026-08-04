@@ -1579,10 +1579,10 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
         Ok(std::iter::once(ProgramPoint::Entry))
     }
-    fn next_nodes<'a>(
-        &'a self,
-        node: &'a Self::Node,
-    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
+    fn next_nodes(
+        &self,
+        node: &Self::Node,
+    ) -> Result<impl Iterator<Item = &Self::Node>, Self::Error> {
         match self.cfg.entries().get(node).map(|entry| &entry.successors) {
             Some(successors) => Ok(successors.iter()),
             None => Err(ConstraintsBuilderError::InvalidProgramPoint {
