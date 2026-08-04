@@ -1542,6 +1542,59 @@ impl NamespaceDependencyGraph {
     pub fn new() -> Self {
         Self::default()
     }
+
+    pub fn calls(&self, namespace: &Namespace) -> impl Iterator<Item = (Namespace, EdgeCall)> {
+        self.nodes
+            .get(namespace)
+            .into_iter()
+            .flat_map(|namespace_data| {
+                namespace_data.dependencies.iter().flat_map(|dependency| {
+                    self.edges
+                        .get(&(dependency.clone(), namespace.clone()))
+                        .into_iter()
+                        .flat_map(move |edge_kinds| {
+                            edge_kinds
+                                .iter()
+                                .filter_map(move |edge_kind| match edge_kind {
+                                    EdgeKind::Definition => None,
+                                    EdgeKind::Call(call) => {
+                                        Some((dependency.clone(), call.clone()))
+                                    }
+                                })
+                        })
+                })
+            })
+    }
+
+    pub fn sub_definitions(
+        &self,
+        namespace: &Namespace,
+    ) -> impl Iterator<Item = (Namespace, Definition)> {
+        self.nodes
+            .get(namespace)
+            .into_iter()
+            .flat_map(|namespace_data| {
+                namespace_data.dependents.iter().filter_map(|dependent| {
+                    self.edges
+                        .get(&(namespace.clone(), dependent.clone()))
+                        .and_then(|edge_kinds| {
+                            if edge_kinds
+                                .iter()
+                                .any(|edge_kind| matches!(edge_kind, EdgeKind::Definition))
+                            {
+                                self.nodes.get(dependent).map(|dependent_namespace_data| {
+                                    (
+                                        dependent.clone(),
+                                        dependent_namespace_data.definition.clone(),
+                                    )
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                })
+            })
+    }
 }
 
 impl Default for NamespaceDependencyGraph {
@@ -1654,67 +1707,10 @@ pub fn solve_namespace(
     let mut definitions = BTreeMap::default();
 
     let mut previous_evaluation_state: Option<EvaluationState> = None;
-    let mut previous_calls = namespace_dependency_graph
-        .nodes()
-        .get(namespace)
-        .map(|namespace_data| {
-            namespace_data
-                .dependencies
-                .iter()
-                .flat_map(|dependency| {
-                    namespace_dependency_graph
-                        .edges()
-                        .get(&(dependency.clone(), namespace.clone()))
-                        .map(|edge_kinds| {
-                            edge_kinds
-                                .iter()
-                                .filter_map(|edge_kind| match edge_kind {
-                                    EdgeKind::Definition => None,
-                                    EdgeKind::Call(call) => {
-                                        Some((dependency.clone(), call.clone()))
-                                    }
-                                })
-                                .collect::<BTreeMap<_, _>>()
-                        })
-                        .unwrap_or_default()
-                })
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
+    let mut previous_calls = namespace_dependency_graph.calls(namespace).collect();
     let mut previous_definitions = namespace_dependency_graph
-        .nodes()
-        .get(namespace)
-        .map(|namespace_data| {
-            namespace_data
-                .dependents
-                .iter()
-                .filter_map(|dependent| {
-                    namespace_dependency_graph
-                        .edges()
-                        .get(&(namespace.clone(), dependent.clone()))
-                        .and_then(|edge_kinds| {
-                            if edge_kinds
-                                .iter()
-                                .any(|edge_kind| matches!(edge_kind, EdgeKind::Definition))
-                            {
-                                Some((
-                                    dependent.clone(),
-                                    namespace_dependency_graph
-                                        .nodes()
-                                        .get(dependent)
-                                        .map(|dependent_namespace_data| {
-                                            dependent_namespace_data.definition.clone()
-                                        })
-                                        .unwrap_or_default(),
-                                ))
-                            } else {
-                                None
-                            }
-                        })
-                })
-                .collect::<BTreeMap<_, _>>()
-        })
-        .unwrap_or_default();
+        .sub_definitions(namespace)
+        .collect();
     loop {
         abstract_state_proxy.insert(namespace.clone(), EvaluationState::default());
 
@@ -2015,28 +2011,10 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
                     .map(|namespace_data| {
                         (
                             namespace_data.definition.clone(),
-                            namespace_data
-                                .dependencies
-                                .iter()
-                                .flat_map(|dependency| {
-                                    analysis_state
-                                        .namespace_dependency_graph
-                                        .edges()
-                                        .get(&(dependency.clone(), namespace.clone()))
-                                        .map(|edge_kinds| {
-                                            edge_kinds
-                                                .iter()
-                                                .filter_map(|edge_kind| match edge_kind {
-                                                    EdgeKind::Definition => None,
-                                                    EdgeKind::Call(call) => {
-                                                        Some((dependency.clone(), call.clone()))
-                                                    }
-                                                })
-                                                .collect::<BTreeMap<_, _>>()
-                                        })
-                                        .unwrap_or_default()
-                                })
-                                .collect::<BTreeMap<_, _>>(),
+                            analysis_state
+                                .namespace_dependency_graph
+                                .calls(namespace)
+                                .collect(),
                         )
                     })
                     .unwrap_or_default();
