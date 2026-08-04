@@ -2,7 +2,7 @@ use crate::EvaluationState;
 use crate::analysis::abstract_state::AbstractState;
 use crate::analysis::lattice::Join;
 use crate::calls::Arguments;
-use crate::constraint_graph::expressions::{Expression, ExpressionVariableDefinition};
+use crate::constraint_graph::expressions::{Expression, Parameter};
 use crate::identifiers::Namespace;
 use crate::inference::{
     Completeness, Deferred, Exception, Pureness, RaisedExceptions, Sourced, Type,
@@ -40,20 +40,14 @@ impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> Call<S>
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub struct Definition {
-    pub parameters: imbl::Vector<(
-        ExpressionVariableDefinition,
-        Option<Deferred<Sourced<Type>, Expression>>,
-    )>,
+    pub parameters: imbl::Vector<(Parameter, Option<Deferred<Sourced<Type>, Expression>>)>,
     pub exceptions: Deferred<RaisedExceptions, Expression>,
     pub return_value: Option<Deferred<Sourced<Type>, Expression>>,
 }
 
 impl Definition {
     pub fn new(
-        parameters: imbl::Vector<(
-            ExpressionVariableDefinition,
-            Option<Deferred<Sourced<Type>, Expression>>,
-        )>,
+        parameters: imbl::Vector<(Parameter, Option<Deferred<Sourced<Type>, Expression>>)>,
         exceptions: Deferred<RaisedExceptions, Expression>,
         return_value: Option<Deferred<Sourced<Type>, Expression>>,
     ) -> Self {

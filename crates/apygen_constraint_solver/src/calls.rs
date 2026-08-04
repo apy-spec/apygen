@@ -1,7 +1,7 @@
 use crate::analysis::fmt::{fmt_display_iterator, fmt_iterator};
 use crate::analysis::lattice::Join;
-use crate::constraint_graph::expressions::{ParameterKind, SmolStr};
-use crate::inference::{LiteralTuple, Parameter, Sourced, Type, TypeLiteral};
+use crate::constraint_graph::expressions::{Parameter, ParameterKind, SmolStr};
+use crate::inference::{LiteralTuple, Sourced, Type, TypeLiteral};
 use crate::primitives::literals::LiteralStr;
 use imbl;
 use std::collections::BTreeMap;
@@ -11,7 +11,7 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BoundArguments {
-    pub variables: BTreeMap<Parameter, Option<Sourced<Arc<Type>>>>,
+    pub variables: BTreeMap<Parameter, Sourced<Type>>,
 }
 
 impl BoundArguments {
@@ -38,8 +38,8 @@ pub enum BindError {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Arguments {
-    pub positional: Vec<Arc<Type>>,
-    pub keyword: BTreeMap<SmolStr, Arc<Type>>,
+    pub positional: Vec<Type>,
+    pub keyword: BTreeMap<SmolStr, Type>,
 }
 
 impl Arguments {
@@ -50,31 +50,31 @@ impl Arguments {
         }
     }
 
-    pub fn with_self(mut self, self_type: Arc<Type>) -> Self {
+    pub fn with_self(mut self, self_type: Type) -> Self {
         self.positional.insert(0, self_type);
         self
     }
 
-    pub fn add_positional_argument(mut self, argument: Arc<Type>) -> Self {
+    pub fn add_positional_argument(mut self, argument: Type) -> Self {
         self.positional.push(argument);
         self
     }
 
-    pub fn add_keyword_argument(mut self, identifier: SmolStr, argument: Arc<Type>) -> Self {
+    pub fn add_keyword_argument(mut self, identifier: SmolStr, argument: Type) -> Self {
         self.keyword.insert(identifier, argument);
         self
     }
 
-    pub fn bind(&self, parameters: &imbl::Vector<Parameter>) -> Result<BoundArguments, BindError> {
+    pub fn bind(&self, parameters: Vec<Parameter>) -> Result<BoundArguments, BindError> {
         let mut bindings = BoundArguments::new();
         let mut positional_iter = self.positional.iter().cloned();
-        for parameter in parameters {
+        for parameter in &parameters {
             match parameter.kind {
                 ParameterKind::PositionalOnly => {
                     if let Some(argument) = positional_iter.next() {
                         bindings
                             .variables
-                            .insert(parameter.clone(), Some(Sourced::inferred(argument)));
+                            .insert(parameter.clone(), Sourced::inferred(argument));
                     } else if !parameter.is_optional {
                         return Err(BindError::MissingPositionalArgument);
                     }
@@ -83,11 +83,11 @@ impl Arguments {
                     if let Some(argument) = positional_iter.next() {
                         bindings
                             .variables
-                            .insert(parameter.clone(), Some(Sourced::inferred(argument.clone())));
-                    } else if let Some(argument) = self.keyword.get(&parameter.name) {
+                            .insert(parameter.clone(), Sourced::inferred(argument.clone()));
+                    } else if let Some(argument) = self.keyword.get(parameter.name.name()) {
                         bindings
                             .variables
-                            .insert(parameter.clone(), Some(Sourced::inferred(argument.clone())));
+                            .insert(parameter.clone(), Sourced::inferred(argument.clone()));
                     } else if !parameter.is_optional {
                         return Err(BindError::MissingPositionalOrKeywordArgument);
                     }
@@ -109,21 +109,21 @@ impl Arguments {
                         imbl::vector![Arc::new(var_positional_arguments)]
                     };
 
-                    let ty = Arc::new(Type::Any); // TODO: fix
+                    let ty = Type::Any; // TODO: fix
 
                     bindings
                         .variables
-                        .insert(parameter.clone(), Some(Sourced::inferred(ty)));
+                        .insert(parameter.clone(), Sourced::inferred(ty));
                 }
                 ParameterKind::KeywordOnly => {
                     if bindings.variables.contains_key(&parameter) {
                         return Err(BindError::MultipleValuesForParameter);
                     }
 
-                    if let Some(argument) = self.keyword.get(&parameter.name) {
+                    if let Some(argument) = self.keyword.get(parameter.name.name()) {
                         bindings
                             .variables
-                            .insert(parameter.clone(), Some(Sourced::inferred(argument.clone())));
+                            .insert(parameter.clone(), Sourced::inferred(argument.clone()));
                     } else if !parameter.is_optional {
                         return Err(BindError::MissingKeywordArgument);
                     }
@@ -136,8 +136,8 @@ impl Arguments {
                     let mut var_keyword_arguments = Type::Never;
 
                     for (key, argument) in &self.keyword {
-                        if !parameters.iter().any(|p| p.name == *key) {
-                            var_keyword_arguments = var_keyword_arguments.join(argument.as_ref());
+                        if !parameters.iter().any(|p| p.name.name() == key) {
+                            var_keyword_arguments = var_keyword_arguments.join(argument);
                         }
                     }
 
@@ -147,11 +147,11 @@ impl Arguments {
 
                     let arguments = imbl::vector![str_literal, Arc::new(var_keyword_arguments)];
 
-                    let ty = Arc::new(Type::Any); // TODO: fix
+                    let ty = Type::Any; // TODO: fix
 
                     bindings
                         .variables
-                        .insert(parameter.clone(), Some(Sourced::inferred(ty)));
+                        .insert(parameter.clone(), Sourced::inferred(ty));
                 }
             }
         }
@@ -164,7 +164,7 @@ impl Arguments {
             !bindings
                 .variables
                 .keys()
-                .any(|variable| &variable.name == key)
+                .any(|variable| variable.name.name() == key)
         }) {
             return Err(BindError::UnexpectedKeywordArgument);
         }

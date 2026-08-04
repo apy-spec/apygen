@@ -20,7 +20,7 @@ impl ExpressionVariableDefinition {
         }
     }
 
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &SmolStr {
         &self.named_qualified_location.name
     }
 

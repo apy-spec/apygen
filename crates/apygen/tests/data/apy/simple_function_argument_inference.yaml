@@ -36,15 +36,7 @@ modules:
           description: ""
           generics: {}
           parameters: []
-          raises:
-            - exception_type:
-                reference:
-                  id: Any
-                  module: typing
-                  history_index: 0
-                arguments:
-                  []
-              description: ""
+          raises: []
           partial: false
           pure: false
           deprecated: false
@@ -72,8 +64,8 @@ modules:
         kind: VARIABLE
         type:
           reference:
-            id: Any
-            module: typing
+            id: int
+            module: builtins
             history_index: 0
           arguments:
             []
