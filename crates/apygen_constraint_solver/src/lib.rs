@@ -1329,8 +1329,21 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                         && evaluation_state
                             .return_value
                             .as_ref()
-                            .map(|return_value| return_value.expressions.is_empty())
+                            .map(|deferred_ty| deferred_ty.expressions.is_empty())
                             .unwrap_or(true)
+                        && definitions.iter().all(|(_, definition)| {
+                            definition.parameters.iter().all(|(_, deferred_ty_option)| {
+                                deferred_ty_option
+                                    .as_ref()
+                                    .map(|deferred_ty| deferred_ty.expressions.is_empty())
+                                    .unwrap_or(true)
+                            }) && definition.exceptions.expressions.is_empty()
+                                && definition
+                                    .return_value
+                                    .as_ref()
+                                    .map(|deferred_ty| deferred_ty.expressions.is_empty())
+                                    .unwrap_or(true)
+                        })
                     {
                         continue;
                     }
