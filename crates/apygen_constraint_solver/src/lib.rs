@@ -1942,7 +1942,9 @@ pub fn solve_namespace(
             return Ok((abstract_state_proxy.proxy, calls, definitions));
         }
 
-        let sub_namespace_dependency_graph = namespace_dependency_graph.with_calls(calls);
+        let sub_namespace_dependency_graph = namespace_dependency_graph
+            .with_calls(calls)
+            .with_calls(new_calls.clone());
 
         let (sub_program_evaluation, sub_calls, sub_definitions) = constraint_graph
             .subgraphs
@@ -2496,6 +2498,27 @@ mod tests {
             #variables = {b: {module[A@{3:6}][4:4]}}
             #raise = {}
             #return = Inferred(None)
+        "##},
+    )]
+    #[case::argument_inference(
+        indoc! {r##"
+        def foo(x):
+            return x
+
+        result = foo(5)
+        "##},
+        indoc! {r##"
+        module:
+            foo@{module[1:4]} = Inferred(function(module[foo@{1:4}]))
+            result@{module[4:0]} = Inferred(5)
+            #variables = {foo: {module[1:4]}, result: {module[4:0]}}
+            #raise = {}
+            #return = Inferred(None)
+        module[foo@{1:4}]:
+            x@{module[foo@{1:4}][1:8]} = Inferred(5)
+            #variables = {x: {module[foo@{1:4}][1:8]}}
+            #raise = {}
+            #return = Inferred(5)
         "##},
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_expressions: &str) {
