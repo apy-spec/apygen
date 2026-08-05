@@ -1104,28 +1104,6 @@ impl<'s> ConstraintSolver<'s> {
             Err(_) => Deferred::unknown(imbl::OrdSet::unit(Arc::new(expression.clone()))),
         }
     }
-
-    pub fn evaluate_expressions<
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
-    >(
-        &self,
-        mode: EvaluatorMode,
-        program_evaluation: &S,
-        expressions: &imbl::OrdSet<Expression>,
-    ) -> Deferred<PyTypeEval<S>, Expression> {
-        match self
-            .evaluator(mode)
-            .evaluate_expressions(program_evaluation, expressions)
-        {
-            Ok(eval) => Deferred::known(eval),
-            Err(_) => Deferred::unknown(
-                expressions
-                    .iter()
-                    .map(|expression| Arc::new(expression.clone()))
-                    .collect(),
-            ),
-        }
-    }
 }
 
 impl<'s> GraphAnalyser for ConstraintSolver<'s> {
