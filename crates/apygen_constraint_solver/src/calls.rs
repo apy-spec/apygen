@@ -9,7 +9,7 @@ use std::fmt::Display;
 use std::sync::Arc;
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct BoundArguments {
     pub variables: BTreeMap<Parameter, Sourced<Type>>,
 }

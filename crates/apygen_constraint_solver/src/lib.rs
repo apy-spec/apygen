@@ -2,7 +2,7 @@ use crate::analysis::abstract_state::{AbstractState, AbstractStateProxy};
 use crate::analysis::fmt::fmt_set;
 use crate::analysis::lattice::Join;
 use crate::analysis::{DependencyGraphAnalyser, DummyAnalysisObserver, GraphAnalyser, analysis};
-use crate::calls::Arguments;
+use crate::calls::{Arguments, BoundArguments};
 use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
     ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionImport, ExpressionOverride,
@@ -35,10 +35,12 @@ use thiserror::Error;
 
 pub use apygen_analysis as analysis;
 pub use apygen_constraint_graph as constraint_graph;
+use apygen_constraint_graph::expressions::Parameter;
 pub use apygen_identifiers as identifiers;
 pub use apygen_inference as inference;
 pub use apygen_primitives as primitives;
 pub use imbl;
+use imbl::shared_ptr::DefaultSharedPtr;
 
 pub mod calls;
 pub mod expressions;
@@ -223,19 +225,28 @@ pub enum EvaluationError {
 pub struct ExpressionEvaluator<'a> {
     pub mode: EvaluatorMode,
     pub namespace: &'a Namespace,
+    pub namespace_dependency_graph: &'a NamespaceDependencyGraph,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
-    pub fn new(mode: EvaluatorMode, namespace: &'a Namespace) -> Self {
-        Self { mode, namespace }
+    pub fn new(
+        mode: EvaluatorMode,
+        namespace: &'a Namespace,
+        namespace_dependency_graph: &'a NamespaceDependencyGraph,
+    ) -> Self {
+        Self {
+            mode,
+            namespace,
+            namespace_dependency_graph,
+        }
     }
 
     pub fn with_namespace(&self, namespace: &'a Namespace) -> Self {
-        Self::new(self.mode, namespace)
+        Self::new(self.mode, namespace, self.namespace_dependency_graph)
     }
 
     pub fn with_mode(&self, mode: EvaluatorMode) -> Self {
-        Self::new(mode, self.namespace)
+        Self::new(mode, self.namespace, self.namespace_dependency_graph)
     }
 
     pub fn extract_deferred<T: Clone>(
@@ -673,6 +684,20 @@ impl<'a> ExpressionEvaluator<'a> {
                     return Ok(PyTypeEval::unknown());
                 };
 
+                let bound_arguments = arguments
+                    .bind(
+                        self.namespace_dependency_graph
+                            .nodes()
+                            .get(&function_namespace)
+                            .unwrap()
+                            .definition
+                            .parameters
+                            .iter()
+                            .map(|(parameter, _)| parameter.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                    .unwrap_or_default();
+
                 Ok(PyTypeEval::new(
                     Sourced::inferred(if let Some(return_value) = &evaluation_state.return_value {
                         Self::extract_deferred(return_value.clone())?.data.clone()
@@ -686,7 +711,7 @@ impl<'a> ExpressionEvaluator<'a> {
                         .with_calls(imbl::OrdSet::unit(Call::new(
                             Arc::new(function_namespace),
                             abstract_state.clone(),
-                            arguments,
+                            bound_arguments,
                         ))),
                 ))
             }
@@ -1037,30 +1062,30 @@ impl<'a> ExpressionEvaluator<'a> {
 pub struct ConstraintSolver<'s> {
     pub namespace: &'s Namespace,
     pub definition: &'s Definition,
-    pub calls: &'s imbl::OrdSet<EdgeCall>,
     pub constraint_graph: &'s ConstraintGraph,
     pub program_evaluation: &'s dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+    pub namespace_dependency_graph: &'s NamespaceDependencyGraph,
 }
 
 impl<'s> ConstraintSolver<'s> {
     pub fn new(
         namespace: &'s Namespace,
         definition: &'s Definition,
-        calls: &'s imbl::OrdSet<EdgeCall>,
         constraint_graph: &'s ConstraintGraph,
         program_evaluation: &'s dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
+        namespace_dependency_graph: &'s NamespaceDependencyGraph,
     ) -> Self {
         Self {
             namespace,
             definition,
-            calls,
             constraint_graph,
             program_evaluation,
+            namespace_dependency_graph,
         }
     }
 
     pub fn evaluator(&self, mode: EvaluatorMode) -> ExpressionEvaluator<'_> {
-        ExpressionEvaluator::new(mode, self.namespace)
+        ExpressionEvaluator::new(mode, self.namespace, self.namespace_dependency_graph)
     }
 
     pub fn evaluate_expression<
@@ -1168,44 +1193,27 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 let evaluation_state =
                     program_evaluation.get_or_insert_default(self.namespace.clone());
 
-                let mut call_types = BTreeMap::new();
-                for call in self.calls {
-                    let bound_arguments = call
-                        .arguments
-                        .bind(
-                            self.definition
-                                .parameters
-                                .iter()
-                                .map(|(parameter, _)| parameter.clone())
-                                .collect::<Vec<_>>(),
-                        )
-                        .unwrap_or_default();
-                    for (parameter, ty_option) in bound_arguments.variables {
-                        call_types.insert(parameter.name, ty_option);
-                    }
-                }
+                let (arguments, _) = self.namespace_dependency_graph.inputs(self.namespace);
 
-                for (variable, deferred_ty) in &self.definition.parameters {
+                for (parameter, deferred_ty) in arguments {
                     evaluation_state.defined_variables.names.insert(
-                        variable.name.named_qualified_location.name.clone(),
+                        parameter.name.named_qualified_location.name.clone(),
                         imbl::OrdSet::unit((
-                            variable.name.named_qualified_location.namespace.clone(),
-                            variable.name.named_qualified_location.location.clone(),
+                            parameter.name.named_qualified_location.namespace.clone(),
+                            parameter.name.named_qualified_location.location.clone(),
                         )),
                     );
                     evaluation_state.type_variables.insert(
-                        variable.name.named_qualified_location.name.clone(),
+                        parameter.name.named_qualified_location.name.clone(),
                         imbl::OrdSet::unit((
-                            variable.name.named_qualified_location.namespace.clone(),
-                            variable.name.named_qualified_location.location.clone(),
+                            parameter.name.named_qualified_location.namespace.clone(),
+                            parameter.name.named_qualified_location.location.clone(),
                         )),
                     );
                     evaluation_state.types.insert(
-                        Arc::new(Expression::VariableDefinition(variable.name.clone())),
+                        Arc::new(Expression::VariableDefinition(parameter.name.clone())),
                         if let Some(deferred_ty) = &deferred_ty {
                             deferred_ty.clone()
-                        } else if let Some(inferred_ty) = call_types.get(&variable.name) {
-                            Deferred::known(inferred_ty.clone())
                         } else {
                             Deferred::known(Sourced::inferred(Type::Any))
                         },
@@ -1589,14 +1597,14 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
 pub struct EdgeCall {
     pub location: Location,
     pub context: ProgramEvaluation<EvaluationState>,
-    pub arguments: Arguments,
+    pub arguments: BoundArguments,
 }
 
 impl EdgeCall {
     pub fn new(
         location: Location,
         context: ProgramEvaluation<EvaluationState>,
-        arguments: Arguments,
+        arguments: BoundArguments,
     ) -> Self {
         Self {
             location,
@@ -1714,6 +1722,50 @@ impl NamespaceDependencyGraph {
                         })
                 })
             })
+    }
+
+    pub fn inputs(
+        &self,
+        namespace: &Namespace,
+    ) -> (
+        imbl::OrdMap<Parameter, Option<Deferred<Sourced<Type>, Expression>>>,
+        imbl::OrdMap<QualifiedLocation, ProgramEvaluation<EvaluationState>>,
+    ) {
+        let mut call_sites = imbl::OrdMap::default();
+        let mut arguments = imbl::OrdMap::default();
+        if let Some(namespace_data) = self.nodes.get(namespace) {
+            arguments.extend(namespace_data.definition.parameters.iter().cloned());
+        }
+        for (namespace, edge_call) in self.callers(namespace) {
+            call_sites.insert(
+                QualifiedLocation::new(edge_call.location.clone(), Arc::new(namespace.clone())),
+                edge_call.context,
+            );
+            for (parameter, ty) in edge_call.arguments.variables {
+                match arguments.entry(parameter.clone()) {
+                    Entry::Occupied(entry) => {
+                        let current_deferred_ty: &mut Option<Deferred<Sourced<Type>, Expression>> =
+                            entry.into_mut();
+
+                        *current_deferred_ty =
+                            if let Some(current_deferred_ty) = current_deferred_ty {
+                                if current_deferred_ty.value.source > ty.source {
+                                    Some(current_deferred_ty.clone())
+                                } else {
+                                    Some(current_deferred_ty.join(&Deferred::known(ty)))
+                                }
+                            } else {
+                                Some(Deferred::known(ty))
+                            };
+                    }
+                    Entry::Vacant(entry) => {
+                        entry.insert(Some(Deferred::known(ty)));
+                    }
+                }
+            }
+        }
+
+        (arguments, call_sites)
     }
 
     pub fn sub_definitions(
@@ -1853,6 +1905,8 @@ pub fn solve_namespace(
     Infallible,
 > {
     let mut abstract_state_proxy = AbstractStateProxy::with_default_proxy(abstract_state);
+    let mut namespace_dependency_graph = namespace_dependency_graph.clone();
+
     let mut calls = BTreeMap::default();
     let mut definitions = BTreeMap::default();
 
@@ -1861,20 +1915,13 @@ pub fn solve_namespace(
     loop {
         abstract_state_proxy.insert(namespace.clone(), EvaluationState::default());
 
-        let call_edges = namespace_dependency_graph
-            .with_calls(calls.clone())
-            .with_calls(previous_calls.clone())
-            .callers(namespace)
-            .map(|(_, call)| call)
-            .collect();
-
         let mut solver_state = analysis(
             &ConstraintSolver::new(
                 &namespace,
                 definition,
-                &call_edges,
                 constraint_graph,
                 &abstract_state_proxy,
+                &namespace_dependency_graph,
             ),
             &mut DummyAnalysisObserver::default(),
         )?;
@@ -1942,9 +1989,9 @@ pub fn solve_namespace(
             return Ok((abstract_state_proxy.proxy, calls, definitions));
         }
 
-        let sub_namespace_dependency_graph = namespace_dependency_graph
-            .with_calls(calls)
-            .with_calls(new_calls.clone());
+        namespace_dependency_graph = namespace_dependency_graph
+            .with_calls(new_calls.clone())
+            .with_sub_definitions(new_definitions.clone());
 
         let (sub_program_evaluation, sub_calls, sub_definitions) = constraint_graph
             .subgraphs
@@ -1958,7 +2005,7 @@ pub fn solve_namespace(
                         .unwrap_or(&Definition::default()),
                     subgraph,
                     &abstract_state_proxy,
-                    &sub_namespace_dependency_graph,
+                    &namespace_dependency_graph,
                 )
             })
             .try_reduce(
@@ -1981,6 +2028,10 @@ pub fn solve_namespace(
             )?;
 
         abstract_state_proxy.proxy.states = sub_program_evaluation.states;
+        namespace_dependency_graph = namespace_dependency_graph
+            .with_calls(sub_calls.clone())
+            .with_sub_definitions(sub_definitions.clone());
+
         calls = sub_calls;
         definitions = sub_definitions;
 
@@ -2021,7 +2072,13 @@ impl<'a> ModuleConstraintSolver<'a> {
 
 impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     type Node = SmolStr;
-    type InputState = BTreeMap<Namespace, (Definition, BTreeMap<(Namespace, Namespace), EdgeCall>)>;
+    type InputState = BTreeMap<
+        Namespace,
+        (
+            imbl::OrdMap<Parameter, Option<Deferred<Sourced<Type>, Expression>>>,
+            imbl::OrdSet<Option<QualifiedLocation>>,
+        ),
+    >;
     type OutputState = BTreeMap<Namespace, EvaluationState>;
     type AbstractState = (
         ProgramEvaluation<EvaluationState>,
@@ -2152,22 +2209,13 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
             .unwrap_or_default()
             .into_iter()
             .map(|namespace| {
-                let (definition, calls) = analysis_state
-                    .namespace_dependency_graph
-                    .nodes()
-                    .get(namespace)
-                    .map(|namespace_data| {
-                        (
-                            namespace_data.definition.clone(),
-                            analysis_state
-                                .namespace_dependency_graph
-                                .calls(namespace)
-                                .collect(),
-                        )
-                    })
-                    .unwrap_or_default();
+                let (arguments, call_sites) =
+                    analysis_state.namespace_dependency_graph.inputs(&namespace);
 
-                (namespace.clone(), (definition, calls))
+                (
+                    namespace.clone(),
+                    (arguments, call_sites.keys().cloned().collect()),
+                )
             })
             .collect())
     }

@@ -1,7 +1,7 @@
 use crate::EvaluationState;
 use crate::analysis::abstract_state::AbstractState;
 use crate::analysis::lattice::Join;
-use crate::calls::Arguments;
+use crate::calls::{Arguments, BoundArguments};
 use crate::constraint_graph::expressions::{Expression, Parameter};
 use crate::identifiers::Namespace;
 use crate::inference::{
@@ -25,11 +25,11 @@ pub mod type_literal;
 pub struct Call<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> {
     pub target: Arc<Namespace>,
     pub context: S,
-    pub arguments: Arguments,
+    pub arguments: BoundArguments,
 }
 
 impl<S: AbstractState<Key = Namespace, AbstractValue = EvaluationState>> Call<S> {
-    pub fn new(target: Arc<Namespace>, context: S, arguments: Arguments) -> Self {
+    pub fn new(target: Arc<Namespace>, context: S, arguments: BoundArguments) -> Self {
         Self {
             target,
             context,
