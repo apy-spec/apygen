@@ -1179,7 +1179,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                 .map(|(parameter, _)| parameter.clone())
                                 .collect::<Vec<_>>(),
                         )
-                        .unwrap();
+                        .unwrap_or_default();
                     for (parameter, ty_option) in bound_arguments.variables {
                         call_types.insert(parameter.name, ty_option);
                     }
@@ -2147,7 +2147,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     ) -> Result<Self::InputState, Self::Error> {
         Ok(self
             .get_namespaces(&Namespace::Module(node.clone()))
-            .unwrap()
+            .unwrap_or_default()
             .into_iter()
             .map(|namespace| {
                 let (definition, calls) = analysis_state
@@ -2176,7 +2176,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     ) -> Result<Self::OutputState, Self::Error> {
         Ok(self
             .get_namespaces(&Namespace::Module(node.clone()))
-            .unwrap()
+            .unwrap_or_default()
             .into_iter()
             .map(|namespace| {
                 (
