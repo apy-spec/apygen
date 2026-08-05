@@ -1707,16 +1707,23 @@ impl NamespaceDependencyGraph {
         namespace: &Namespace,
     ) -> (
         imbl::OrdMap<Parameter, Option<Deferred<Sourced<Type>, Expression>>>,
-        imbl::OrdMap<QualifiedLocation, ProgramEvaluation<EvaluationState>>,
+        imbl::OrdMap<Option<QualifiedLocation>, ProgramEvaluation<EvaluationState>>,
     ) {
         let mut call_sites = imbl::OrdMap::default();
         let mut arguments = imbl::OrdMap::default();
         if let Some(namespace_data) = self.nodes.get(namespace) {
             arguments.extend(namespace_data.definition.parameters.iter().cloned());
         }
-        for (namespace, edge_call) in self.callers(namespace) {
+        for (caller_namespace, edge_call) in self.callers(namespace) {
             call_sites.insert(
-                QualifiedLocation::new(edge_call.location.clone(), Arc::new(namespace.clone())),
+                if namespace.module_name() == caller_namespace.module_name() {
+                    Some(QualifiedLocation::new(
+                        edge_call.location.clone(),
+                        Arc::new(caller_namespace.clone()),
+                    ))
+                } else {
+                    None
+                },
                 edge_call.context,
             );
             for (parameter, ty) in edge_call.arguments.variables {
