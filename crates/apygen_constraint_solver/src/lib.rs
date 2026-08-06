@@ -2565,16 +2565,16 @@ mod tests {
         indoc! {r##"
         module:
             foo@{module[1:4]} = Inferred(function(module[foo@{1:4}]))
-            one@{module[4:0]} = Inferred(Union[1, 2])
-            two@{module[5:0]} = Inferred(Union[1, 2])
+            one@{module[4:0]} = Inferred(1 ⊔ 2)
+            two@{module[5:0]} = Inferred(1 ⊔ 2)
             #variables = {foo: {module[1:4]}, one: {module[4:0]}, two: {module[5:0]}}
             #raise = {}
             #return = Inferred(None)
         module[foo@{1:4}]:
-            x@{module[foo@{1:4}][1:8]} = Inferred(Union[1, 2])
+            x@{module[foo@{1:4}][1:8]} = Inferred(1 ⊔ 2)
             #variables = {x: {module[foo@{1:4}][1:8]}}
             #raise = {}
-            #return = Inferred(Union[1, 2])
+            #return = Inferred(1 ⊔ 2)
         "##},
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_expressions: &str) {

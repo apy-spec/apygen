@@ -4,9 +4,8 @@ use crate::identifiers::{Location, NamedQualifiedLocation, Namespace, SmolStr};
 use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
-pub use apygen_analysis as analysis;
 use apygen_analysis::abstract_state::AbstractState;
-use apygen_analysis::fmt::{fmt_display_set, fmt_set};
+use apygen_analysis::fmt::{fmt_display_iterator, fmt_display_set, fmt_set};
 use imbl::ordmap::Entry;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
@@ -14,6 +13,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 pub use apy::v1::{GenericKind, ParameterKind};
+pub use apygen_analysis as analysis;
 pub use apygen_identifiers as identifiers;
 pub use apygen_primitives as primitives;
 pub use imbl;
@@ -1157,15 +1157,7 @@ impl StructuralWidth for TypeUnion {
 
 impl Display for TypeUnion {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Union[{}]",
-            self.types
-                .iter()
-                .map(|ty| ty.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
+        fmt_display_iterator(f, self.types.iter(), " ⊔ ")
     }
 }
 
