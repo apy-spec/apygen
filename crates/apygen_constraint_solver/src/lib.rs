@@ -40,7 +40,6 @@ pub use apygen_identifiers as identifiers;
 pub use apygen_inference as inference;
 pub use apygen_primitives as primitives;
 pub use imbl;
-use imbl::shared_ptr::DefaultSharedPtr;
 
 pub mod calls;
 pub mod expressions;

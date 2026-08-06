@@ -1,7 +1,7 @@
 use crate::EvaluationState;
 use crate::analysis::abstract_state::AbstractState;
 use crate::analysis::lattice::Join;
-use crate::calls::{Arguments, BoundArguments};
+use crate::calls::BoundArguments;
 use crate::constraint_graph::expressions::{Expression, Parameter};
 use crate::identifiers::Namespace;
 use crate::inference::{
