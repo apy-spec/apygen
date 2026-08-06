@@ -1,16 +1,15 @@
+use apygen::analysis::rayon::par_dependencies_analysis;
+use apygen::constraint_builder::cfg::identifiers::Namespace;
+use apygen::constraint_builder::constraint_graph::ConstraintGraph;
 use apygen::constraint_builder::constraint_graph::ModuleDependentGraph;
 use apygen::constraint_builder::constraint_graph::graph::dot::ToDot;
 use apygen::constraint_builder::constraint_graph::identifiers::SmolStr;
 use apygen::constraint_builder::{SpecModuleLoader, analyse_program};
 use apygen::constraint_solver::ModuleConstraintSolver;
-use apygen::constraint_solver::analysis::dependencies_analysis;
 use apygen::constraint_solver::analysis::log::LogAnalysisObserver;
 use apygen::converter::v1::convert_apy_v1;
 use apygen::finder::filesystem::{AbsolutePathBuf, LocalFilesystem};
 use apygen::finder::pathfinder::PathFinder;
-use apygen_constraint_builder::cfg::identifiers::Namespace;
-use apygen_constraint_builder::constraint_graph::ConstraintGraph;
-
 use rstest::rstest;
 use std::collections::HashMap;
 use std::fs;
@@ -57,9 +56,10 @@ pub fn analyse_directory(
 
     let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-    let program_evaluation = dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
-        .expect("analysis should work")
-        .program_evaluation;
+    let program_evaluation =
+        par_dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
+            .expect("analysis should work")
+            .program_evaluation;
 
     let apy_v1 = convert_apy_v1(&program_evaluation, rayon::iter::once(&target_module));
 

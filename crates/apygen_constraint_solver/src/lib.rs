@@ -2228,8 +2228,8 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
 mod tests {
     use super::*;
     use crate::inference::BUILTINS_MODULE;
-    use apygen_analysis::dependencies_analysis;
     use apygen_analysis::log::LogAnalysisObserver;
+    use apygen_analysis::rayon::par_dependencies_analysis;
     use apygen_constraint_builder::{ModuleLoader, analyse_program};
     use indoc::indoc;
     use rstest::rstest;
@@ -2293,8 +2293,9 @@ mod tests {
 
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-        let analysis_state = dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
-            .expect("analysis should work");
+        let analysis_state =
+            par_dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
+                .expect("analysis should work");
 
         let actual_expressions = format!("{:#}", analysis_state.program_evaluation);
 
@@ -2592,7 +2593,7 @@ mod tests {
         let solver = ModuleConstraintSolver::new(&dependent_graph);
 
         let mut analysis_state =
-            dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
+            par_dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
                 .expect("analysis should work");
 
         analysis_state.program_evaluation.states = analysis_state
