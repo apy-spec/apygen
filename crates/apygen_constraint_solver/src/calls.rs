@@ -20,6 +20,14 @@ impl BoundArguments {
     }
 }
 
+impl Display for BoundArguments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt_iterator(f, self.variables.iter(), ", ", |f, (identifier, ty)| {
+            write!(f, "{} = {}", identifier.name, ty)
+        })
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum BindError {
     #[error("Missing positional argument")]

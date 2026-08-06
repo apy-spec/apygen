@@ -1884,7 +1884,7 @@ pub fn solve_namespace(
 ) -> Result<
     (
         ProgramEvaluation<EvaluationState>,
-        BTreeMap<(Namespace, Namespace), EdgeCall>,
+        BTreeSet<((Namespace, Namespace), EdgeCall)>,
         BTreeMap<Namespace, Definition>,
     ),
     Infallible,
@@ -1892,11 +1892,11 @@ pub fn solve_namespace(
     let mut abstract_state_proxy = AbstractStateProxy::with_default_proxy(abstract_state);
     let mut namespace_dependency_graph = namespace_dependency_graph.clone();
 
-    let mut calls = BTreeMap::default();
+    let mut calls = BTreeSet::default();
     let mut definitions = BTreeMap::default();
 
     let mut previous_evaluation_state: Option<EvaluationState> = None;
-    let mut previous_calls: BTreeMap<_, _> = namespace_dependency_graph.calls(namespace).collect();
+    let mut previous_calls: BTreeSet<_> = namespace_dependency_graph.calls(namespace).collect();
     loop {
         abstract_state_proxy.insert(namespace.clone(), EvaluationState::default());
 
@@ -1958,7 +1958,7 @@ pub fn solve_namespace(
                     definitions.into_iter().collect(),
                 )
             })
-            .unwrap_or_else(|| (BTreeMap::default(), BTreeMap::default()));
+            .unwrap_or_else(|| (BTreeSet::default(), BTreeMap::default()));
 
         drop(solver_state);
 
@@ -1997,7 +1997,7 @@ pub fn solve_namespace(
                 || {
                     (
                         ProgramEvaluation::default(),
-                        BTreeMap::default(),
+                        BTreeSet::default(),
                         BTreeMap::default(),
                     )
                 },
@@ -2067,7 +2067,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     type OutputState = BTreeMap<Namespace, EvaluationState>;
     type AbstractState = (
         ProgramEvaluation<EvaluationState>,
-        BTreeMap<(Namespace, Namespace), EdgeCall>,
+        BTreeSet<((Namespace, Namespace), EdgeCall)>,
         BTreeMap<Namespace, Definition>,
     );
     type AnalysisState = ModuleConstraintSolverAnalysisState;
@@ -2552,6 +2552,29 @@ mod tests {
             #variables = {x: {module[foo@{1:4}][1:8]}}
             #raise = {}
             #return = Inferred(5)
+        "##},
+    )]
+    #[case::argument_inference_different_calls(
+        indoc! {r##"
+        def foo(x):
+            return x
+
+        one = foo(1)
+        two = foo(2)
+        "##},
+        indoc! {r##"
+        module:
+            foo@{module[1:4]} = Inferred(function(module[foo@{1:4}]))
+            one@{module[4:0]} = Inferred(Union[1, 2])
+            two@{module[5:0]} = Inferred(Union[1, 2])
+            #variables = {foo: {module[1:4]}, one: {module[4:0]}, two: {module[5:0]}}
+            #raise = {}
+            #return = Inferred(None)
+        module[foo@{1:4}]:
+            x@{module[foo@{1:4}][1:8]} = Inferred(Union[1, 2])
+            #variables = {x: {module[foo@{1:4}][1:8]}}
+            #raise = {}
+            #return = Inferred(Union[1, 2])
         "##},
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_expressions: &str) {
