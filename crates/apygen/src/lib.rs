@@ -1,5 +1,5 @@
-use crate::analysis::dependencies_analysis;
 use crate::analysis::log::LogAnalysisObserver;
+use crate::analysis::rayon::par_dependencies_analysis;
 use crate::constraint_builder::constraint_graph::identifiers::SmolStr;
 use crate::constraint_builder::{SpecModuleLoader, analyse_program};
 use crate::constraint_solver::ModuleConstraintSolver;
@@ -53,9 +53,10 @@ pub fn analyse_workdir(
 
     let solver = ModuleConstraintSolver::new(&dependent_graph);
 
-    let program_evaluation = dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
-        .expect("analysis should work")
-        .program_evaluation;
+    let program_evaluation =
+        par_dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
+            .expect("analysis should work")
+            .program_evaluation;
 
     debug!("Modules: {}", dependent_graph.nodes.len());
 
