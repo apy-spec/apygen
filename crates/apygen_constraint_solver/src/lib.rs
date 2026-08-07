@@ -2183,6 +2183,40 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
 
         Ok(new_analysis_state)
     }
+    fn optimise(
+        &self,
+        _analysis_state: &mut Self::AnalysisState,
+        worklist: &mut BTreeSet<Self::Node>,
+    ) -> Result<(), Self::Error> {
+        let mut marked = BTreeSet::new();
+
+        for worklist_node in worklist.iter() {
+            if marked.contains(worklist_node) {
+                continue;
+            }
+
+            let mut to_remove = BTreeSet::from_iter([worklist_node]);
+            while let Some(node) = to_remove.pop_first() {
+                for next_node in self.graph.successor_iter(node) {
+                    if next_node != worklist_node
+                        && self
+                            .graph
+                            .predecessor_iter(next_node)
+                            .all(|predecessor| predecessor == node || marked.contains(predecessor))
+                    {
+                        marked.insert(next_node);
+                        to_remove.insert(next_node);
+                    }
+                }
+            }
+        }
+
+        *worklist = worklist
+            .extract_if(.., |node| !marked.contains(node))
+            .collect();
+
+        Ok(())
+    }
     fn get_input_state(
         &self,
         analysis_state: &Self::AnalysisState,

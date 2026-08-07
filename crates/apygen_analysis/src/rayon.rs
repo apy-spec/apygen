@@ -225,6 +225,8 @@ pub fn par_dependencies_analysis<
 
         worklist = new_worklist;
 
+        analyser.optimise(&mut analysis_state, &mut worklist)?;
+
         observer.after_iteration(&analysis_state, &worklist);
     }
 

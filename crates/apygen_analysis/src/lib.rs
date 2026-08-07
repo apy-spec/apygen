@@ -190,6 +190,13 @@ pub trait DependencyGraphAnalyser {
         analysis_state: &Self::AnalysisState,
         node: &Self::Node,
     ) -> Result<Self::OutputState, Self::Error>;
+    fn optimise(
+        &self,
+        _analysis_state: &mut Self::AnalysisState,
+        _worklist: &mut BTreeSet<Self::Node>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 pub fn dependencies_analysis<
@@ -248,6 +255,8 @@ pub fn dependencies_analysis<
         analysis_state = new_analysis_state;
 
         observer.after_node_analysis(&analysis_state, &worklist, &node);
+
+        analyser.optimise(&mut analysis_state, &mut worklist)?;
 
         observer.after_iteration(&analysis_state, &worklist);
     }
