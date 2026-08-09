@@ -227,7 +227,7 @@ macro_rules! impl_graph_methods {
         fn get_mut_node(&mut self, node: &$node) -> &mut $graph_data {
             self.nodes.get_mut(node).expect("node should exist")
         }
-        pub fn edge_entry(&mut self, (from, to): ($node, $node)) -> Option<$entry>
+        pub fn get_edge_entry(&mut self, (from, to): ($node, $node)) -> Option<$entry>
         where
             $node: Clone,
         {
@@ -239,6 +239,13 @@ macro_rules! impl_graph_methods {
             self.get_mut_node(&to).add_predecessor(from.clone());
 
             Some(self.edges.entry((from, to)))
+        }
+        pub fn edge_entry(&mut self, edge: ($node, $node)) -> $entry
+        where
+            $node: Clone,
+        {
+            self.get_edge_entry(edge)
+                .expect("both node should exist before getting edge entry")
         }
         pub fn get_mut_edge_data(&mut self, edge: &($node, $node)) -> Option<&mut $edge_data> {
             self.edges.get_mut(edge)

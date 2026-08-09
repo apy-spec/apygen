@@ -1876,10 +1876,7 @@ pub fn create_constraint_graph(
     for ((from, to), guards) in environment.edges {
         graph.get_or_insert_node(from.clone(), imbl::OrdSet::default);
         graph.get_or_insert_node(to.clone(), imbl::OrdSet::default);
-        graph
-            .edge_entry((from, to))
-            .expect("Edge should exists")
-            .or_insert(guards);
+        graph.edge_entry((from, to)).or_insert(guards);
     }
 
     let constraint_graph = ConstraintGraph::new(

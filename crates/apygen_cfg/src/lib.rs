@@ -167,7 +167,6 @@ impl<'s> Cfg<'s> {
         cfg.graph.insert_node(ProgramPoint::Exit, None);
         cfg.graph
             .edge_entry((ProgramPoint::Entry, ProgramPoint::Exit))
-            .expect("Edge should be inserted successfully")
             .insert_entry(BTreeSet::default());
         cfg
     }
