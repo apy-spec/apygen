@@ -2267,28 +2267,34 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     ) -> Result<Self::AnalysisState, Self::Error> {
         let mut new_analysis_state = analysis_state.clone();
 
-        for (node, definition) in abstract_state.nodes {
-            new_analysis_state
-                .namespace_dependency_graph
-                .graph
-                .insert_node(node, definition);
-        }
-        for (from, tos) in abstract_state.dependents {
-            for (to, edge_data) in tos {
-                if let Some(edge_data) = edge_data {
+        rayon::scope(|scope| {
+            scope.spawn(|_| {
+                for (node, definition) in abstract_state.nodes {
                     new_analysis_state
                         .namespace_dependency_graph
                         .graph
-                        .edge_entry((from.clone(), to.clone()))
-                        .or_default()
-                        .extend(edge_data);
+                        .insert_node(node, definition);
                 }
-            }
-        }
-        new_analysis_state
-            .program_evaluation
-            .states
-            .extend(abstract_state.program_evaluation.states);
+                for (from, tos) in abstract_state.dependents {
+                    for (to, edge_data) in tos {
+                        if let Some(edge_data) = edge_data {
+                            new_analysis_state
+                                .namespace_dependency_graph
+                                .graph
+                                .edge_entry((from.clone(), to.clone()))
+                                .or_default()
+                                .extend(edge_data);
+                        }
+                    }
+                }
+            });
+            scope.spawn(|_| {
+                new_analysis_state
+                    .program_evaluation
+                    .states
+                    .extend(abstract_state.program_evaluation.states);
+            });
+        });
 
         Ok(new_analysis_state)
     }
