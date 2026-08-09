@@ -1627,9 +1627,7 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         to: &Self::Node,
         abstract_state: &Self::AbstractState,
     ) -> Result<Option<Self::AbstractState>, Self::Error> {
-        let edge = (*from, *to);
-
-        let Some(edge_kinds) = self.cfg.graph.get_edge_data(&edge) else {
+        let Some(edge_kinds) = self.cfg.graph.get_edge_data(&(*from, *to)) else {
             return Ok(None);
         };
 

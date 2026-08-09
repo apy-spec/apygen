@@ -7,9 +7,9 @@ use crate::constraint_graph::expressions::{
     BinaryOperator, Expression, ExpressionAnnotated, ExpressionAttribute, ExpressionBinary,
     ExpressionCall, ExpressionClass, ExpressionFunction, ExpressionImport, ExpressionOverride,
     ExpressionSubscript, ExpressionUnary, ExpressionVariableDefinition,
-    ExpressionVariableReference, Namespace, SmolStr,
+    ExpressionVariableReference, Namespace, Parameter, SmolStr,
 };
-use crate::constraint_graph::graph::Graph;
+use crate::constraint_graph::graph::{Graph, ImmutableHashGraph};
 use crate::constraint_graph::{
     Constraint, ConstraintGraph, ConstraintNode, Guard, ModuleDependentGraph,
 };
@@ -34,7 +34,6 @@ use thiserror::Error;
 
 pub use apygen_analysis as analysis;
 pub use apygen_constraint_graph as constraint_graph;
-use apygen_constraint_graph::expressions::Parameter;
 pub use apygen_identifiers as identifiers;
 pub use apygen_inference as inference;
 pub use apygen_primitives as primitives;
@@ -685,10 +684,9 @@ impl<'a> ExpressionEvaluator<'a> {
                 let bound_arguments = arguments
                     .bind(
                         self.namespace_dependency_graph
-                            .nodes()
-                            .get(&function_namespace)
+                            .graph
+                            .get_node_data(&function_namespace)
                             .unwrap()
-                            .definition
                             .parameters
                             .iter()
                             .map(|(parameter, _)| parameter.clone())
@@ -1302,9 +1300,11 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
     ) -> Result<Option<Self::AbstractState>, Self::Error> {
         let (mut new_abstract_state, calls, definitions) = abstract_state.clone();
 
-        let edge = (from.clone(), to.clone());
-
-        let guards = self.constraint_graph.graph.get_edge_data(&edge).unwrap();
+        let guards = self
+            .constraint_graph
+            .graph
+            .get_edge_data(&(from.clone(), to.clone()))
+            .unwrap();
 
         let mut should_ignore = !guards.is_empty();
 
@@ -1588,17 +1588,9 @@ pub enum EdgeKind {
     Call(EdgeCall),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct NamespaceData {
-    pub definition: Definition,
-    pub dependents: imbl::OrdSet<Namespace>,
-    pub dependencies: imbl::OrdSet<Namespace>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct NamespaceDependencyGraph {
-    nodes: imbl::HashMap<Namespace, NamespaceData>,
-    edges: imbl::HashMap<(Namespace, Namespace), imbl::OrdSet<EdgeKind>>,
+    pub graph: ImmutableHashGraph<Namespace, Definition, imbl::OrdSet<EdgeKind>>,
 }
 
 impl NamespaceDependencyGraph {
@@ -1611,8 +1603,12 @@ impl NamespaceDependencyGraph {
         calls: impl IntoIterator<Item = ((Namespace, Namespace), EdgeCall)>,
     ) -> Self {
         let mut new_graph = self.clone();
-        for ((dependency, namespace), call) in calls {
-            new_graph.add_dependency(dependency, namespace.clone(), EdgeKind::Call(call));
+        for (edge, call) in calls {
+            new_graph
+                .graph
+                .edge_entry(edge)
+                .or_default()
+                .insert(EdgeKind::Call(call));
         }
         new_graph
     }
@@ -1622,21 +1618,21 @@ impl NamespaceDependencyGraph {
         sub_definitions: impl IntoIterator<Item = (Namespace, Definition)>,
     ) -> Self {
         let mut new_graph = self.clone();
+        let mut namespaces = Vec::new();
         for (namespace, definition) in sub_definitions {
-            new_graph.add_dependency(
-                namespace
-                    .parent()
-                    .expect("should always exist")
-                    .as_ref()
-                    .clone(),
-                namespace.clone(),
-                EdgeKind::Definition,
-            );
             new_graph
-                .nodes
-                .entry(namespace.clone())
-                .or_default()
-                .definition = definition.clone();
+                .graph
+                .insert_node(namespace.clone(), definition.clone());
+            namespaces.push(namespace);
+        }
+        for namespace in namespaces {
+            if let Some(parent_namespace) = namespace.parent() {
+                new_graph
+                    .graph
+                    .edge_entry((parent_namespace.as_ref().clone(), namespace))
+                    .or_default()
+                    .insert(EdgeKind::Definition);
+            }
         }
         new_graph
     }
@@ -1645,51 +1641,39 @@ impl NamespaceDependencyGraph {
         &self,
         namespace: &Namespace,
     ) -> impl Iterator<Item = ((Namespace, Namespace), EdgeCall)> {
-        self.nodes
-            .get(namespace)
-            .into_iter()
-            .flat_map(move |namespace_data| {
-                namespace_data
-                    .dependencies
-                    .iter()
-                    .flat_map(move |dependency| {
-                        self.edges
-                            .get(&(dependency.clone(), namespace.clone()))
-                            .into_iter()
-                            .flat_map(move |edge_kinds| {
-                                edge_kinds
-                                    .iter()
-                                    .filter_map(move |edge_kind| match edge_kind {
-                                        EdgeKind::Definition => None,
-                                        EdgeKind::Call(call) => Some((
-                                            (dependency.clone(), namespace.clone()),
-                                            call.clone(),
-                                        )),
-                                    })
+        self.graph
+            .predecessors(namespace)
+            .flat_map(move |dependency| {
+                self.graph
+                    .get_edge_data(&(dependency.clone(), namespace.clone()))
+                    .into_iter()
+                    .flat_map(move |edge_kinds| {
+                        edge_kinds
+                            .iter()
+                            .filter_map(move |edge_kind| match edge_kind {
+                                EdgeKind::Definition => None,
+                                EdgeKind::Call(call) => {
+                                    Some(((dependency.clone(), namespace.clone()), call.clone()))
+                                }
                             })
                     })
             })
     }
 
     pub fn callers(&self, namespace: &Namespace) -> impl Iterator<Item = (Namespace, EdgeCall)> {
-        self.nodes
-            .get(namespace)
-            .into_iter()
-            .flat_map(move |namespace_data| {
-                namespace_data.dependents.iter().flat_map(move |dependent| {
-                    self.edges
-                        .get(&(namespace.clone(), dependent.clone()))
-                        .into_iter()
-                        .flat_map(move |edge_kinds| {
-                            edge_kinds
-                                .iter()
-                                .filter_map(move |edge_kind| match edge_kind {
-                                    EdgeKind::Definition => None,
-                                    EdgeKind::Call(call) => Some((dependent.clone(), call.clone())),
-                                })
+        self.graph.successors(namespace).flat_map(move |dependent| {
+            self.graph
+                .get_edge_data(&(namespace.clone(), dependent.clone()))
+                .into_iter()
+                .flat_map(move |edge_kinds| {
+                    edge_kinds
+                        .iter()
+                        .filter_map(move |edge_kind| match edge_kind {
+                            EdgeKind::Definition => None,
+                            EdgeKind::Call(call) => Some((dependent.clone(), call.clone())),
                         })
                 })
-            })
+        })
     }
 
     pub fn inputs(
@@ -1701,8 +1685,8 @@ impl NamespaceDependencyGraph {
     ) {
         let mut call_sites = imbl::OrdMap::default();
         let mut arguments = imbl::OrdMap::default();
-        if let Some(namespace_data) = self.nodes.get(namespace) {
-            arguments.extend(namespace_data.definition.parameters.iter().cloned());
+        if let Some(definition) = self.graph.get_node_data(namespace) {
+            arguments.extend(definition.parameters.iter().cloned());
         }
         for (caller_namespace, edge_call) in self.callers(namespace) {
             call_sites.insert(
@@ -1747,94 +1731,22 @@ impl NamespaceDependencyGraph {
         &self,
         namespace: &Namespace,
     ) -> impl Iterator<Item = (Namespace, Definition)> {
-        self.nodes
-            .get(namespace)
-            .into_iter()
-            .flat_map(|namespace_data| {
-                namespace_data.dependents.iter().filter_map(|dependent| {
-                    self.edges
-                        .get(&(namespace.clone(), dependent.clone()))
-                        .and_then(|edge_kinds| {
-                            if edge_kinds
-                                .iter()
-                                .any(|edge_kind| matches!(edge_kind, EdgeKind::Definition))
-                            {
-                                self.nodes.get(dependent).map(|dependent_namespace_data| {
-                                    (
-                                        dependent.clone(),
-                                        dependent_namespace_data.definition.clone(),
-                                    )
-                                })
-                            } else {
-                                None
-                            }
-                        })
+        self.graph.successors(namespace).flat_map(|dependent| {
+            self.graph
+                .get_edge_data(&(namespace.clone(), dependent.clone()))
+                .and_then(|edge_kinds| {
+                    if edge_kinds
+                        .iter()
+                        .any(|edge_kind| matches!(edge_kind, EdgeKind::Definition))
+                    {
+                        self.graph
+                            .get_node_data(dependent)
+                            .map(|definition| (dependent.clone(), definition.clone()))
+                    } else {
+                        None
+                    }
                 })
-            })
-    }
-}
-
-impl Default for NamespaceDependencyGraph {
-    fn default() -> Self {
-        Self {
-            nodes: imbl::HashMap::default(),
-            edges: imbl::HashMap::default(),
-        }
-    }
-}
-
-impl NamespaceDependencyGraph {
-    pub fn nodes(&self) -> &imbl::HashMap<Namespace, NamespaceData> {
-        &self.nodes
-    }
-    pub fn edges(&self) -> &imbl::HashMap<(Namespace, Namespace), imbl::OrdSet<EdgeKind>> {
-        &self.edges
-    }
-    pub fn add_dependency(&mut self, dependency: Namespace, node: Namespace, edge_kind: EdgeKind) {
-        self.nodes
-            .entry(dependency.clone())
-            .or_default()
-            .dependents
-            .insert(node.clone());
-        self.nodes
-            .entry(node.clone())
-            .or_default()
-            .dependencies
-            .insert(dependency.clone());
-        self.edges
-            .entry((dependency, node))
-            .or_default()
-            .insert(edge_kind);
-    }
-    pub fn remove_dependency(&mut self, dependency: &Namespace, node: &Namespace) {
-        self.edges.remove(&(dependency.clone(), node.clone()));
-        if let Some(entry) = self.nodes.get_mut(dependency) {
-            entry.dependents.remove(node);
-        }
-        if let Some(entry) = self.nodes.get_mut(node) {
-            entry.dependencies.remove(dependency);
-        }
-    }
-}
-
-impl Display for NamespaceDependencyGraph {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{ nodes: {:?}, edges: {:?} }}", self.nodes, self.edges)
-    }
-}
-
-impl Graph for NamespaceDependencyGraph {
-    type Node = Namespace;
-    type Edge<'e> = &'e (Namespace, Namespace);
-    type NodeData = NamespaceData;
-    type EdgeData = imbl::OrdSet<EdgeKind>;
-
-    fn nodes(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
-        self.nodes.iter()
-    }
-
-    fn edges(&self) -> impl Iterator<Item = (Self::Edge<'_>, &Self::EdgeData)> {
-        self.edges.iter()
+        })
     }
 }
 
@@ -1854,9 +1766,12 @@ pub fn solve_namespace(
 > {
     let mut abstract_state_proxy = AbstractStateProxy::with_default_proxy(abstract_state);
     let mut namespace_dependency_graph = namespace_dependency_graph.clone();
+    namespace_dependency_graph
+        .graph
+        .insert_node(namespace.clone(), definition.clone());
 
     let mut calls = BTreeSet::default();
-    let mut definitions = BTreeMap::default();
+    let mut definitions = BTreeMap::from_iter([(namespace.clone(), definition.clone())]);
 
     let mut previous_evaluation_state: Option<EvaluationState> = None;
     let mut previous_calls: BTreeSet<_> = namespace_dependency_graph.calls(namespace).collect();
@@ -1938,8 +1853,8 @@ pub fn solve_namespace(
         }
 
         namespace_dependency_graph = namespace_dependency_graph
-            .with_calls(new_calls.clone())
-            .with_sub_definitions(new_definitions.clone());
+            .with_sub_definitions(new_definitions.clone())
+            .with_calls(new_calls.clone());
 
         let (sub_program_evaluation, sub_calls, sub_definitions) = constraint_graph
             .subgraphs
@@ -1961,7 +1876,7 @@ pub fn solve_namespace(
                     (
                         ProgramEvaluation::default(),
                         BTreeSet::default(),
-                        BTreeMap::default(),
+                        BTreeMap::from_iter([(namespace.clone(), definition.clone())]),
                     )
                 },
                 |(mut program_evaluation_acc, mut calls_acc, mut definitions_acc),
@@ -1977,8 +1892,8 @@ pub fn solve_namespace(
 
         abstract_state_proxy.proxy.states = sub_program_evaluation.states;
         namespace_dependency_graph = namespace_dependency_graph
-            .with_calls(sub_calls.clone())
-            .with_sub_definitions(sub_definitions.clone());
+            .with_sub_definitions(sub_definitions.clone())
+            .with_calls(sub_calls.clone());
 
         calls = sub_calls;
         definitions = sub_definitions;
@@ -2048,16 +1963,12 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
             .get_namespaces(&Namespace::Module(node.clone()))
             .unwrap()
             .into_iter()
-            .filter_map(|namespace| {
-                Some(
-                    &analysis_state
-                        .namespace_dependency_graph
-                        .nodes()
-                        .get(namespace)?
-                        .dependencies,
-                )
+            .flat_map(|namespace| {
+                analysis_state
+                    .namespace_dependency_graph
+                    .graph
+                    .predecessors(namespace)
             })
-            .flatten()
             .filter_map(|dependency_namespace| {
                 let dependency_module_name = dependency_namespace.module_name();
                 if node != dependency_module_name {
@@ -2078,16 +1989,12 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
             .get_namespaces(&Namespace::Module(node.clone()))
             .unwrap()
             .into_iter()
-            .filter_map(|namespace| {
-                Some(
-                    &analysis_state
-                        .namespace_dependency_graph
-                        .nodes()
-                        .get(namespace)?
-                        .dependents,
-                )
+            .flat_map(|namespace| {
+                analysis_state
+                    .namespace_dependency_graph
+                    .graph
+                    .successors(namespace)
             })
-            .flatten()
             .filter_map(|dependent_namespace| {
                 let dependent_module_name = dependent_namespace.module_name();
                 if node != dependent_module_name {
@@ -2103,12 +2010,24 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
         let mut analysis_state = ModuleConstraintSolverAnalysisState::default();
         for (module_name, dependent_module_names) in &self.graph.dependents {
+            analysis_state
+                .namespace_dependency_graph
+                .graph
+                .get_or_insert_default_node(Namespace::Module(module_name.clone()));
             for dependent_module_name in dependent_module_names {
-                analysis_state.namespace_dependency_graph.add_dependency(
-                    Namespace::Module(module_name.clone()),
-                    Namespace::Module(dependent_module_name.clone()),
-                    EdgeKind::Definition,
-                );
+                analysis_state
+                    .namespace_dependency_graph
+                    .graph
+                    .get_or_insert_default_node(Namespace::Module(dependent_module_name.clone()));
+                analysis_state
+                    .namespace_dependency_graph
+                    .graph
+                    .edge_entry((
+                        Namespace::Module(module_name.clone()),
+                        Namespace::Module(dependent_module_name.clone()),
+                    ))
+                    .or_default()
+                    .insert(EdgeKind::Definition);
             }
         }
         Ok(analysis_state)
@@ -2138,8 +2057,8 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
 
         new_analysis_state.namespace_dependency_graph = new_analysis_state
             .namespace_dependency_graph
-            .with_calls(new_calls)
-            .with_sub_definitions(new_definitions);
+            .with_sub_definitions(new_definitions)
+            .with_calls(new_calls);
         new_analysis_state
             .program_evaluation
             .states

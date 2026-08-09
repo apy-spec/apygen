@@ -139,7 +139,7 @@ impl<'n, N> Edge<'n> for &'n (N, N) {
 
 pub trait Graph {
     type Node: Eq;
-    type Edge<'n>: Edge<'n, Node = Self::Node> + Eq
+    type Edge<'n>: Edge<'n, Node = Self::Node>
     where
         Self: 'n;
     type NodeData;
@@ -161,9 +161,9 @@ pub trait Graph {
         }
         None
     }
-    fn get_edge_data<'n>(&'n self, edge: Self::Edge<'n>) -> Option<&'n Self::EdgeData> {
+    fn get_edge_data<'a: 'n, 'n>(&'a self, edge: Self::Edge<'n>) -> Option<&'a Self::EdgeData> {
         for (e, edge_data) in self.edges() {
-            if e == edge {
+            if e.from() == edge.from() && e.to() == edge.to() {
                 return Some(edge_data);
             }
         }
@@ -302,7 +302,7 @@ macro_rules! impl_graph {
         fn get_node_data(&self, node: &Self::Node) -> Option<&Self::NodeData> {
             self.nodes.get(node).map(|graph_data| graph_data.data())
         }
-        fn get_edge_data<'n>(&'n self, edge: Self::Edge<'n>) -> Option<&'n Self::EdgeData> {
+        fn get_edge_data<'a: 'n, 'n>(&'a self, edge: Self::Edge<'n>) -> Option<&'a Self::EdgeData> {
             self.edges.get(edge)
         }
         fn successors(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
