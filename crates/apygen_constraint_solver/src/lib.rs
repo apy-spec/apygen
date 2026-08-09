@@ -1552,6 +1552,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 for next_node in self.constraint_graph.graph.successors(node) {
                     if next_node != worklist_node
                         && *next_node != ConstraintNode::Entry
+                        && !marked.contains(next_node)
                         && analysis_state.abstract_states.contains_key(next_node)
                         && self
                             .constraint_graph
@@ -2364,6 +2365,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
                         continue;
                     };
                     if next_node != worklist_node
+                        && !marked.contains(next_node)
                         && analysis_state
                             .namespace_dependency_graph
                             .graph
