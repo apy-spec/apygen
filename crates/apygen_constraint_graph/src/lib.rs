@@ -1,18 +1,19 @@
 use crate::analysis::fmt::fmt_iterator;
-use crate::analysis::lattice::Join;
 use crate::expressions::{Expression, ExpressionVariableDefinition};
-use crate::graph::Graph;
-use crate::graph::dot::{DiGraphDot, escape_dot};
+use crate::graph::dot::{
+    Dot, escape_dot, fmt_digraph, fmt_display_edge, fmt_display_labelled_edge, fmt_display_node,
+    fmt_labelled_node,
+};
+use crate::graph::{Graph, OrdGraph};
 use crate::identifiers::{Location, Namespace, SmolStr};
 use imbl::ordmap::Entry;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{self, Debug, Display, Formatter};
 use std::sync::Arc;
 
 pub use apygen_analysis as analysis;
 pub use apygen_graph as graph;
 pub use apygen_identifiers as identifiers;
 pub use apygen_primitives as primitives;
-
 pub mod expressions;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -117,7 +118,7 @@ pub enum ConstraintNode {
 }
 
 impl Display for ConstraintNode {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             ConstraintNode::Entry => f.write_str("Entry"),
             ConstraintNode::Constraint { location, id } => {
@@ -139,139 +140,52 @@ impl Display for ConstraintNode {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConstraintGraph {
+    pub graph: OrdGraph<ConstraintNode, imbl::OrdSet<Constraint>, imbl::OrdSet<Guard>>,
     pub subgraphs: imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
-    pub nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
-    pub edges: imbl::OrdMap<ConstraintNode, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>>,
 }
 
 impl ConstraintGraph {
     pub fn new(
+        graph: OrdGraph<ConstraintNode, imbl::OrdSet<Constraint>, imbl::OrdSet<Guard>>,
         subgraphs: imbl::OrdMap<Arc<Namespace>, ConstraintGraph>,
-        nodes: imbl::OrdMap<ConstraintNode, imbl::OrdSet<Constraint>>,
-        edges: imbl::OrdMap<ConstraintNode, imbl::OrdMap<ConstraintNode, imbl::OrdSet<Guard>>>,
     ) -> Self {
-        Self {
-            subgraphs,
-            nodes,
-            edges,
-        }
+        Self { graph, subgraphs }
     }
+}
 
-    pub fn add_edge(
-        &mut self,
-        from: ConstraintNode,
-        to: ConstraintNode,
-        guards: imbl::OrdSet<Guard>,
-    ) {
-        match self.edges.entry(from.clone()).or_default().entry(to) {
-            Entry::Occupied(entry) => {
-                entry.into_mut().extend(guards);
+impl Dot for ConstraintGraph {
+    fn fmt(&self, f: &mut Formatter<'_>, name: &str) -> fmt::Result {
+        fmt_digraph(f, &name, |f| {
+            for (node, constraints) in self.graph.nodes() {
+                if !constraints.is_empty() {
+                    fmt_labelled_node(
+                        f,
+                        |f| write!(f, "{}", &escape_dot(&node.to_string())),
+                        |f| {
+                            fmt_iterator(f, constraints.iter(), " ∧ ", |f, constraint| {
+                                write!(f, "{}", escape_dot(&constraint.to_string()))
+                            })
+                        },
+                    )?;
+                } else {
+                    fmt_display_node(f, node)?;
+                }
             }
-            Entry::Vacant(entry) => {
-                entry.insert(guards);
+            for (edge, guards) in self.graph.edges() {
+                if guards.is_empty() {
+                    fmt_display_edge(f, edge)?;
+                } else {
+                    for guard in guards {
+                        fmt_display_labelled_edge(f, edge, guard)?;
+                    }
+                }
             }
-        }
-    }
-
-    pub fn exists(&self, from: &ConstraintNode, to: &ConstraintNode) -> bool {
-        self.edges.get(from).and_then(|tos| tos.get(to)).is_some()
+            Ok(())
+        })
     }
 }
 
-impl Join for ConstraintGraph {
-    // Manual implementation to avoid macro recursion
-    fn join(&self, other: &Self) -> Self {
-        Self::new(
-            self.subgraphs.join(&other.subgraphs),
-            self.nodes.join(&other.nodes),
-            self.edges.join(&other.edges),
-        )
-    }
-}
-
-impl Graph for ConstraintGraph {
-    type Node = ConstraintNode;
-    type NodeData = imbl::OrdSet<Constraint>;
-    type EdgeData = imbl::OrdSet<Guard>;
-
-    fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
-        self.nodes.iter()
-    }
-
-    fn edge_data_iter(
-        &self,
-    ) -> impl Iterator<Item = ((&Self::Node, &Self::Node), &Self::EdgeData)> {
-        self.edges
-            .iter()
-            .flat_map(|(from, tos)| tos.iter().map(move |(to, guards)| ((from, to), guards)))
-    }
-
-    fn node_iter(&self) -> impl Iterator<Item = &Self::Node> {
-        self.nodes.keys()
-    }
-
-    fn edge_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::Node)> {
-        self.edges
-            .iter()
-            .flat_map(|(from, tos)| tos.keys().map(move |to| (from, to)))
-    }
-
-    fn get_node_data(&self, node: &Self::Node) -> Option<&Self::NodeData> {
-        self.nodes.get(node)
-    }
-
-    fn get_edge_data(&self, (from, to): (&Self::Node, &Self::Node)) -> Option<&Self::EdgeData> {
-        self.edges.get(from).and_then(|tos| tos.get(to))
-    }
-
-    fn successor_iter(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
-        self.edges.get(node).into_iter().flat_map(|tos| tos.keys())
-    }
-}
-
-impl DiGraphDot for ConstraintGraph {
-    fn fmt_node(
-        &self,
-        f: &mut Formatter<'_>,
-        node: &Self::Node,
-        node_data: &Self::NodeData,
-    ) -> std::fmt::Result {
-        write!(f, "    \"{}\" [label=\"", escape_dot(&node.to_string()))?;
-        fmt_iterator(f, node_data.iter(), " ∧ ", |f, constraint| {
-            write!(f, "{}", escape_dot(&constraint.to_string()))
-        })?;
-        f.write_str("\"];\n")
-    }
-
-    fn fmt_edge(
-        &self,
-        f: &mut Formatter<'_>,
-        (from, to): (&Self::Node, &Self::Node),
-        edge_data: &Self::EdgeData,
-    ) -> std::fmt::Result {
-        if edge_data.is_empty() {
-            write!(
-                f,
-                "    \"{}\" -> \"{}\";\n",
-                escape_dot(&from.to_string()),
-                escape_dot(&to.to_string()),
-            )?;
-        } else {
-            for guard in edge_data {
-                write!(
-                    f,
-                    "    \"{}\" -> \"{}\" [label=\"{}\"];\n",
-                    escape_dot(&from.to_string()),
-                    escape_dot(&to.to_string()),
-                    escape_dot(&guard.to_string())
-                )?;
-            }
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModuleDependentGraph {
     pub nodes: imbl::OrdMap<SmolStr, ConstraintGraph>,
     pub dependents: imbl::OrdMap<SmolStr, imbl::OrdSet<SmolStr>>,
@@ -332,59 +246,18 @@ impl Display for ModuleDependentGraph {
     }
 }
 
-impl Graph for ModuleDependentGraph {
-    type Node = SmolStr;
-    type NodeData = ConstraintGraph;
-    type EdgeData = ();
-
-    fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
-        self.nodes.iter()
-    }
-
-    fn edge_data_iter(
-        &self,
-    ) -> impl Iterator<Item = ((&Self::Node, &Self::Node), &Self::EdgeData)> {
-        self.dependents
-            .iter()
-            .flat_map(|(from, tos)| tos.iter().map(move |to| ((from, to), &())))
-    }
-
-    fn node_iter(&self) -> impl Iterator<Item = &Self::Node> {
-        self.nodes.keys()
-    }
-
-    fn edge_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::Node)> {
-        self.dependents
-            .iter()
-            .flat_map(|(from, tos)| tos.iter().map(move |to| (from, to)))
-    }
-
-    fn get_node_data(&self, node: &Self::Node) -> Option<&Self::NodeData> {
-        self.nodes.get(node)
-    }
-}
-
-impl DiGraphDot for ModuleDependentGraph {
-    fn fmt_node(
-        &self,
-        f: &mut Formatter<'_>,
-        node: &Self::Node,
-        _node_data: &Self::NodeData,
-    ) -> std::fmt::Result {
-        write!(f, "    \"{}\";\n", escape_dot(&node.to_string()))
-    }
-
-    fn fmt_edge(
-        &self,
-        f: &mut Formatter<'_>,
-        (from, to): (&Self::Node, &Self::Node),
-        _edge_data: &Self::EdgeData,
-    ) -> std::fmt::Result {
-        write!(
-            f,
-            "    \"{}\" -> \"{}\";\n",
-            escape_dot(&from.to_string()),
-            escape_dot(&to.to_string())
-        )
+impl Dot for ModuleDependentGraph {
+    fn fmt(&self, f: &mut Formatter<'_>, name: &str) -> fmt::Result {
+        fmt_digraph(f, &name, |f| {
+            for (node, _) in &self.nodes {
+                fmt_display_node(f, node)?;
+            }
+            for (from, tos) in &self.dependents {
+                for to in tos {
+                    fmt_display_edge(f, &(from.clone(), to.clone()))?;
+                }
+            }
+            Ok(())
+        })
     }
 }

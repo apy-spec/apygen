@@ -24,11 +24,15 @@ digraph "DependentGraph" {
     "types" -> "builtins";
 }
 digraph "simple_function_call" {
+    "Entry";
     "Constraint()" [label="#return(None)"];
     "Constraint(location=1:4)" [label="#function(simple_function_call[add_two@{1:4}](x@{simple_function_call[add_two@{1:4}][1:12]}: #annotated(int), y@{simple_function_call[add_two@{1:4}][1:20]}: #annotated(int)) -> #annotated(int)) ⊑ add_two@{simple_function_call[1:4]} ∧ #defined(add_two@{simple_function_call[1:4]})"];
     "Constraint(location=4:0)" [label="#override(previous=#annotated(int), new=3) ⊑ a@{simple_function_call[4:0]} ∧ #defined(a@{simple_function_call[4:0]})"];
     "Constraint(location=5:0)" [label="#override(previous=#annotated(int), new=4) ⊑ b@{simple_function_call[5:0]} ∧ #defined(b@{simple_function_call[5:0]})"];
     "Constraint(location=6:0)" [label="(add_two)(a, b) ⊑ result@{simple_function_call[6:0]} ∧ #defined(result@{simple_function_call[6:0]})"];
+    "TypeExit";
+    "ExceptionExit";
+    "Exit";
     "Entry" -> "Constraint(location=1:4)" [label="#succeed(#function(simple_function_call[add_two@{1:4}](x@{simple_function_call[add_two@{1:4}][1:12]}: #annotated(int), y@{simple_function_call[add_two@{1:4}][1:20]}: #annotated(int)) -> #annotated(int)))"];
     "Entry" -> "ExceptionExit" [label="#raise(#function(simple_function_call[add_two@{1:4}](x@{simple_function_call[add_two@{1:4}][1:12]}: #annotated(int), y@{simple_function_call[add_two@{1:4}][1:20]}: #annotated(int)) -> #annotated(int)))"];
     "Constraint()" -> "TypeExit";
@@ -44,7 +48,11 @@ digraph "simple_function_call" {
     "ExceptionExit" -> "Exit";
 }
 digraph "simple_function_call[add_two@{1:4}]" {
+    "Entry";
     "Constraint(location=2:4)" [label="#return((x) + (y))"];
+    "TypeExit";
+    "ExceptionExit";
+    "Exit";
     "Entry" -> "Constraint(location=2:4)" [label="#succeed((x) + (y))"];
     "Entry" -> "ExceptionExit" [label="#raise((x) + (y))"];
     "Constraint(location=2:4)" -> "TypeExit";

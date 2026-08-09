@@ -1,5 +1,4 @@
-use crate::Graph;
-use std::collections::BTreeMap;
+use crate::Edge;
 use std::fmt::{self, Display, Formatter};
 
 pub fn escape_dot(string: &str) -> String {
@@ -19,7 +18,7 @@ struct ToDotDisplay<'a, T> {
     dot: &'a T,
 }
 
-impl<'a, T: Dot> fmt::Display for ToDotDisplay<'a, T> {
+impl<'a, T: Dot> Display for ToDotDisplay<'a, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         T::fmt(self.dot, f, self.name)
     }
@@ -31,65 +30,100 @@ impl<T: Dot> ToDot for T {
     }
 }
 
-pub trait DiGraphDot: Graph<Node: Ord> {
-    fn fmt_node(
-        &self,
-        f: &mut Formatter<'_>,
-        node: &Self::Node,
-        node_data: &Self::NodeData,
-    ) -> fmt::Result;
-    fn fmt_edge(
-        &self,
-        f: &mut Formatter<'_>,
-        edge: (&Self::Node, &Self::Node),
-        edge_data: &Self::EdgeData,
-    ) -> fmt::Result;
+pub fn fmt_digraph(
+    f: &mut Formatter<'_>,
+    name: &impl Display,
+    fmt_lines: impl Fn(&mut Formatter<'_>) -> fmt::Result,
+) -> fmt::Result {
+    write!(f, "digraph \"{}\" {{\n", name)?;
+    fmt_lines(f)?;
+    f.write_str("}\n")
 }
 
-impl<T: DiGraphDot> Dot for T {
-    fn fmt(&self, f: &mut Formatter<'_>, name: &str) -> fmt::Result {
-        let node_datas = self.node_data_iter().collect::<BTreeMap<_, _>>();
-        let edge_datas = self.edge_data_iter().collect::<BTreeMap<_, _>>();
-
-        write!(f, "digraph \"{}\" {{\n", name)?;
-        for (node, data) in node_datas {
-            self.fmt_node(f, node, data)?;
-        }
-        for (edge, edge_data) in edge_datas {
-            self.fmt_edge(f, edge, edge_data)?;
-        }
-        f.write_str("}\n")
-    }
+pub fn fmt_node(
+    f: &mut Formatter<'_>,
+    fmt_node: impl Fn(&mut Formatter<'_>) -> fmt::Result,
+) -> fmt::Result {
+    f.write_str("    \"")?;
+    fmt_node(f)?;
+    f.write_str("\";\n")
 }
 
-pub trait DisplayDiGraphDot:
-    DiGraphDot<Node: Display, NodeData: Display, EdgeData: Display>
-{
-    fn fmt_node(
-        &self,
-        f: &mut Formatter<'_>,
-        node: &Self::Node,
-        node_data: &Self::NodeData,
-    ) -> fmt::Result {
-        write!(
-            f,
-            "    \"{}\" [label=\"{}\"];\n",
-            escape_dot(&node.to_string()),
-            escape_dot(&node_data.to_string())
-        )
-    }
-    fn fmt_edge(
-        &self,
-        f: &mut Formatter<'_>,
-        (from, to): (&Self::Node, &Self::Node),
-        edge_data: &Self::EdgeData,
-    ) -> fmt::Result {
-        write!(
-            f,
-            "    \"{}\" -> \"{}\" [label=\"{}\"];\n",
-            escape_dot(&from.to_string()),
-            escape_dot(&to.to_string()),
-            escape_dot(&edge_data.to_string())
-        )
-    }
+pub fn fmt_labelled_node(
+    f: &mut Formatter<'_>,
+    fmt_node: impl Fn(&mut Formatter<'_>) -> fmt::Result,
+    fmt_label: impl Fn(&mut Formatter<'_>) -> fmt::Result,
+) -> fmt::Result {
+    f.write_str("    \"")?;
+    fmt_node(f)?;
+    f.write_str("\" [label=\"")?;
+    fmt_label(f)?;
+    f.write_str("\"];\n")
+}
+
+pub fn fmt_display_node(f: &mut Formatter<'_>, node: &impl Display) -> fmt::Result {
+    fmt_node(f, |f| Display::fmt(&escape_dot(&node.to_string()), f))
+}
+
+pub fn fmt_display_labelled_node(
+    f: &mut Formatter<'_>,
+    node: &impl Display,
+    label: &impl Display,
+) -> fmt::Result {
+    fmt_labelled_node(
+        f,
+        |f| Display::fmt(&escape_dot(&node.to_string()), f),
+        |f| Display::fmt(&escape_dot(&label.to_string()), f),
+    )
+}
+
+pub fn fmt_edge(
+    f: &mut Formatter<'_>,
+    fmt_from: impl Fn(&mut Formatter<'_>) -> fmt::Result,
+    fmt_to: impl Fn(&mut Formatter<'_>) -> fmt::Result,
+) -> fmt::Result {
+    f.write_str("    \"")?;
+    fmt_from(f)?;
+    f.write_str("\" -> \"")?;
+    fmt_to(f)?;
+    f.write_str("\";\n")
+}
+
+pub fn fmt_labelled_edge(
+    f: &mut Formatter<'_>,
+    fmt_from: impl Fn(&mut Formatter<'_>) -> fmt::Result,
+    fmt_to: impl Fn(&mut Formatter<'_>) -> fmt::Result,
+    fmt_label: impl Fn(&mut Formatter<'_>) -> fmt::Result,
+) -> fmt::Result {
+    f.write_str("    \"")?;
+    fmt_from(f)?;
+    f.write_str("\" -> \"")?;
+    fmt_to(f)?;
+    f.write_str("\" [label=\"")?;
+    fmt_label(f)?;
+    f.write_str("\"];\n")
+}
+
+pub fn fmt_display_edge(
+    f: &mut Formatter<'_>,
+    edge: &impl Edge<Node = impl Display>,
+) -> fmt::Result {
+    fmt_edge(
+        f,
+        |f| Display::fmt(&escape_dot(&edge.from().to_string()), f),
+        |f| Display::fmt(&escape_dot(&edge.to().to_string()), f),
+    )
+}
+
+pub fn fmt_display_labelled_edge(
+    f: &mut Formatter<'_>,
+    edge: &impl Edge<Node = impl Display>,
+    label: &impl Display,
+) -> fmt::Result {
+    fmt_labelled_edge(
+        f,
+        |f| Display::fmt(&escape_dot(&edge.from().to_string()), f),
+        |f| Display::fmt(&escape_dot(&edge.to().to_string()), f),
+        |f| Display::fmt(&escape_dot(&label.to_string()), f),
+    )
 }

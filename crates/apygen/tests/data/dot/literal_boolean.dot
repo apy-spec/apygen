@@ -24,6 +24,7 @@ digraph "DependentGraph" {
     "types" -> "builtins";
 }
 digraph "literal_boolean" {
+    "Entry";
     "Constraint()" [label="#return(None)"];
     "Constraint(location=1:0)" [label="True ⊑ true_value@{literal_boolean[1:0]} ∧ #defined(true_value@{literal_boolean[1:0]})"];
     "Constraint(location=2:0)" [label="False ⊑ false_value@{literal_boolean[2:0]} ∧ #defined(false_value@{literal_boolean[2:0]})"];
@@ -43,6 +44,9 @@ digraph "literal_boolean" {
     "Constraint(location=23:0)" [label="(True) + (False) ⊑ add_true_false@{literal_boolean[23:0]} ∧ #defined(add_true_false@{literal_boolean[23:0]})"];
     "Constraint(location=24:0)" [label="(False) + (True) ⊑ add_false_true@{literal_boolean[24:0]} ∧ #defined(add_false_true@{literal_boolean[24:0]})"];
     "Constraint(location=25:0)" [label="(False) + (False) ⊑ add_false_false@{literal_boolean[25:0]} ∧ #defined(add_false_false@{literal_boolean[25:0]})"];
+    "TypeExit";
+    "ExceptionExit";
+    "Exit";
     "Entry" -> "Constraint(location=1:0)";
     "Constraint()" -> "TypeExit";
     "Constraint(location=1:0)" -> "Constraint(location=2:0)";

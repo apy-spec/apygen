@@ -24,10 +24,14 @@ digraph "DependentGraph" {
     "types" -> "builtins";
 }
 digraph "overloaded_function" {
+    "Entry";
     "Constraint()" [label="#return(None)"];
     "Constraint(location=5:4)" [label="#function(overloaded_function[add@{5:4}](x@{overloaded_function[add@{5:4}][5:8]}: #annotated(int), y@{overloaded_function[add@{5:4}][5:16]}: #annotated(int)) -> #annotated(int)) ⊑ add@{overloaded_function[5:4]} ∧ #defined(add@{overloaded_function[5:4]})"];
     "Constraint(location=9:4)" [label="#function(overloaded_function[add@{9:4}](x@{overloaded_function[add@{9:4}][9:8]}: #annotated(float), y@{overloaded_function[add@{9:4}][9:18]}: #annotated(float)) -> #annotated(float)) ⊑ add@{overloaded_function[9:4]} ∧ #defined(add@{overloaded_function[9:4]})"];
     "Constraint(location=12:4)" [label="#function(overloaded_function[add@{12:4}](x@{overloaded_function[add@{12:4}][12:8]}: #annotated((int) | (float)), y@{overloaded_function[add@{12:4}][12:24]}: #annotated((int) | (float))) -> #annotated((int) | (float))) ⊑ add@{overloaded_function[12:4]} ∧ #defined(add@{overloaded_function[12:4]})"];
+    "TypeExit";
+    "ExceptionExit";
+    "Exit";
     "Entry" -> "Constraint(location=5:4)" [label="#succeed(#function(overloaded_function[add@{5:4}](x@{overloaded_function[add@{5:4}][5:8]}: #annotated(int), y@{overloaded_function[add@{5:4}][5:16]}: #annotated(int)) -> #annotated(int)))"];
     "Entry" -> "ExceptionExit" [label="#raise(#function(overloaded_function[add@{5:4}](x@{overloaded_function[add@{5:4}][5:8]}: #annotated(int), y@{overloaded_function[add@{5:4}][5:16]}: #annotated(int)) -> #annotated(int)))"];
     "Constraint()" -> "TypeExit";
@@ -41,21 +45,31 @@ digraph "overloaded_function" {
     "ExceptionExit" -> "Exit";
 }
 digraph "overloaded_function[add@{5:4}]" {
+    "Entry";
     "Constraint()" [label="#return(None)"];
+    "TypeExit";
+    "Exit";
     "Entry" -> "Constraint()";
     "Constraint()" -> "TypeExit";
     "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
 }
 digraph "overloaded_function[add@{9:4}]" {
+    "Entry";
     "Constraint()" [label="#return(None)"];
+    "TypeExit";
+    "Exit";
     "Entry" -> "Constraint()";
     "Constraint()" -> "TypeExit";
     "TypeExit" -> "Entry" [label="#forward_reference"];
     "TypeExit" -> "Exit";
 }
 digraph "overloaded_function[add@{12:4}]" {
+    "Entry";
     "Constraint(location=13:4)" [label="#return((x) + (y))"];
+    "TypeExit";
+    "ExceptionExit";
+    "Exit";
     "Entry" -> "Constraint(location=13:4)" [label="#succeed((x) + (y))"];
     "Entry" -> "ExceptionExit" [label="#raise((x) + (y))"];
     "Constraint(location=13:4)" -> "TypeExit";

@@ -24,6 +24,7 @@ digraph "DependentGraph" {
     "types" -> "builtins";
 }
 digraph "literal_none" {
+    "Entry";
     "Constraint()" [label="#return(None)"];
     "Constraint(location=1:0)" [label="None ⊑ none_value@{literal_none[1:0]} ∧ #defined(none_value@{literal_none[1:0]})"];
     "Constraint(location=3:0)" [label="(bool)(None) ⊑ bool_none@{literal_none[3:0]} ∧ #defined(bool_none@{literal_none[3:0]})"];
@@ -31,6 +32,9 @@ digraph "literal_none" {
     "Constraint(location=8:4)" [label="+(None) ⊑ pos_none@{literal_none[8:4]} ∧ #defined(pos_none@{literal_none[8:4]})"];
     "Constraint(location=14:4)" [label="-(None) ⊑ neg_none@{literal_none[14:4]} ∧ #defined(neg_none@{literal_none[14:4]})"];
     "Constraint(location=20:4)" [label="@(None) ⊑ invert_none@{literal_none[20:4]} ∧ #defined(invert_none@{literal_none[20:4]})"];
+    "TypeExit";
+    "ExceptionExit";
+    "Exit";
     "Entry" -> "Constraint(location=1:0)";
     "Constraint()" -> "TypeExit";
     "Constraint(location=1:0)" -> "Constraint(location=3:0)" [label="#succeed((bool)(None))"];

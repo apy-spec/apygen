@@ -15,7 +15,6 @@ use log::debug;
 use rayon::iter::IntoParallelIterator;
 use rayon::iter::ParallelIterator;
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 pub fn is_dunder_name(name: &str) -> bool {
     name.starts_with("__") && name.ends_with("__")

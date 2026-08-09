@@ -235,6 +235,9 @@ dependencies = [
 [[package]]
 name = "apygen_graph"
 version = "0.1.0"
+dependencies = [
+ "imbl",
+]
 
 [[package]]
 name = "apygen_identifiers"

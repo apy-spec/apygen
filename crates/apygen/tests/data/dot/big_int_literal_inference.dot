@@ -24,6 +24,7 @@ digraph "DependentGraph" {
     "types" -> "builtins";
 }
 digraph "big_int_literal_inference" {
+    "Entry";
     "Constraint()" [label="#return(None)"];
     "Constraint(location=1:0)" [label="424964554194941651 ⊑ assign@{big_int_literal_inference[1:0]} ∧ #defined(assign@{big_int_literal_inference[1:0]})"];
     "Constraint(location=3:0)" [label="(604964554194941651) + (74964554194941651) ⊑ static_addition@{big_int_literal_inference[3:0]} ∧ #defined(static_addition@{big_int_literal_inference[3:0]})"];
@@ -62,6 +63,9 @@ digraph "big_int_literal_inference" {
     "Constraint(location=47:0)" [label="(2949802) ^ (2949802) ⊑ static_bitwise_xor@{big_int_literal_inference[47:0]} ∧ #defined(static_bitwise_xor@{big_int_literal_inference[47:0]})"];
     "Constraint(location=48:0)" [label="(assign) ^ (2949802) ⊑ dynamic_bitwise_xor@{big_int_literal_inference[48:0]} ∧ #defined(dynamic_bitwise_xor@{big_int_literal_inference[48:0]})"];
     "Constraint(location=49:0)" [label="(assign) ^ (static_bitwise_xor) ⊑ other_dynamic_bitwise_xor@{big_int_literal_inference[49:0]} ∧ #defined(other_dynamic_bitwise_xor@{big_int_literal_inference[49:0]})"];
+    "TypeExit";
+    "ExceptionExit";
+    "Exit";
     "Entry" -> "Constraint(location=1:0)";
     "Constraint()" -> "TypeExit";
     "Constraint(location=1:0)" -> "Constraint(location=3:0)" [label="#succeed((604964554194941651) + (74964554194941651))"];

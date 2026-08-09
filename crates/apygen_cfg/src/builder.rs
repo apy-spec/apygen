@@ -5,7 +5,7 @@ use crate::ast::{
 use crate::source_file::LineIndex;
 use crate::text_size::Ranged;
 use crate::{
-    Cfg, CfgEdge, CfgEdgeKind, CfgNode, ConvertTextSizeError, Location, ProgramPoint,
+    Cfg, CfgEdgeKind, CfgNode, ConvertTextSizeError, Location, ProgramPoint,
     convert_text_size_to_location,
 };
 use bitflags::bitflags;
@@ -186,15 +186,20 @@ impl<'i> CfgBuilder<'i> {
         current_point: ProgramPoint,
         node: Option<CfgNode<'s>>,
     ) {
-        cfg.insert_node(current_point, node);
+        cfg.graph.insert_node(current_point, node);
 
         for (previous_point, edge_kind) in previous_points {
-            cfg.insert_edge_kind(CfgEdge::new(previous_point, current_point), edge_kind);
+            cfg.graph
+                .get_mut_or_default_edge_data((previous_point, current_point))
+                .expect("previous and current points should exist")
+                .insert(edge_kind);
         }
     }
 
     pub fn build_cfg<'s>(&self, suite: &'s Suite) -> Result<Cfg<'s>, BuildCfgError> {
         let mut cfg = Cfg::default();
+
+        cfg.graph.insert_node(ProgramPoint::Entry, None);
 
         let result_points = self.process_suite(
             &mut cfg,
@@ -241,7 +246,7 @@ impl<'i> CfgBuilder<'i> {
                 &stmt_class_def.body,
             ),
         };
-        cfg.insert_cfg(location, self.build_cfg(body_suite)?);
+        cfg.cfgs.insert(location, self.build_cfg(body_suite)?);
 
         let current_point = ProgramPoint::Location(location);
 
@@ -371,13 +376,16 @@ impl<'i> CfgBuilder<'i> {
         )?;
 
         for continue_point in result_points.continue_points.drain() {
-            cfg.insert_edge_kind(
-                CfgEdge::new(continue_point, current_point),
-                CfgEdgeKind::Continue,
-            );
+            cfg.graph
+                .get_mut_or_default_edge_data((continue_point, current_point))
+                .expect("continue and current points should exist")
+                .insert(CfgEdgeKind::Continue);
         }
         for (previous_point, edge_kind) in result_points.previous_points.drain() {
-            cfg.insert_edge_kind(CfgEdge::new(previous_point, current_point), edge_kind);
+            cfg.graph
+                .get_mut_or_default_edge_data((previous_point, current_point))
+                .expect("previous and current points should exist")
+                .insert(edge_kind);
         }
 
         result_points.previous_points.extend(map_with(
@@ -2441,7 +2449,7 @@ mod tests {
         let cfg = unchecked_build_cfg(&line_index, &mod_module);
 
         let mut actual_dot = cfg.dot("CFG");
-        for (sub_location, sub_cfg) in cfg.cfgs().iter().collect::<BTreeMap<_, _>>() {
+        for (sub_location, sub_cfg) in cfg.cfgs.iter().collect::<BTreeMap<_, _>>() {
             actual_dot.push_str(&sub_cfg.dot(&sub_location.to_string()));
         }
 
@@ -2488,10 +2496,9 @@ mod tests {
         let cfg = unchecked_build_cfg(&line_index, &mod_module);
 
         let mut actual_dot = cfg.dot("CFG");
-        for (sub_location, sub_cfg) in cfg.cfgs().iter().collect::<BTreeMap<_, _>>() {
+        for (sub_location, sub_cfg) in cfg.cfgs.iter().collect::<BTreeMap<_, _>>() {
             actual_dot.push_str(&sub_cfg.dot(&sub_location.to_string()));
-            for (sub_sub_location, sub_sub_cfg) in sub_cfg.cfgs().iter().collect::<BTreeMap<_, _>>()
-            {
+            for (sub_sub_location, sub_sub_cfg) in sub_cfg.cfgs.iter().collect::<BTreeMap<_, _>>() {
                 actual_dot.push_str(&sub_sub_cfg.dot(&sub_sub_location.to_string()));
             }
         }

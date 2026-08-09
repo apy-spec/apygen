@@ -10,7 +10,6 @@ use crate::constraint_graph::expressions::{
     ExpressionVariableReference, Namespace, SmolStr,
 };
 use crate::constraint_graph::graph::Graph;
-use crate::constraint_graph::graph::dot::DiGraphDot;
 use crate::constraint_graph::{
     Constraint, ConstraintGraph, ConstraintNode, Guard, ModuleDependentGraph,
 };
@@ -1133,12 +1132,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
         &self,
         node: &Self::Node,
     ) -> Result<impl Iterator<Item = &Self::Node>, Self::Error> {
-        Ok(self
-            .constraint_graph
-            .edges
-            .get(node)
-            .into_iter()
-            .flat_map(|tos| tos.keys()))
+        Ok(self.constraint_graph.graph.successors(node))
     }
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
@@ -1201,7 +1195,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 evaluation_state.return_value = self.definition.return_value.clone();
             }
             ConstraintNode::Constraint { location, .. } => {
-                if let Some(constraints) = self.constraint_graph.nodes.get(node) {
+                if let Some(constraints) = self.constraint_graph.graph.get_node_data(node) {
                     for constraint in constraints {
                         match constraint {
                             Constraint::Type(type_constraint) => {
@@ -1310,10 +1304,8 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
 
         let guards = self
             .constraint_graph
-            .edges
-            .get(from)
-            .unwrap()
-            .get(to)
+            .graph
+            .get_edge_data(&(from.clone(), to.clone()))
             .unwrap();
 
         let mut should_ignore = !guards.is_empty();
@@ -1542,13 +1534,14 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
 
             let mut to_remove = BTreeSet::from_iter([worklist_node]);
             while let Some(node) = to_remove.pop_first() {
-                for next_node in self.next_nodes(node)? {
+                for next_node in self.constraint_graph.graph.successors(node) {
                     if next_node != worklist_node
                         && *next_node != ConstraintNode::Entry
                         && analysis_state.abstract_states.contains_key(next_node)
                         && self
                             .constraint_graph
-                            .predecessor_iter(next_node)
+                            .graph
+                            .predecessors(next_node)
                             .all(|predecessor| predecessor == node || marked.contains(predecessor))
                     {
                         marked.insert(next_node);
@@ -1834,43 +1827,16 @@ impl Display for NamespaceDependencyGraph {
 
 impl Graph for NamespaceDependencyGraph {
     type Node = Namespace;
+    type Edge = (Namespace, Namespace);
     type NodeData = NamespaceData;
     type EdgeData = imbl::OrdSet<EdgeKind>;
 
-    fn node_data_iter(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
+    fn nodes(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
         self.nodes.iter()
     }
 
-    fn edge_data_iter(
-        &self,
-    ) -> impl Iterator<Item = ((&Self::Node, &Self::Node), &Self::EdgeData)> {
-        self.edges
-            .iter()
-            .map(|((from, to), edge_data)| ((from, to), edge_data))
-    }
-}
-
-impl DiGraphDot for NamespaceDependencyGraph {
-    fn fmt_node(
-        &self,
-        f: &mut Formatter<'_>,
-        node: &Self::Node,
-        _node_data: &Self::NodeData,
-    ) -> std::fmt::Result {
-        write!(f, "    \"{}\" [label=\"{}\"]\n", node, node)
-    }
-
-    fn fmt_edge(
-        &self,
-        f: &mut Formatter<'_>,
-        (from, to): (&Self::Node, &Self::Node),
-        edge_data: &Self::EdgeData,
-    ) -> std::fmt::Result {
-        write!(
-            f,
-            "    \"{}\" -> \"{}\" [label=\"{:?}\"]\n",
-            from, to, edge_data
-        )
+    fn edges(&self) -> impl Iterator<Item = (&Self::Edge, &Self::EdgeData)> {
+        self.edges.iter()
     }
 }
 
@@ -2182,40 +2148,6 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
             .extend(new_program_evaluation.states);
 
         Ok(new_analysis_state)
-    }
-    fn optimise(
-        &self,
-        _analysis_state: &mut Self::AnalysisState,
-        worklist: &mut BTreeSet<Self::Node>,
-    ) -> Result<(), Self::Error> {
-        let mut marked = BTreeSet::new();
-
-        for worklist_node in worklist.iter() {
-            if marked.contains(worklist_node) {
-                continue;
-            }
-
-            let mut to_remove = BTreeSet::from_iter([worklist_node]);
-            while let Some(node) = to_remove.pop_first() {
-                for next_node in self.graph.successor_iter(node) {
-                    if next_node != worklist_node
-                        && self
-                            .graph
-                            .predecessor_iter(next_node)
-                            .all(|predecessor| predecessor == node || marked.contains(predecessor))
-                    {
-                        marked.insert(next_node);
-                        to_remove.insert(next_node);
-                    }
-                }
-            }
-        }
-
-        *worklist = worklist
-            .extract_if(.., |node| !marked.contains(node))
-            .collect();
-
-        Ok(())
     }
     fn get_input_state(
         &self,

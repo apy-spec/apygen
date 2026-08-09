@@ -24,6 +24,7 @@ digraph "DependentGraph" {
     "types" -> "builtins";
 }
 digraph "literal_bytes" {
+    "Entry";
     "Constraint()" [label="#return(None)"];
     "Constraint(location=1:0)" [label="b&quot;&quot; ⊑ empty_bytes@{literal_bytes[1:0]} ∧ #defined(empty_bytes@{literal_bytes[1:0]})"];
     "Constraint(location=2:0)" [label="b&quot;a&quot; ⊑ single_bytes@{literal_bytes[2:0]} ∧ #defined(single_bytes@{literal_bytes[2:0]})"];
@@ -57,6 +58,9 @@ digraph "literal_bytes" {
     "Constraint(location=54:0)" [label="(2) * (empty_bytes) ⊑ rmul_empty_bytes_two@{literal_bytes[54:0]} ∧ #defined(rmul_empty_bytes_two@{literal_bytes[54:0]})"];
     "Constraint(location=55:0)" [label="(2) * (single_bytes) ⊑ rmul_single_bytes_two@{literal_bytes[55:0]} ∧ #defined(rmul_single_bytes_two@{literal_bytes[55:0]})"];
     "Constraint(location=56:0)" [label="(2) * (multiple_bytes) ⊑ rmul_multiple_bytes_two@{literal_bytes[56:0]} ∧ #defined(rmul_multiple_bytes_two@{literal_bytes[56:0]})"];
+    "TypeExit";
+    "ExceptionExit";
+    "Exit";
     "Entry" -> "Constraint(location=1:0)";
     "Constraint()" -> "TypeExit";
     "Constraint(location=1:0)" -> "Constraint(location=2:0)";

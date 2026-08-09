@@ -24,6 +24,7 @@ digraph "DependentGraph" {
     "types" -> "builtins";
 }
 digraph "literal_ellipsis" {
+    "Entry";
     "Constraint()" [label="#return(None)"];
     "Constraint(location=1:0)" [label="... ⊑ ellipsis_value@{literal_ellipsis[1:0]} ∧ #defined(ellipsis_value@{literal_ellipsis[1:0]})"];
     "Constraint(location=3:0)" [label="(bool)(...) ⊑ bool_ellipsis@{literal_ellipsis[3:0]} ∧ #defined(bool_ellipsis@{literal_ellipsis[3:0]})"];
@@ -31,6 +32,9 @@ digraph "literal_ellipsis" {
     "Constraint(location=8:4)" [label="+(...) ⊑ pos_ellipsis@{literal_ellipsis[8:4]} ∧ #defined(pos_ellipsis@{literal_ellipsis[8:4]})"];
     "Constraint(location=14:4)" [label="-(...) ⊑ neg_ellipsis@{literal_ellipsis[14:4]} ∧ #defined(neg_ellipsis@{literal_ellipsis[14:4]})"];
     "Constraint(location=20:4)" [label="@(...) ⊑ invert_ellipsis@{literal_ellipsis[20:4]} ∧ #defined(invert_ellipsis@{literal_ellipsis[20:4]})"];
+    "TypeExit";
+    "ExceptionExit";
+    "Exit";
     "Entry" -> "Constraint(location=1:0)";
     "Constraint()" -> "TypeExit";
     "Constraint(location=1:0)" -> "Constraint(location=3:0)" [label="#succeed((bool)(...))"];

@@ -24,6 +24,7 @@ digraph "DependentGraph" {
     "types" -> "builtins";
 }
 digraph "simple_variable_inference" {
+    "Entry";
     "Constraint()" [label="#return(None)"];
     "Constraint(location=1:0)" [label="5 ⊑ x@{simple_variable_inference[1:0]} ∧ #defined(x@{simple_variable_inference[1:0]})"];
     "Constraint(location=2:0)" [label="x ⊑ y@{simple_variable_inference[2:0]} ∧ #defined(y@{simple_variable_inference[2:0]})"];
@@ -33,6 +34,9 @@ digraph "simple_variable_inference" {
     "Constraint(location=7:0)" [label="#override(previous=#annotated(int), new=10) ⊑ left_int@{simple_variable_inference[7:0]} ∧ #defined(left_int@{simple_variable_inference[7:0]})"];
     "Constraint(location=8:0)" [label="#override(previous=#annotated(int), new=20) ⊑ right_int@{simple_variable_inference[8:0]} ∧ #defined(right_int@{simple_variable_inference[8:0]})"];
     "Constraint(location=9:0)" [label="(left_int) + (right_int) ⊑ sum_int@{simple_variable_inference[9:0]} ∧ #defined(sum_int@{simple_variable_inference[9:0]})"];
+    "TypeExit";
+    "ExceptionExit";
+    "Exit";
     "Entry" -> "Constraint(location=1:0)";
     "Constraint()" -> "TypeExit";
     "Constraint(location=1:0)" -> "Constraint(location=2:0)" [label="#succeed(x)"];

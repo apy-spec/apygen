@@ -24,6 +24,7 @@ digraph "DependentGraph" {
     "types" -> "builtins";
 }
 digraph "literal_float" {
+    "Entry";
     "Constraint()" [label="#return(None)"];
     "Constraint(location=1:0)" [label="0 ⊑ float_zero@{literal_float[1:0]} ∧ #defined(float_zero@{literal_float[1:0]})"];
     "Constraint(location=2:0)" [label="1 ⊑ float_one@{literal_float[2:0]} ∧ #defined(float_one@{literal_float[2:0]})"];
@@ -73,6 +74,9 @@ digraph "literal_float" {
     "Constraint(location=53:0)" [label="@(float_neg_value) ⊑ invert_float_neg_value@{literal_float[53:0]} ∧ #defined(invert_float_neg_value@{literal_float[53:0]})"];
     "Constraint(location=54:0)" [label="@(big_float_value) ⊑ invert_big_float_value@{literal_float[54:0]} ∧ #defined(invert_big_float_value@{literal_float[54:0]})"];
     "Constraint(location=55:0)" [label="@(big_float_neg_value) ⊑ invert_big_float_neg_value@{literal_float[55:0]} ∧ #defined(invert_big_float_neg_value@{literal_float[55:0]})"];
+    "TypeExit";
+    "ExceptionExit";
+    "Exit";
     "Entry" -> "Constraint(location=1:0)";
     "Constraint()" -> "TypeExit";
     "Constraint(location=1:0)" -> "Constraint(location=2:0)";
