@@ -163,8 +163,8 @@ impl<'s> Cfg<'s> {
 
     pub fn empty() -> Self {
         let mut cfg = Cfg::default();
-        cfg.graph.insert_node(ProgramPoint::Entry, None);
-        cfg.graph.insert_node(ProgramPoint::Exit, None);
+        cfg.graph.get_or_insert_default_node(ProgramPoint::Entry);
+        cfg.graph.get_or_insert_default_node(ProgramPoint::Exit);
         cfg.graph
             .edge_entry((ProgramPoint::Entry, ProgramPoint::Exit))
             .insert_entry(BTreeSet::default());
