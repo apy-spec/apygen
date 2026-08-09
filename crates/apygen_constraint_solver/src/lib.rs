@@ -24,7 +24,7 @@ use crate::inference::{
 };
 use imbl::ordmap::Entry;
 use rayon::iter::{ParallelBridge, ParallelIterator};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::convert::Infallible;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
@@ -1908,26 +1908,45 @@ pub struct ModuleConstraintSolverAnalysisState {
 }
 
 pub struct ModuleConstraintSolver<'a> {
-    pub import_graph: &'a ImportGraph,
+    pub module_namespaces: HashMap<SmolStr, HashMap<Namespace, &'a ConstraintGraph>>,
+    pub module_imports: &'a imbl::OrdMap<SmolStr, imbl::OrdSet<SmolStr>>,
 }
 
 impl<'a> ModuleConstraintSolver<'a> {
     pub fn new(import_graph: &'a ImportGraph) -> Self {
-        Self { import_graph }
-    }
+        fn create_namespaces(
+            import_graph: &ImportGraph,
+            namespace: Namespace,
+        ) -> Option<HashMap<Namespace, &ConstraintGraph>> {
+            import_graph
+                .get_constraint_graph(&namespace)
+                .map(|constraint_graph| {
+                    constraint_graph
+                        .subgraphs
+                        .keys()
+                        .filter_map(|sub_namespace| {
+                            create_namespaces(import_graph, sub_namespace.as_ref().clone())
+                        })
+                        .flatten()
+                        .chain(std::iter::once((namespace, constraint_graph)))
+                        .collect()
+                })
+        }
 
-    fn get_namespaces<'n>(&'n self, namespace: &'n Namespace) -> Option<BTreeSet<&'n Namespace>> {
-        self.import_graph
-            .get_constraint_graph(namespace)
-            .map(|constraint_graph| {
-                constraint_graph
-                    .subgraphs
-                    .keys()
-                    .filter_map(|sub_namespace| self.get_namespaces(sub_namespace))
-                    .flatten()
-                    .chain(std::iter::once(namespace))
-                    .collect()
-            })
+        Self {
+            module_namespaces: import_graph
+                .modules
+                .keys()
+                .map(|module_name| {
+                    (
+                        module_name.clone(),
+                        create_namespaces(import_graph, Namespace::Module(module_name.clone()))
+                            .unwrap_or_default(),
+                    )
+                })
+                .collect(),
+            module_imports: &import_graph.imports,
+        }
     }
 }
 
@@ -1958,25 +1977,24 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
         node: &'a Self::Node,
     ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
         Ok(self
-            .get_namespaces(&Namespace::Module(node.clone()))
+            .module_namespaces
+            .get(node)
             .unwrap()
-            .into_iter()
+            .keys()
             .flat_map(|namespace| {
                 analysis_state
                     .namespace_dependency_graph
                     .graph
                     .predecessors(namespace)
             })
-            .filter_map(|dependency_namespace| {
+            .filter_map(move |dependency_namespace| {
                 let dependency_module_name = dependency_namespace.module_name();
                 if node != dependency_module_name {
                     Some(dependency_module_name)
                 } else {
                     None
                 }
-            })
-            .collect::<BTreeSet<_>>()
-            .into_iter())
+            }))
     }
     fn dependent_nodes<'a>(
         &'a self,
@@ -1984,30 +2002,29 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
         node: &'a Self::Node,
     ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
         Ok(self
-            .get_namespaces(&Namespace::Module(node.clone()))
+            .module_namespaces
+            .get(node)
             .unwrap()
-            .into_iter()
+            .keys()
             .flat_map(|namespace| {
                 analysis_state
                     .namespace_dependency_graph
                     .graph
                     .successors(namespace)
             })
-            .filter_map(|dependent_namespace| {
+            .filter_map(move |dependent_namespace| {
                 let dependent_module_name = dependent_namespace.module_name();
                 if node != dependent_module_name {
                     Some(dependent_module_name)
                 } else {
                     None
                 }
-            })
-            .collect::<BTreeSet<_>>()
-            .into_iter())
+            }))
     }
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
         let mut analysis_state = ModuleConstraintSolverAnalysisState::default();
-        for (module_name, import_names) in &self.import_graph.imports {
+        for (module_name, import_names) in self.module_imports {
             analysis_state
                 .namespace_dependency_graph
                 .graph
@@ -2036,7 +2053,13 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
         let namespace = Namespace::Module(node.clone());
-        let constraint_graph = self.import_graph.get_constraint_graph(&namespace).unwrap();
+
+        let constraint_graph = self
+            .module_namespaces
+            .get(node)
+            .unwrap()
+            .get(&namespace)
+            .unwrap();
 
         solve_namespace(
             &namespace,
@@ -2070,9 +2093,10 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
         node: &Self::Node,
     ) -> Result<Self::InputState, Self::Error> {
         Ok(self
-            .get_namespaces(&Namespace::Module(node.clone()))
-            .unwrap_or_default()
-            .into_iter()
+            .module_namespaces
+            .get(node)
+            .iter()
+            .flat_map(|namespaces| namespaces.keys())
             .map(|namespace| {
                 let (arguments, call_sites) =
                     analysis_state.namespace_dependency_graph.inputs(&namespace);
@@ -2090,9 +2114,10 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
         node: &Self::Node,
     ) -> Result<Self::OutputState, Self::Error> {
         Ok(self
-            .get_namespaces(&Namespace::Module(node.clone()))
-            .unwrap_or_default()
-            .into_iter()
+            .module_namespaces
+            .get(node)
+            .iter()
+            .flat_map(|namespaces| namespaces.keys())
             .map(|namespace| {
                 (
                     namespace.clone(),
@@ -2223,9 +2248,9 @@ mod tests {
         let module_loader = TestModuleLoader {
             modules: HashMap::from_iter([(BUILTINS_MODULE, TEST_BUILTINS.to_owned())]),
         };
-        let dependent_graph = analyse_program(&module_loader, [].into_iter());
+        let import_graph = analyse_program(&module_loader, std::iter::empty());
 
-        let solver = ModuleConstraintSolver::new(&dependent_graph);
+        let solver = ModuleConstraintSolver::new(&import_graph);
 
         let analysis_state =
             par_dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
@@ -2522,9 +2547,9 @@ mod tests {
             ]),
         };
 
-        let dependent_graph = analyse_program(&module_loader, std::iter::once(module_name.clone()));
+        let import_graph = analyse_program(&module_loader, std::iter::once(module_name.clone()));
 
-        let solver = ModuleConstraintSolver::new(&dependent_graph);
+        let solver = ModuleConstraintSolver::new(&import_graph);
 
         let mut analysis_state =
             par_dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
