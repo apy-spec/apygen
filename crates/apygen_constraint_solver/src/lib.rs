@@ -2306,8 +2306,8 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
         Ok(self
             .module_namespaces
             .get(node)
-            .iter()
-            .flat_map(|namespaces| namespaces.keys())
+            .par_iter()
+            .flat_map_iter(|namespaces| namespaces.keys())
             .map(|namespace| {
                 let (arguments, call_sites) =
                     inputs(&analysis_state.namespace_dependency_graph, &namespace);
@@ -2327,8 +2327,8 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
         Ok(self
             .module_namespaces
             .get(node)
-            .iter()
-            .flat_map(|namespaces| namespaces.keys())
+            .par_iter()
+            .flat_map_iter(|namespaces| namespaces.keys())
             .map(|namespace| {
                 (
                     namespace.clone(),
