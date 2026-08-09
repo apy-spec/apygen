@@ -2105,6 +2105,59 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
             })
             .collect())
     }
+    fn optimise(
+        &self,
+        analysis_state: &mut Self::AnalysisState,
+        worklist: &mut BTreeSet<Self::Node>,
+    ) -> Result<(), Self::Error> {
+        let mut marked = BTreeSet::new();
+
+        for worklist_node in worklist.iter() {
+            if marked.contains(worklist_node) {
+                continue;
+            }
+
+            let mut to_remove = BTreeSet::from_iter([worklist_node]);
+            while let Some(node) = to_remove.pop_first() {
+                let namespace = Namespace::Module(node.clone());
+
+                for next_namespace in analysis_state
+                    .namespace_dependency_graph
+                    .graph
+                    .successors(&namespace)
+                {
+                    let Namespace::Module(next_node) = next_namespace else {
+                        continue;
+                    };
+                    if next_node != worklist_node
+                        && analysis_state
+                            .namespace_dependency_graph
+                            .graph
+                            .predecessors(next_namespace)
+                            .filter_map(|predecessor_namespace| {
+                                if let Namespace::Module(predecessor_node) = predecessor_namespace {
+                                    Some(predecessor_node)
+                                } else {
+                                    None
+                                }
+                            })
+                            .all(|predecessor_node| {
+                                predecessor_node == node || marked.contains(predecessor_node)
+                            })
+                    {
+                        marked.insert(next_node);
+                        to_remove.insert(next_node);
+                    }
+                }
+            }
+        }
+
+        *worklist = worklist
+            .extract_if(.., |node| !marked.contains(node))
+            .collect();
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
