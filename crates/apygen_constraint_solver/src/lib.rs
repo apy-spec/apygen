@@ -1758,7 +1758,7 @@ pub fn solve_namespace(
     (
         ProgramEvaluation<EvaluationState>,
         BTreeSet<((Namespace, Namespace), EdgeCall)>,
-        BTreeMap<Namespace, Definition>,
+        BTreeSet<(Namespace, Definition)>,
     ),
     Infallible,
 > {
@@ -1769,7 +1769,7 @@ pub fn solve_namespace(
         .insert_node(namespace.clone(), definition.clone());
 
     let mut calls = BTreeSet::default();
-    let mut definitions = BTreeMap::from_iter([(namespace.clone(), definition.clone())]);
+    let mut definitions = BTreeSet::from_iter([(namespace.clone(), definition.clone())]);
 
     let mut previous_evaluation_state: Option<EvaluationState> = None;
     let mut previous_calls: BTreeSet<_> = namespace_dependency_graph.calls(namespace).collect();
@@ -1874,7 +1874,7 @@ pub fn solve_namespace(
                     (
                         ProgramEvaluation::default(),
                         BTreeSet::default(),
-                        BTreeMap::from_iter([(namespace.clone(), definition.clone())]),
+                        BTreeSet::from_iter([(namespace.clone(), definition.clone())]),
                     )
                 },
                 |(mut program_evaluation_acc, mut calls_acc, mut definitions_acc),
@@ -1899,6 +1899,13 @@ pub fn solve_namespace(
         previous_evaluation_state = Some(new_evaluation_state);
         previous_calls = new_calls;
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Join)]
+pub struct ModuleConstraintSolverAbstractState {
+    pub program_evaluation: ProgramEvaluation<EvaluationState>,
+    pub calls: BTreeSet<((Namespace, Namespace), EdgeCall)>,
+    pub definitions: BTreeSet<(Namespace, Definition)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1960,11 +1967,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
         ),
     >;
     type OutputState = BTreeMap<Namespace, EvaluationState>;
-    type AbstractState = (
-        ProgramEvaluation<EvaluationState>,
-        BTreeSet<((Namespace, Namespace), EdgeCall)>,
-        BTreeMap<Namespace, Definition>,
-    );
+    type AbstractState = ModuleConstraintSolverAbstractState;
     type AnalysisState = ModuleConstraintSolverAnalysisState;
     type Error = Infallible;
 
@@ -2061,29 +2064,35 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
             .get(&namespace)
             .unwrap();
 
-        solve_namespace(
+        let (program_evaluation, calls, definitions) = solve_namespace(
             &namespace,
             &Definition::default(),
             constraint_graph,
             &analysis_state.program_evaluation,
             &analysis_state.namespace_dependency_graph,
-        )
+        )?;
+
+        Ok(ModuleConstraintSolverAbstractState {
+            program_evaluation,
+            calls,
+            definitions,
+        })
     }
     fn merge(
         &self,
         analysis_state: &Self::AnalysisState,
-        (new_program_evaluation, new_calls, new_definitions): Self::AbstractState,
+        abstract_state: Self::AbstractState,
     ) -> Result<Self::AnalysisState, Self::Error> {
         let mut new_analysis_state = analysis_state.clone();
 
         new_analysis_state.namespace_dependency_graph = new_analysis_state
             .namespace_dependency_graph
-            .with_sub_definitions(new_definitions)
-            .with_calls(new_calls);
+            .with_sub_definitions(abstract_state.definitions)
+            .with_calls(abstract_state.calls);
         new_analysis_state
             .program_evaluation
             .states
-            .extend(new_program_evaluation.states);
+            .extend(abstract_state.program_evaluation.states);
 
         Ok(new_analysis_state)
     }

@@ -1,3 +1,4 @@
+use crate::lattice::Join;
 use crate::{AnalysisObserver, DependencyGraphAnalyser, GraphAnalyser};
 use rayon::prelude::*;
 use std::collections::btree_map::Entry;
@@ -143,7 +144,7 @@ pub fn par_dependencies_analysis<
     N: Clone + Ord + Send + Sync,
     I: Eq,
     R: Eq,
-    S: Send + Sync,
+    S: Default + Join + Send + Sync,
     A: Clone + Sync,
     E: Send,
     T: DependencyGraphAnalyser<
@@ -176,15 +177,15 @@ pub fn par_dependencies_analysis<
             observer.before_node_analysis(&analysis_state, &worklist, node);
         }
 
-        let abstract_states = worklist
+        let abstract_state = worklist
             .par_iter()
             .map(|node| analyser.analyse_node(&analysis_state, &node))
-            .collect::<Result<Vec<_>, _>>()?;
+            .try_reduce(
+                || S::default(),
+                |acc, abstract_state| Ok(acc.join(&abstract_state)),
+            )?;
 
-        let mut new_analysis_state = analysis_state.clone();
-        for abstract_state in abstract_states {
-            new_analysis_state = analyser.merge(&new_analysis_state, abstract_state)?;
-        }
+        let new_analysis_state = analyser.merge(&analysis_state, abstract_state)?;
 
         let new_worklist = worklist
             .par_iter()
