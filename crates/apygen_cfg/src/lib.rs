@@ -1,6 +1,6 @@
 use crate::graph::dot::{
-    Dot, fmt_digraph, fmt_display_edge, fmt_display_labelled_edge, fmt_display_labelled_node,
-    fmt_display_node,
+    Dot, fmt_digraph, fmt_display_edge, fmt_display_labelled_node, fmt_display_node,
+    fmt_labelled_edge,
 };
 use crate::graph::{Graph, HashGraph};
 use ast::{
@@ -17,6 +17,7 @@ use text_size::TextSize;
 use thiserror::Error;
 
 pub use apygen_graph as graph;
+use apygen_graph::Edge;
 pub use apygen_identifiers as identifiers;
 pub use builder::{BuildCfgError, build_cfg};
 pub use identifiers::Location;
@@ -24,6 +25,7 @@ pub use ruff_python_ast as ast;
 pub use ruff_python_parser as parser;
 pub use ruff_source_file as source_file;
 pub use ruff_text_size as text_size;
+
 pub mod builder;
 
 #[derive(Debug, Error)]
@@ -126,39 +128,6 @@ impl<'s> From<&'s Stmt> for CfgNode<'s> {
     }
 }
 
-impl<'s> Display for CfgNode<'s> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            CfgNode::FunctionDef(_) => "function_def",
-            CfgNode::ClassDef(_) => "class_def",
-            CfgNode::Return(_) => "return",
-            CfgNode::Delete(_) => "delete",
-            CfgNode::Assign(_) => "assign",
-            CfgNode::AugAssign(_) => "aug_assign",
-            CfgNode::AnnAssign(_) => "ann_assign",
-            CfgNode::TypeAlias(_) => "type_alias",
-            CfgNode::For(_) => "for",
-            CfgNode::While(_) => "while",
-            CfgNode::If(_) => "if",
-            CfgNode::Elif(_) => "elif",
-            CfgNode::With(_) => "with",
-            CfgNode::Match(_) => "match",
-            CfgNode::Raise(_) => "raise",
-            CfgNode::Try(_) => "try",
-            CfgNode::Assert(_) => "assert",
-            CfgNode::Import(_) => "import",
-            CfgNode::ImportFrom(_) => "import_from",
-            CfgNode::Global(_) => "global",
-            CfgNode::Nonlocal(_) => "nonlocal",
-            CfgNode::Expr(_) => "expr",
-            CfgNode::Pass(_) => "pass",
-            CfgNode::Break(_) => "break",
-            CfgNode::Continue(_) => "continue",
-            CfgNode::IpyEscapeCommand(_) => "ipy_escape_command",
-        })
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Copy)]
 pub enum CfgEdgeKind {
     Unconditional,
@@ -169,35 +138,6 @@ pub enum CfgEdgeKind {
     Break,
     Continue,
     Return,
-}
-
-impl Display for CfgEdgeKind {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            CfgEdgeKind::Unconditional => Ok(()),
-            CfgEdgeKind::Conditional(cond) => {
-                write!(f, "{}", cond)
-            }
-            CfgEdgeKind::Match(index) => {
-                write!(f, "match({})", index)
-            }
-            CfgEdgeKind::Exception(point, index) => {
-                write!(f, "except({}, {})", point, index)
-            }
-            CfgEdgeKind::UnhandledException => {
-                write!(f, "except")
-            }
-            CfgEdgeKind::Break => {
-                write!(f, "break")
-            }
-            CfgEdgeKind::Continue => {
-                write!(f, "continue")
-            }
-            CfgEdgeKind::Return => {
-                write!(f, "return")
-            }
-        }
-    }
 }
 
 impl CfgEdgeKind {
@@ -238,18 +178,73 @@ impl Dot for Cfg<'_> {
         fmt_digraph(f, &name, |f| {
             for (node, cfg_node) in self.graph.nodes().collect::<BTreeMap<_, _>>() {
                 if let Some(cfg_node) = cfg_node {
-                    fmt_display_labelled_node(f, node, cfg_node)?;
+                    let label = match cfg_node {
+                        CfgNode::FunctionDef(_) => "function_def",
+                        CfgNode::ClassDef(_) => "class_def",
+                        CfgNode::Return(_) => "return",
+                        CfgNode::Delete(_) => "delete",
+                        CfgNode::Assign(_) => "assign",
+                        CfgNode::AugAssign(_) => "aug_assign",
+                        CfgNode::AnnAssign(_) => "ann_assign",
+                        CfgNode::TypeAlias(_) => "type_alias",
+                        CfgNode::For(_) => "for",
+                        CfgNode::While(_) => "while",
+                        CfgNode::If(_) => "if",
+                        CfgNode::Elif(_) => "elif",
+                        CfgNode::With(_) => "with",
+                        CfgNode::Match(_) => "match",
+                        CfgNode::Raise(_) => "raise",
+                        CfgNode::Try(_) => "try",
+                        CfgNode::Assert(_) => "assert",
+                        CfgNode::Import(_) => "import",
+                        CfgNode::ImportFrom(_) => "import_from",
+                        CfgNode::Global(_) => "global",
+                        CfgNode::Nonlocal(_) => "nonlocal",
+                        CfgNode::Expr(_) => "expr",
+                        CfgNode::Pass(_) => "pass",
+                        CfgNode::Break(_) => "break",
+                        CfgNode::Continue(_) => "continue",
+                        CfgNode::IpyEscapeCommand(_) => "ipy_escape_command",
+                    };
+                    fmt_display_labelled_node(f, node, &label)?;
                 } else {
                     fmt_display_node(f, node)?;
                 }
             }
             for (edge, edge_kinds) in self.graph.edges().collect::<BTreeMap<_, _>>() {
                 for edge_kind in edge_kinds {
-                    let label = edge_kind.to_string();
-                    if !label.is_empty() {
-                        fmt_display_labelled_edge(f, edge, &label)?;
-                    } else {
+                    if let CfgEdgeKind::Unconditional = edge_kind {
                         fmt_display_edge(f, edge)?;
+                    } else {
+                        fmt_labelled_edge(
+                            f,
+                            |f| write!(f, "{}", edge.from()),
+                            |f| write!(f, "{}", edge.to()),
+                            |f| match edge_kind {
+                                CfgEdgeKind::Unconditional => Ok(()),
+                                CfgEdgeKind::Conditional(cond) => {
+                                    write!(f, "{}", cond)
+                                }
+                                CfgEdgeKind::Match(index) => {
+                                    write!(f, "match({})", index)
+                                }
+                                CfgEdgeKind::Exception(point, index) => {
+                                    write!(f, "except({}, {})", point, index)
+                                }
+                                CfgEdgeKind::UnhandledException => {
+                                    write!(f, "except")
+                                }
+                                CfgEdgeKind::Break => {
+                                    write!(f, "break")
+                                }
+                                CfgEdgeKind::Continue => {
+                                    write!(f, "continue")
+                                }
+                                CfgEdgeKind::Return => {
+                                    write!(f, "return")
+                                }
+                            },
+                        )?;
                     }
                 }
             }
