@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use crate::analysis::abstract_state::{AbstractState, AbstractStateProxy};
 use crate::analysis::fmt::fmt_set;
 use crate::analysis::lattice::Join;
@@ -22,11 +24,13 @@ use crate::inference::{
     Source, Sourced, StructuralDepth, StructuralWidth, Type, TypeInstance, TypeLiteral,
     WIDTH_LIMIT,
 };
-use imbl::ordmap::Entry;
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use imbl::{hashmap as immutable_hashmap, ordmap};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::convert::Infallible;
 use std::fmt::{Debug, Display, Formatter};
+use std::hash::Hash;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -189,12 +193,12 @@ impl<N: Clone + Ord + Send + Sync, S: Clone + Send + Sync> AbstractState for Sol
         abstract_value: Self::AbstractValue,
     ) -> &mut Self::AbstractValue {
         match self.abstract_states.entry(key) {
-            Entry::Occupied(entry) => {
+            ordmap::Entry::Occupied(entry) => {
                 let previous_abstract_value = entry.into_mut();
                 *previous_abstract_value = abstract_value;
                 previous_abstract_value
             }
-            Entry::Vacant(entry) => entry.insert(abstract_value),
+            ordmap::Entry::Vacant(entry) => entry.insert(abstract_value),
         }
     }
 }
@@ -220,28 +224,36 @@ pub enum EvaluationError {
 pub struct ExpressionEvaluator<'a> {
     pub mode: EvaluatorMode,
     pub namespace: &'a Namespace,
-    pub namespace_dependency_graph: &'a NamespaceDependencyGraph,
+    pub namespace_dependent_graph: &'a dyn DependentGraph<
+        Node = Namespace,
+        NodeData = Definition,
+        EdgeData = imbl::OrdSet<EdgeKind>,
+    >,
 }
 
 impl<'a> ExpressionEvaluator<'a> {
     pub fn new(
         mode: EvaluatorMode,
         namespace: &'a Namespace,
-        namespace_dependency_graph: &'a NamespaceDependencyGraph,
+        namespace_dependent_graph: &'a dyn DependentGraph<
+            Node = Namespace,
+            NodeData = Definition,
+            EdgeData = imbl::OrdSet<EdgeKind>,
+        >,
     ) -> Self {
         Self {
             mode,
             namespace,
-            namespace_dependency_graph,
+            namespace_dependent_graph,
         }
     }
 
     pub fn with_namespace(&self, namespace: &'a Namespace) -> Self {
-        Self::new(self.mode, namespace, self.namespace_dependency_graph)
+        Self::new(self.mode, namespace, self.namespace_dependent_graph)
     }
 
     pub fn with_mode(&self, mode: EvaluatorMode) -> Self {
-        Self::new(mode, self.namespace, self.namespace_dependency_graph)
+        Self::new(mode, self.namespace, self.namespace_dependent_graph)
     }
 
     pub fn extract_deferred<T: Clone>(
@@ -477,7 +489,8 @@ impl<'a> ExpressionEvaluator<'a> {
                     is_abstract: false,
                 }),
             }))),
-            PyEffects::new(),
+            PyEffects::new()
+                .with_definitions(imbl::OrdSet::unit((class_namespace, Definition::default()))),
         ))
     }
 
@@ -681,8 +694,7 @@ impl<'a> ExpressionEvaluator<'a> {
 
                 let bound_arguments = arguments
                     .bind(
-                        self.namespace_dependency_graph
-                            .graph
+                        self.namespace_dependent_graph
                             .get_node_data(&function_namespace)
                             .unwrap()
                             .parameters
@@ -1058,7 +1070,11 @@ pub struct ConstraintSolver<'s> {
     pub definition: &'s Definition,
     pub constraint_graph: &'s ConstraintGraph,
     pub program_evaluation: &'s dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
-    pub namespace_dependency_graph: &'s NamespaceDependencyGraph,
+    pub namespace_dependent_graph: &'s dyn DependentGraph<
+        Node = Namespace,
+        NodeData = Definition,
+        EdgeData = imbl::OrdSet<EdgeKind>,
+    >,
 }
 
 impl<'s> ConstraintSolver<'s> {
@@ -1067,19 +1083,23 @@ impl<'s> ConstraintSolver<'s> {
         definition: &'s Definition,
         constraint_graph: &'s ConstraintGraph,
         program_evaluation: &'s dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
-        namespace_dependency_graph: &'s NamespaceDependencyGraph,
+        namespace_dependent_graph: &'s dyn DependentGraph<
+            Node = Namespace,
+            NodeData = Definition,
+            EdgeData = imbl::OrdSet<EdgeKind>,
+        >,
     ) -> Self {
         Self {
             namespace,
             definition,
             constraint_graph,
             program_evaluation,
-            namespace_dependency_graph,
+            namespace_dependent_graph,
         }
     }
 
     pub fn evaluator(&self, mode: EvaluatorMode) -> ExpressionEvaluator<'_> {
-        ExpressionEvaluator::new(mode, self.namespace, self.namespace_dependency_graph)
+        ExpressionEvaluator::new(mode, self.namespace, self.namespace_dependent_graph)
     }
 
     pub fn evaluate_expression<
@@ -1160,8 +1180,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 let evaluation_state =
                     program_evaluation.get_or_insert_default(self.namespace.clone());
 
-                let (arguments, _) = self.namespace_dependency_graph.inputs(self.namespace);
-
+                let (arguments, _) = inputs(self.namespace_dependent_graph, self.namespace);
                 for (parameter, deferred_ty) in arguments {
                     evaluation_state.defined_variables.names.insert(
                         parameter.name.named_qualified_location.name.clone(),
@@ -1559,6 +1578,178 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
     }
 }
 
+pub trait DependentGraph: Sync {
+    type Node;
+    type NodeData;
+    type EdgeData;
+
+    fn get_node_data<'a: 'n, 'n>(&'a self, node: &'n Self::Node) -> Option<&'a Self::NodeData>;
+    fn get_edge_data<'a: 'n, 'n>(
+        &'a self,
+        from: &'n Self::Node,
+        to: &'n Self::Node,
+    ) -> Option<&'a Self::EdgeData>;
+    fn insert_node(&mut self, node: Self::Node, node_data: Self::NodeData) -> &mut Self::NodeData;
+    fn get_or_insert_node(
+        &mut self,
+        node: Self::Node,
+        f: &dyn Fn() -> Self::NodeData,
+    ) -> &mut Self::NodeData;
+    fn insert_edge(
+        &mut self,
+        from: Self::Node,
+        to: Self::Node,
+        edge_data: Self::EdgeData,
+    ) -> Option<&mut Self::EdgeData>;
+    fn get_or_insert_edge(
+        &mut self,
+        from: Self::Node,
+        to: Self::Node,
+        f: &dyn Fn() -> Self::EdgeData,
+    ) -> Option<&mut Self::EdgeData>;
+    fn dependents<'a>(
+        &'a self,
+        node: &'a Self::Node,
+    ) -> Box<dyn Iterator<Item = &'a Self::Node> + 'a>;
+}
+
+#[derive(Clone)]
+pub struct DependentGraphProxy<'a, N: Hash + Eq + Clone, ND: Clone, ED: Clone> {
+    pub graph: &'a dyn DependentGraph<Node = N, NodeData = ND, EdgeData = ED>,
+    pub nodes: HashMap<N, ND>,
+    pub dependents: HashMap<N, HashMap<N, Option<ED>>>,
+}
+
+impl<'a, N: Hash + Eq + Clone, ND: Clone, ED: Clone> DependentGraphProxy<'a, N, ND, ED> {
+    pub fn with_default_proxy(
+        graph: &'a dyn DependentGraph<Node = N, NodeData = ND, EdgeData = ED>,
+    ) -> Self {
+        Self {
+            graph,
+            nodes: HashMap::new(),
+            dependents: HashMap::new(),
+        }
+    }
+}
+
+impl<N: Hash + Eq + Sync + Clone, ND: Sync + Clone, ED: Sync + Clone> DependentGraph
+    for DependentGraphProxy<'_, N, ND, ED>
+{
+    type Node = N;
+    type NodeData = ND;
+    type EdgeData = ED;
+
+    fn get_node_data<'a: 'n, 'n>(&'a self, node: &'n Self::Node) -> Option<&'a Self::NodeData> {
+        if let Some(node_data) = self.nodes.get(node) {
+            Some(node_data)
+        } else {
+            self.graph.get_node_data(node)
+        }
+    }
+    fn get_edge_data<'a: 'n, 'n>(
+        &'a self,
+        from: &'n Self::Node,
+        to: &'n Self::Node,
+    ) -> Option<&'a Self::EdgeData> {
+        if let Some(tos) = self.dependents.get(from) {
+            tos.get(to).and_then(|edge_data| {
+                edge_data
+                    .as_ref()
+                    .or_else(|| self.graph.get_edge_data(from, to))
+            })
+        } else {
+            self.graph.get_edge_data(from, to)
+        }
+    }
+    fn insert_node(&mut self, node: Self::Node, node_data: Self::NodeData) -> &mut Self::NodeData {
+        self.nodes.entry(node).insert_entry(node_data).into_mut()
+    }
+    fn get_or_insert_node(
+        &mut self,
+        node: Self::Node,
+        f: &dyn Fn() -> Self::NodeData,
+    ) -> &mut Self::NodeData {
+        let node_data = self.graph.get_node_data(&node).cloned().unwrap_or_else(f);
+        self.nodes.entry(node).or_insert(node_data)
+    }
+    fn insert_edge(
+        &mut self,
+        from: Self::Node,
+        to: Self::Node,
+        edge_data: Self::EdgeData,
+    ) -> Option<&mut Self::EdgeData> {
+        if self.get_node_data(&from).is_none() || self.get_node_data(&to).is_none() {
+            return None;
+        }
+        Some(
+            self.dependents
+                .entry(from.clone())
+                .or_insert_with(|| {
+                    self.graph
+                        .dependents(&from)
+                        .map(|to| (to.clone(), None))
+                        .collect()
+                })
+                .entry(to)
+                .insert_entry(Some(edge_data))
+                .into_mut()
+                .as_mut()
+                .expect("edge data should exist"),
+        )
+    }
+    fn get_or_insert_edge(
+        &mut self,
+        from: Self::Node,
+        to: Self::Node,
+        f: &dyn Fn() -> Self::EdgeData,
+    ) -> Option<&mut Self::EdgeData> {
+        if self.get_node_data(&from).is_none() || self.get_node_data(&to).is_none() {
+            return None;
+        }
+
+        let node_data = self
+            .graph
+            .get_edge_data(&from, &to)
+            .cloned()
+            .unwrap_or_else(f);
+
+        Some(
+            match self
+                .dependents
+                .entry(from.clone())
+                .or_insert_with(|| {
+                    self.graph
+                        .dependents(&from)
+                        .map(|to| (to.clone(), None))
+                        .collect()
+                })
+                .entry(to.clone())
+            {
+                Entry::Occupied(entry) => {
+                    let current = entry.into_mut();
+                    if current.is_none() {
+                        *current = Some(node_data);
+                    }
+                    current
+                }
+                Entry::Vacant(entry) => entry.insert(Some(node_data)),
+            }
+            .as_mut()
+            .expect("edge data should exist"),
+        )
+    }
+    fn dependents<'a>(
+        &'a self,
+        node: &'a Self::Node,
+    ) -> Box<dyn Iterator<Item = &'a Self::Node> + 'a> {
+        if let Some(tos) = self.dependents.get(node) {
+            Box::new(tos.keys())
+        } else {
+            Box::new(self.graph.dependents(node))
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct EdgeCall {
     pub location: Location,
@@ -1580,10 +1771,25 @@ impl EdgeCall {
     }
 }
 
+impl Display for EdgeCall {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} at {}", self.arguments, self.location)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EdgeKind {
     Definition,
     Call(EdgeCall),
+}
+
+impl Display for EdgeKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EdgeKind::Definition => f.write_str("Definition"),
+            EdgeKind::Call(call) => write!(f, "Call({})", call),
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
@@ -1591,77 +1797,81 @@ pub struct NamespaceDependencyGraph {
     pub graph: ImmutableHashGraph<Namespace, Definition, imbl::OrdSet<EdgeKind>>,
 }
 
-impl NamespaceDependencyGraph {
-    pub fn new() -> Self {
-        Self::default()
-    }
+impl DependentGraph for NamespaceDependencyGraph {
+    type Node = Namespace;
+    type NodeData = Definition;
+    type EdgeData = imbl::OrdSet<EdgeKind>;
 
-    pub fn with_calls(
-        &self,
-        calls: impl IntoIterator<Item = ((Namespace, Namespace), EdgeCall)>,
-    ) -> Self {
-        let mut new_graph = self.clone();
-        for (edge, call) in calls {
-            new_graph
-                .graph
-                .edge_entry(edge)
-                .or_default()
-                .insert(EdgeKind::Call(call));
-        }
-        new_graph
+    fn get_node_data<'a: 'n, 'n>(&'a self, node: &'n Self::Node) -> Option<&'a Self::NodeData> {
+        self.graph.get_node_data(node)
     }
-
-    pub fn with_sub_definitions(
-        &self,
-        sub_definitions: impl IntoIterator<Item = (Namespace, Definition)>,
-    ) -> Self {
-        let mut new_graph = self.clone();
-        let mut namespaces = Vec::new();
-        for (namespace, definition) in sub_definitions {
-            new_graph
-                .graph
-                .insert_node(namespace.clone(), definition.clone());
-            namespaces.push(namespace);
-        }
-        for namespace in namespaces {
-            if let Some(parent_namespace) = namespace.parent() {
-                new_graph
-                    .graph
-                    .edge_entry((parent_namespace.as_ref().clone(), namespace))
-                    .or_default()
-                    .insert(EdgeKind::Definition);
+    fn get_edge_data<'a: 'n, 'n>(
+        &'a self,
+        from: &'n Self::Node,
+        to: &'n Self::Node,
+    ) -> Option<&'a Self::EdgeData> {
+        self.graph.get_edge_data(&(from.clone(), to.clone()))
+    }
+    fn insert_node(&mut self, node: Self::Node, node_data: Self::NodeData) -> &mut Self::NodeData {
+        self.graph.insert_node(node, node_data)
+    }
+    fn get_or_insert_node(
+        &mut self,
+        node: Self::Node,
+        f: &dyn Fn() -> Self::NodeData,
+    ) -> &mut Self::NodeData {
+        self.graph.get_or_insert_node(node, f)
+    }
+    fn insert_edge(
+        &mut self,
+        from: Self::Node,
+        to: Self::Node,
+        edge_data: Self::EdgeData,
+    ) -> Option<&mut Self::EdgeData> {
+        match self.graph.get_edge_entry((from, to))? {
+            immutable_hashmap::Entry::Occupied(entry) => {
+                let current = entry.into_mut();
+                *current = edge_data;
+                Some(current)
             }
+            immutable_hashmap::Entry::Vacant(entry) => Some(entry.insert(edge_data)),
         }
-        new_graph
+    }
+    fn get_or_insert_edge(
+        &mut self,
+        from: Self::Node,
+        to: Self::Node,
+        f: &dyn Fn() -> Self::EdgeData,
+    ) -> Option<&mut Self::EdgeData> {
+        Some(self.graph.get_edge_entry((from, to))?.or_insert_with(f))
+    }
+    fn dependents<'a>(
+        &'a self,
+        node: &'a Self::Node,
+    ) -> Box<dyn Iterator<Item = &'a Self::Node> + 'a> {
+        Box::new(self.graph.successors(node))
+    }
+}
+
+pub fn inputs(
+    dependent_graph: &dyn DependentGraph<Node = Namespace, NodeData = Definition, EdgeData = imbl::OrdSet<EdgeKind>>,
+    namespace: &Namespace,
+) -> (
+    imbl::OrdMap<Parameter, Option<Deferred<Sourced<Type>, Expression>>>,
+    imbl::OrdMap<Option<QualifiedLocation>, ProgramEvaluation<EvaluationState>>,
+) {
+    let mut call_sites = imbl::OrdMap::default();
+    let mut arguments = imbl::OrdMap::default();
+
+    if let Some(definition) = dependent_graph.get_node_data(namespace) {
+        arguments.extend(definition.parameters.iter().cloned());
     }
 
-    pub fn calls(
-        &self,
-        namespace: &Namespace,
-    ) -> impl Iterator<Item = ((Namespace, Namespace), EdgeCall)> {
-        self.graph
-            .predecessors(namespace)
-            .flat_map(move |dependency| {
-                self.graph
-                    .get_edge_data(&(dependency.clone(), namespace.clone()))
-                    .into_iter()
-                    .flat_map(move |edge_kinds| {
-                        edge_kinds
-                            .iter()
-                            .filter_map(move |edge_kind| match edge_kind {
-                                EdgeKind::Definition => None,
-                                EdgeKind::Call(call) => {
-                                    Some(((dependency.clone(), namespace.clone()), call.clone()))
-                                }
-                            })
-                    })
-            })
-    }
-
-    pub fn callers(&self, namespace: &Namespace) -> impl Iterator<Item = (Namespace, EdgeCall)> {
-        self.graph.successors(namespace).flat_map(move |dependent| {
-            self.graph
-                .get_edge_data(&(namespace.clone(), dependent.clone()))
+    let callers = dependent_graph
+        .dependents(namespace)
+        .flat_map(move |dependent| {
+            dependent_graph
+                .get_edge_data(namespace, dependent)
                 .into_iter()
                 .flat_map(move |edge_kinds| {
                     edge_kinds
@@ -1671,81 +1881,44 @@ impl NamespaceDependencyGraph {
                             EdgeKind::Call(call) => Some((dependent.clone(), call.clone())),
                         })
                 })
-        })
-    }
+        });
 
-    pub fn inputs(
-        &self,
-        namespace: &Namespace,
-    ) -> (
-        imbl::OrdMap<Parameter, Option<Deferred<Sourced<Type>, Expression>>>,
-        imbl::OrdMap<Option<QualifiedLocation>, ProgramEvaluation<EvaluationState>>,
-    ) {
-        let mut call_sites = imbl::OrdMap::default();
-        let mut arguments = imbl::OrdMap::default();
-        if let Some(definition) = self.graph.get_node_data(namespace) {
-            arguments.extend(definition.parameters.iter().cloned());
-        }
-        for (caller_namespace, edge_call) in self.callers(namespace) {
-            call_sites.insert(
-                if namespace.module_name() == caller_namespace.module_name() {
-                    Some(QualifiedLocation::new(
-                        edge_call.location.clone(),
-                        Arc::new(caller_namespace.clone()),
-                    ))
-                } else {
-                    None
-                },
-                edge_call.context,
-            );
-            for (parameter, ty) in edge_call.arguments.variables {
-                match arguments.entry(parameter.clone()) {
-                    Entry::Occupied(entry) => {
-                        let current_deferred_ty: &mut Option<Deferred<Sourced<Type>, Expression>> =
-                            entry.into_mut();
+    for (caller_namespace, edge_call) in callers {
+        call_sites.insert(
+            if namespace.module_name() == caller_namespace.module_name() {
+                Some(QualifiedLocation::new(
+                    edge_call.location.clone(),
+                    Arc::new(caller_namespace.clone()),
+                ))
+            } else {
+                None
+            },
+            edge_call.context,
+        );
+        for (parameter, ty) in edge_call.arguments.variables {
+            match arguments.entry(parameter.clone()) {
+                ordmap::Entry::Occupied(entry) => {
+                    let current_deferred_ty: &mut Option<Deferred<Sourced<Type>, Expression>> =
+                        entry.into_mut();
 
-                        *current_deferred_ty =
-                            if let Some(current_deferred_ty) = current_deferred_ty {
-                                if current_deferred_ty.value.source > ty.source {
-                                    Some(current_deferred_ty.clone())
-                                } else {
-                                    Some(current_deferred_ty.join(&Deferred::known(ty)))
-                                }
-                            } else {
-                                Some(Deferred::known(ty))
-                            };
-                    }
-                    Entry::Vacant(entry) => {
-                        entry.insert(Some(Deferred::known(ty)));
-                    }
+                    *current_deferred_ty = if let Some(current_deferred_ty) = current_deferred_ty {
+                        if current_deferred_ty.value.source > ty.source {
+                            Some(current_deferred_ty.clone())
+                        } else {
+                            Some(current_deferred_ty.join(&Deferred::known(ty)))
+                        }
+                    } else {
+                        Some(Deferred::known(ty))
+                    };
+                }
+                ordmap::Entry::Vacant(entry) => {
+                    entry.insert(Some(Deferred::known(ty)));
                 }
             }
         }
-
-        (arguments, call_sites)
     }
 
-    pub fn sub_definitions(
-        &self,
-        namespace: &Namespace,
-    ) -> impl Iterator<Item = (Namespace, Definition)> {
-        self.graph.successors(namespace).flat_map(|dependent| {
-            self.graph
-                .get_edge_data(&(namespace.clone(), dependent.clone()))
-                .and_then(|edge_kinds| {
-                    if edge_kinds
-                        .iter()
-                        .any(|edge_kind| matches!(edge_kind, EdgeKind::Definition))
-                    {
-                        self.graph
-                            .get_node_data(dependent)
-                            .map(|definition| (dependent.clone(), definition.clone()))
-                    } else {
-                        None
-                    }
-                })
-        })
-    }
+    (arguments, call_sites)
 }
 
 pub fn solve_namespace(
@@ -1753,28 +1926,24 @@ pub fn solve_namespace(
     definition: &Definition,
     constraint_graph: &ConstraintGraph,
     abstract_state: &dyn AbstractState<Key = Namespace, AbstractValue = EvaluationState>,
-    namespace_dependency_graph: &NamespaceDependencyGraph,
+    namespace_dependent_graph: &dyn DependentGraph<Node = Namespace, NodeData = Definition, EdgeData = imbl::OrdSet<EdgeKind>>,
 ) -> Result<
     (
         ProgramEvaluation<EvaluationState>,
-        BTreeSet<((Namespace, Namespace), EdgeCall)>,
-        BTreeSet<(Namespace, Definition)>,
+        HashMap<Namespace, Definition>,
+        HashMap<Namespace, HashMap<Namespace, Option<imbl::OrdSet<EdgeKind>>>>,
     ),
     Infallible,
 > {
     let mut abstract_state_proxy = AbstractStateProxy::with_default_proxy(abstract_state);
-    let mut namespace_dependency_graph = namespace_dependency_graph.clone();
-    namespace_dependency_graph
-        .graph
-        .insert_node(namespace.clone(), definition.clone());
-
-    let mut calls = BTreeSet::default();
-    let mut definitions = BTreeSet::from_iter([(namespace.clone(), definition.clone())]);
+    let mut namespace_dependent_graph_proxy =
+        DependentGraphProxy::with_default_proxy(namespace_dependent_graph);
 
     let mut previous_evaluation_state: Option<EvaluationState> = None;
-    let mut previous_calls: BTreeSet<_> = namespace_dependency_graph.calls(namespace).collect();
+    let mut previous_calls = BTreeSet::default();
     loop {
         abstract_state_proxy.insert(namespace.clone(), EvaluationState::default());
+        namespace_dependent_graph_proxy.insert_node(namespace.clone(), definition.clone());
 
         let mut solver_state = analysis(
             &ConstraintSolver::new(
@@ -1782,7 +1951,7 @@ pub fn solve_namespace(
                 definition,
                 constraint_graph,
                 &abstract_state_proxy,
-                &namespace_dependency_graph,
+                &namespace_dependent_graph_proxy,
             ),
             &mut DummyAnalysisObserver::default(),
         )?;
@@ -1842,39 +2011,51 @@ pub fn solve_namespace(
             .insert(namespace.clone(), evaluation_state)
             .clone();
 
+        for (sub_namespace, definition) in &new_definitions {
+            namespace_dependent_graph_proxy.insert_node(sub_namespace.clone(), definition.clone());
+            namespace_dependent_graph_proxy
+                .get_or_insert_edge(namespace.clone(), sub_namespace.clone(), &|| {
+                    imbl::OrdSet::default()
+                })
+                .expect("failed to insert edge")
+                .insert(EdgeKind::Definition);
+        }
+        for ((target, caller_namespace), call) in &new_calls {
+            namespace_dependent_graph_proxy
+                .get_or_insert_edge(target.clone(), caller_namespace.clone(), &|| {
+                    imbl::OrdSet::default()
+                })
+                .expect("failed to insert edge")
+                .insert(EdgeKind::Call(call.clone()));
+        }
+
         if Some(&new_evaluation_state) == previous_evaluation_state.as_ref()
             && new_calls == previous_calls
         {
-            calls.extend(new_calls);
-            definitions.extend(new_definitions);
-            return Ok((abstract_state_proxy.proxy, calls, definitions));
+            return Ok((
+                abstract_state_proxy.proxy,
+                namespace_dependent_graph_proxy.nodes,
+                namespace_dependent_graph_proxy.dependents,
+            ));
         }
 
-        namespace_dependency_graph = namespace_dependency_graph
-            .with_sub_definitions(new_definitions.clone())
-            .with_calls(new_calls.clone());
-
-        let (sub_program_evaluation, sub_calls, sub_definitions) = constraint_graph
-            .subgraphs
-            .iter()
-            .par_bridge()
-            .map(|(sub_namespace, subgraph)| {
+        let (sub_program_evaluation, sub_nodes, sub_dependents) = new_definitions
+            .par_iter()
+            .map(|(sub_namespace, definition)| {
                 solve_namespace(
                     sub_namespace,
-                    &new_definitions
-                        .get(sub_namespace)
-                        .unwrap_or(&Definition::default()),
-                    subgraph,
+                    definition,
+                    constraint_graph.subgraphs.get(sub_namespace).unwrap(),
                     &abstract_state_proxy,
-                    &namespace_dependency_graph,
+                    &namespace_dependent_graph_proxy,
                 )
             })
             .try_reduce(
                 || {
                     (
                         ProgramEvaluation::default(),
-                        BTreeSet::default(),
-                        BTreeSet::from_iter([(namespace.clone(), definition.clone())]),
+                        HashMap::default(),
+                        HashMap::default(),
                     )
                 },
                 |(mut program_evaluation_acc, mut calls_acc, mut definitions_acc),
@@ -1889,12 +2070,10 @@ pub fn solve_namespace(
             )?;
 
         abstract_state_proxy.proxy.states = sub_program_evaluation.states;
-        namespace_dependency_graph = namespace_dependency_graph
-            .with_sub_definitions(sub_definitions.clone())
-            .with_calls(sub_calls.clone());
-
-        calls = sub_calls;
-        definitions = sub_definitions;
+        namespace_dependent_graph_proxy.nodes.extend(sub_nodes);
+        namespace_dependent_graph_proxy.dependents = namespace_dependent_graph_proxy
+            .dependents
+            .join(&sub_dependents);
 
         previous_evaluation_state = Some(new_evaluation_state);
         previous_calls = new_calls;
@@ -1904,8 +2083,8 @@ pub fn solve_namespace(
 #[derive(Debug, Clone, PartialEq, Eq, Default, Join)]
 pub struct ModuleConstraintSolverAbstractState {
     pub program_evaluation: ProgramEvaluation<EvaluationState>,
-    pub calls: BTreeSet<((Namespace, Namespace), EdgeCall)>,
-    pub definitions: BTreeSet<(Namespace, Definition)>,
+    pub nodes: BTreeSet<(Namespace, Definition)>,
+    pub dependents: HashMap<Namespace, HashMap<Namespace, Option<imbl::OrdSet<EdgeKind>>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -2064,7 +2243,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
             .get(&namespace)
             .unwrap();
 
-        let (program_evaluation, calls, definitions) = solve_namespace(
+        let (program_evaluation, nodes, dependents) = solve_namespace(
             &namespace,
             &Definition::default(),
             constraint_graph,
@@ -2074,8 +2253,11 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
 
         Ok(ModuleConstraintSolverAbstractState {
             program_evaluation,
-            calls,
-            definitions,
+            nodes: nodes
+                .into_iter()
+                .map(|(namespace, definition)| (namespace, definition))
+                .collect(),
+            dependents,
         })
     }
     fn merge(
@@ -2085,10 +2267,24 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     ) -> Result<Self::AnalysisState, Self::Error> {
         let mut new_analysis_state = analysis_state.clone();
 
-        new_analysis_state.namespace_dependency_graph = new_analysis_state
-            .namespace_dependency_graph
-            .with_sub_definitions(abstract_state.definitions)
-            .with_calls(abstract_state.calls);
+        for (node, definition) in abstract_state.nodes {
+            new_analysis_state
+                .namespace_dependency_graph
+                .graph
+                .insert_node(node, definition);
+        }
+        for (from, tos) in abstract_state.dependents {
+            for (to, edge_data) in tos {
+                if let Some(edge_data) = edge_data {
+                    new_analysis_state
+                        .namespace_dependency_graph
+                        .graph
+                        .edge_entry((from.clone(), to.clone()))
+                        .or_default()
+                        .extend(edge_data);
+                }
+            }
+        }
         new_analysis_state
             .program_evaluation
             .states
@@ -2108,7 +2304,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
             .flat_map(|namespaces| namespaces.keys())
             .map(|namespace| {
                 let (arguments, call_sites) =
-                    analysis_state.namespace_dependency_graph.inputs(&namespace);
+                    inputs(&analysis_state.namespace_dependency_graph, &namespace);
 
                 (
                     namespace.clone(),

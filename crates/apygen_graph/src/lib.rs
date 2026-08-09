@@ -153,7 +153,7 @@ pub trait Graph {
     fn edge_indices(&self) -> impl Iterator<Item = Self::Edge<'_>> {
         self.edges().into_iter().map(|(edge, _)| edge)
     }
-    fn get_node_data(&self, node: &Self::Node) -> Option<&Self::NodeData> {
+    fn get_node_data<'a: 'n, 'n>(&'a self, node: &'n Self::Node) -> Option<&'a Self::NodeData> {
         for (n, node_data) in self.nodes() {
             if n == node {
                 return Some(node_data);
@@ -230,7 +230,7 @@ macro_rules! impl_graph_methods {
         pub fn remove_node(&mut self, node: &$node) -> Option<$node_data> {
             Some(self.nodes.remove(node)?.into_data())
         }
-        fn get_mut_node(&mut self, node: &$node) -> &mut $graph_data {
+        fn get_mut_node<'a: 'n, 'n>(&'a mut self, node: &'n $node) -> &'a mut $graph_data {
             self.nodes.get_mut(node).expect("node should exist")
         }
         pub fn get_edge_entry(&mut self, (from, to): ($node, $node)) -> Option<$entry>
@@ -253,7 +253,10 @@ macro_rules! impl_graph_methods {
             self.get_edge_entry(edge)
                 .expect("both node should exist before getting edge entry")
         }
-        pub fn get_mut_edge_data(&mut self, edge: &($node, $node)) -> Option<&mut $edge_data> {
+        pub fn get_mut_edge_data<'a: 'n, 'n>(
+            &'a mut self,
+            edge: &'n ($node, $node),
+        ) -> Option<&'a mut $edge_data> {
             self.edges.get_mut(edge)
         }
         pub fn remove_edge(&mut self, edge: &($node, $node)) -> Option<$edge_data> {
@@ -299,7 +302,7 @@ macro_rules! impl_graph {
         fn edge_indices(&self) -> impl Iterator<Item = Self::Edge<'_>> {
             self.edges.keys()
         }
-        fn get_node_data(&self, node: &Self::Node) -> Option<&Self::NodeData> {
+        fn get_node_data<'a: 'n, 'n>(&'a self, node: &'n Self::Node) -> Option<&'a Self::NodeData> {
             self.nodes.get(node).map(|graph_data| graph_data.data())
         }
         fn get_edge_data<'a: 'n, 'n>(&'a self, edge: Self::Edge<'n>) -> Option<&'a Self::EdgeData> {
