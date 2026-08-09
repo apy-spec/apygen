@@ -208,6 +208,12 @@ macro_rules! impl_graph_insert {
                 .or_insert(GraphData::new(f()))
                 .data_mut()
         }
+        pub fn get_or_insert_default_node(&mut self, node: $node) -> &mut $node_data
+        where
+            ND: Default,
+        {
+            self.get_or_insert_node(node, Default::default)
+        }
     };
 }
 macro_rules! impl_graph_methods {
@@ -417,6 +423,12 @@ impl<N: Ord + Clone, ND: Clone, ED: Clone, GD: GraphData<Node = N, NodeData = ND
             ordmap::Entry::Vacant(entry) => entry.insert(GraphData::new(f())).data_mut(),
         }
     }
+    pub fn get_or_insert_default_node(&mut self, node: N) -> &mut ND
+    where
+        ND: Default,
+    {
+        self.get_or_insert_node(node, Default::default)
+    }
     impl_graph_methods!(
         N,
         ND,
@@ -473,6 +485,12 @@ impl<N: Hash + Eq + Clone, ND: Clone, ED: Clone, GD: GraphData<Node = N, NodeDat
             immutable_hashmap::Entry::Occupied(entry) => entry.into_mut().data_mut(),
             immutable_hashmap::Entry::Vacant(entry) => entry.insert(GraphData::new(f())).data_mut(),
         }
+    }
+    pub fn get_or_insert_default_node(&mut self, node: N) -> &mut ND
+    where
+        ND: Default,
+    {
+        self.get_or_insert_node(node, Default::default)
     }
     impl_graph_methods!(
         N,

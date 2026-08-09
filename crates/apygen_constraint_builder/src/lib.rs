@@ -1874,8 +1874,8 @@ pub fn create_constraint_graph(
         graph.insert_node(node, constraints);
     }
     for ((from, to), guards) in environment.edges {
-        graph.get_or_insert_node(from.clone(), imbl::OrdSet::default);
-        graph.get_or_insert_node(to.clone(), imbl::OrdSet::default);
+        graph.get_or_insert_default_node(from.clone());
+        graph.get_or_insert_default_node(to.clone());
         graph.edge_entry((from, to)).or_insert(guards);
     }
 
