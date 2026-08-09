@@ -49,20 +49,20 @@ pub fn analyse_workdir(
 
     let module_loader = SpecModuleLoader { specs };
 
-    let dependent_graph = analyse_program(&module_loader, target_modules.into_iter());
+    let import_graph = analyse_program(&module_loader, target_modules.into_iter());
 
-    let solver = ModuleConstraintSolver::new(&dependent_graph);
+    let solver = ModuleConstraintSolver::new(&import_graph);
 
     let program_evaluation =
         par_dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
             .expect("analysis should work")
             .program_evaluation;
 
-    debug!("Modules: {}", dependent_graph.nodes.len());
+    debug!("Modules: {}", import_graph.modules.len());
 
     let apy_v1 = convert_apy_v1(
         &program_evaluation,
-        dependent_graph.nodes.keys().par_bridge(),
+        import_graph.modules.keys().par_bridge(),
     );
 
     Apy::V1(apy_v1)

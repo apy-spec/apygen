@@ -1,7 +1,7 @@
 use apygen::analysis::rayon::par_dependencies_analysis;
 use apygen::constraint_builder::cfg::identifiers::Namespace;
 use apygen::constraint_builder::constraint_graph::ConstraintGraph;
-use apygen::constraint_builder::constraint_graph::ModuleDependentGraph;
+use apygen::constraint_builder::constraint_graph::ImportGraph;
 use apygen::constraint_builder::constraint_graph::graph::dot::ToDot;
 use apygen::constraint_builder::constraint_graph::identifiers::SmolStr;
 use apygen::constraint_builder::{SpecModuleLoader, analyse_program};
@@ -39,7 +39,7 @@ fn typeshed_dir() -> AbsolutePathBuf {
 pub fn analyse_directory(
     directory: AbsolutePathBuf,
     target_module: SmolStr,
-) -> (ModuleDependentGraph, apy::Apy) {
+) -> (ImportGraph, apy::Apy) {
     let finder = PathFinder::new(
         Arc::new(LocalFilesystem),
         vec![directory.clone()],
@@ -52,9 +52,9 @@ pub fn analyse_directory(
 
     let module_loader = SpecModuleLoader { specs };
 
-    let dependent_graph = analyse_program(&module_loader, std::iter::once(target_module.clone()));
+    let import_graph = analyse_program(&module_loader, std::iter::once(target_module.clone()));
 
-    let solver = ModuleConstraintSolver::new(&dependent_graph);
+    let solver = ModuleConstraintSolver::new(&import_graph);
 
     let program_evaluation =
         par_dependencies_analysis(&solver, &mut LogAnalysisObserver::default())
@@ -63,7 +63,7 @@ pub fn analyse_directory(
 
     let apy_v1 = convert_apy_v1(&program_evaluation, rayon::iter::once(&target_module));
 
-    (dependent_graph, apy::Apy::V1(apy_v1))
+    (import_graph, apy::Apy::V1(apy_v1))
 }
 
 fn push_constraint_graph(
@@ -103,10 +103,10 @@ fn test_inference(#[case] module_name: String) {
     let absolute_manifest_dir = absolute_manifest_dir();
     let modules_dir = absolute_manifest_dir.join("tests/data/modules");
 
-    let (dependent_graph, actual_apy) = analyse_directory(modules_dir, target_module_name.clone());
+    let (import_graph, actual_apy) = analyse_directory(modules_dir, target_module_name.clone());
 
-    let mut actual_dot = dependent_graph.dot("DependentGraph");
-    for (module_name, constraint_graph) in dependent_graph.nodes {
+    let mut actual_dot = import_graph.dot("DependentGraph");
+    for (module_name, constraint_graph) in import_graph.modules {
         if module_name != target_module_name {
             continue;
         }

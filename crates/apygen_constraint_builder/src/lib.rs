@@ -23,7 +23,7 @@ use crate::constraint_graph::primitives::literals::{
 };
 use crate::constraint_graph::primitives::{BigInt, Complex64, Int, Num};
 use crate::constraint_graph::{
-    Constraint, ConstraintGraph, ConstraintNode, Guard, IncludeConstraint, ModuleDependentGraph,
+    Constraint, ConstraintGraph, ConstraintNode, Guard, ImportGraph, IncludeConstraint,
     ReturnConstraint,
 };
 use crate::finder::filesystem::{Error as FilesystemError, Filesystem};
@@ -1915,8 +1915,8 @@ pub fn analyse_module<'a>(
 pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
     module_loader: &C,
     initial_modules: impl Iterator<Item = SmolStr>,
-) -> ModuleDependentGraph {
-    let mut dependent_graph = ModuleDependentGraph::default();
+) -> ImportGraph {
+    let mut import_graph = ImportGraph::default();
     let mut worklist = initial_modules
         .chain(std::iter::once(BUILTINS_MODULE))
         .collect::<BTreeSet<_>>();
@@ -1933,7 +1933,7 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
         worklist = BTreeSet::new();
         for (module_name, constraint_graph, imports) in analysed_modules {
             if module_name != BUILTINS_MODULE {
-                dependent_graph.add_dependent(BUILTINS_MODULE, module_name.clone());
+                import_graph.add_import(module_name.clone(), BUILTINS_MODULE);
             }
 
             for import in imports {
@@ -1941,18 +1941,18 @@ pub fn analyse_program<E: Debug, C: ModuleLoader<Error = E> + Sync>(
                     continue;
                 }
 
-                dependent_graph.add_dependent(import.clone(), module_name.clone());
+                import_graph.add_import(module_name.clone(), import.clone());
 
-                if !dependent_graph.nodes.contains_key(&import) {
+                if !import_graph.modules.contains_key(&import) {
                     worklist.insert(import);
                 }
             }
 
-            dependent_graph.nodes.insert(module_name, constraint_graph);
+            import_graph.modules.insert(module_name, constraint_graph);
         }
     }
 
-    dependent_graph
+    import_graph
 }
 
 #[cfg(test)]
@@ -1997,7 +1997,7 @@ mod tests {
     #[rstest]
     fn test_build_builtins_constraints() {
         let expected_constraints = indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
         }
         digraph "builtins" {
@@ -2045,11 +2045,11 @@ mod tests {
         let module_loader = TestModuleLoader {
             modules: HashMap::from_iter([(BUILTINS_MODULE, TEST_BUILTINS.to_owned())]),
         };
-        let dependent_graph = analyse_program(&module_loader, [].into_iter());
+        let import_graph = analyse_program(&module_loader, [].into_iter());
 
-        let mut actual_constraints = dependent_graph.dot("DependentGraph");
+        let mut actual_constraints = import_graph.dot("ImportGraph");
 
-        for (module_name, constraint_graph) in dependent_graph.nodes {
+        for (module_name, constraint_graph) in import_graph.modules {
             push_constraint_graph(
                 &mut actual_constraints,
                 &Namespace::Module(module_name),
@@ -2067,13 +2067,13 @@ mod tests {
     #[case::import(
         "import some_module",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
             "some_module";
-            "builtins" -> "module";
-            "builtins" -> "some_module";
-            "some_module" -> "module";
+            "module" -> "builtins";
+            "module" -> "some_module";
+            "some_module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2095,13 +2095,13 @@ mod tests {
     #[case::import_as(
         "import some_module as mod",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
             "some_module";
-            "builtins" -> "module";
-            "builtins" -> "some_module";
-            "some_module" -> "module";
+            "module" -> "builtins";
+            "module" -> "some_module";
+            "some_module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2123,16 +2123,16 @@ mod tests {
     #[case::import_submodule(
         "import some_module.submodule",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
             "some_module";
             "some_module.submodule";
-            "builtins" -> "module";
-            "builtins" -> "some_module";
-            "builtins" -> "some_module.submodule";
-            "some_module" -> "module";
-            "some_module.submodule" -> "module";
+            "module" -> "builtins";
+            "module" -> "some_module";
+            "module" -> "some_module.submodule";
+            "some_module" -> "builtins";
+            "some_module.submodule" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2157,16 +2157,16 @@ mod tests {
     #[case::import_module_and_submodule(
         "import some_module, some_module.submodule",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
             "some_module";
             "some_module.submodule";
-            "builtins" -> "module";
-            "builtins" -> "some_module";
-            "builtins" -> "some_module.submodule";
-            "some_module" -> "module";
-            "some_module.submodule" -> "module";
+            "module" -> "builtins";
+            "module" -> "some_module";
+            "module" -> "some_module.submodule";
+            "some_module" -> "builtins";
+            "some_module.submodule" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2194,16 +2194,16 @@ mod tests {
     #[case::multiple_import(
         "import some_module, another_module",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "another_module";
             "builtins";
             "module";
             "some_module";
-            "another_module" -> "module";
-            "builtins" -> "another_module";
-            "builtins" -> "module";
-            "builtins" -> "some_module";
-            "some_module" -> "module";
+            "another_module" -> "builtins";
+            "module" -> "another_module";
+            "module" -> "builtins";
+            "module" -> "some_module";
+            "some_module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2228,16 +2228,16 @@ mod tests {
     #[case::multiple_import_override(
         "import some_module as mod, another_module as mod",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "another_module";
             "builtins";
             "module";
             "some_module";
-            "another_module" -> "module";
-            "builtins" -> "another_module";
-            "builtins" -> "module";
-            "builtins" -> "some_module";
-            "some_module" -> "module";
+            "another_module" -> "builtins";
+            "module" -> "another_module";
+            "module" -> "builtins";
+            "module" -> "some_module";
+            "some_module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2262,10 +2262,10 @@ mod tests {
     #[case::int_constant_assignment(
         "a = 42",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2284,10 +2284,10 @@ mod tests {
     #[case::bigint_constant_assignment(
         "a = 4200000000000000000000000000",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2306,10 +2306,10 @@ mod tests {
     #[case::add_operation(
         "add = 42 + 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2331,10 +2331,10 @@ mod tests {
     #[case::sub_operation(
         "sub = 42 - 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2356,10 +2356,10 @@ mod tests {
     #[case::mult_operation(
         "mult = 42 * 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2381,10 +2381,10 @@ mod tests {
     #[case::mat_mult_operation(
         "mat_mult = 42 @ 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2406,10 +2406,10 @@ mod tests {
     #[case::div_operation(
         "div = 42 / 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2431,10 +2431,10 @@ mod tests {
     #[case::floor_div_operation(
         "floor_div = 42 // 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2456,10 +2456,10 @@ mod tests {
     #[case::mod_operation(
         "mod = 42 % 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2481,10 +2481,10 @@ mod tests {
     #[case::pow_operation(
         "pow = 42 ** 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2506,10 +2506,10 @@ mod tests {
     #[case::shl_operation(
         "shl = 42 << 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2531,10 +2531,10 @@ mod tests {
     #[case::shr_operation(
         "shr = 42 >> 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2556,10 +2556,10 @@ mod tests {
     #[case::bit_or_operation(
         "bit_or = 42 | 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2581,10 +2581,10 @@ mod tests {
     #[case::bit_xor_operation(
         "bit_xor = 42 ^ 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2606,10 +2606,10 @@ mod tests {
     #[case::bit_and_operation(
         "bit_and = 42 & 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2631,10 +2631,10 @@ mod tests {
     #[case::and_operation(
         "and_ = 42 and 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2656,10 +2656,10 @@ mod tests {
     #[case::or_operation(
         "or_ = 42 or 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2681,10 +2681,10 @@ mod tests {
     #[case::eq_operation(
         "eq = 42 == 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2706,10 +2706,10 @@ mod tests {
     #[case::not_eq_operation(
         "not_eq = 42 != 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2731,10 +2731,10 @@ mod tests {
     #[case::lt_operation(
         "lt = 42 < 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2756,10 +2756,10 @@ mod tests {
     #[case::gt_operation(
         "gt = 42 > 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2781,10 +2781,10 @@ mod tests {
     #[case::lte_operation(
         "lte = 42 <= 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2806,10 +2806,10 @@ mod tests {
     #[case::gte_operation(
         "gte = 42 >= 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2831,10 +2831,10 @@ mod tests {
     #[case::is_operation(
         "is_ = 42 is 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2856,10 +2856,10 @@ mod tests {
     #[case::is_not_operation(
         "is_not = 42 is not 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2881,10 +2881,10 @@ mod tests {
     #[case::in_operation(
         "in_ = 42 in 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2906,10 +2906,10 @@ mod tests {
     #[case::not_in_operation(
         "not_in = 42 not in 67",
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2935,10 +2935,10 @@ mod tests {
         b = a + a
         "##},
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -2971,10 +2971,10 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -3012,10 +3012,10 @@ mod tests {
         b = a
         "##},
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -3055,10 +3055,10 @@ mod tests {
         result = add_two(42, 67)
         "##},
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -3103,10 +3103,10 @@ mod tests {
         CONST = 5
         "##},
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -3153,10 +3153,10 @@ mod tests {
         result = foo()
         "##},
         indoc! {r##"
-        digraph "DependentGraph" {
+        digraph "ImportGraph" {
             "builtins";
             "module";
-            "builtins" -> "module";
+            "module" -> "builtins";
         }
         digraph "module" {
             "Entry";
@@ -3205,12 +3205,12 @@ mod tests {
                 (BUILTINS_MODULE, TEST_BUILTINS.to_owned()),
             ]),
         };
-        let dependent_graph =
+        let import_graph =
             analyse_program(&module_loader, std::iter::once(target_module_name.clone()));
 
-        let mut actual_constraints = dependent_graph.dot("DependentGraph");
+        let mut actual_constraints = import_graph.dot("ImportGraph");
 
-        for (module_name, constraint_graph) in dependent_graph.nodes {
+        for (module_name, constraint_graph) in import_graph.modules {
             if module_name != target_module_name {
                 continue;
             }

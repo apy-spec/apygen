@@ -10,9 +10,7 @@ use crate::constraint_graph::expressions::{
     ExpressionVariableReference, Namespace, Parameter, SmolStr,
 };
 use crate::constraint_graph::graph::{Graph, ImmutableHashGraph};
-use crate::constraint_graph::{
-    Constraint, ConstraintGraph, ConstraintNode, Guard, ModuleDependentGraph,
-};
+use crate::constraint_graph::{Constraint, ConstraintGraph, ConstraintNode, Guard, ImportGraph};
 use crate::expressions::literal_class::method_resolution_order;
 use crate::expressions::{Call, Definition, PyEffects, PyTypeEval, gen_bool_value, type_literal};
 use crate::identifiers::smol_str::format_smolstr;
@@ -1910,16 +1908,16 @@ pub struct ModuleConstraintSolverAnalysisState {
 }
 
 pub struct ModuleConstraintSolver<'a> {
-    pub graph: &'a ModuleDependentGraph,
+    pub import_graph: &'a ImportGraph,
 }
 
 impl<'a> ModuleConstraintSolver<'a> {
-    pub fn new(graph: &'a ModuleDependentGraph) -> Self {
-        Self { graph }
+    pub fn new(import_graph: &'a ImportGraph) -> Self {
+        Self { import_graph }
     }
 
     fn get_namespaces<'n>(&'n self, namespace: &'n Namespace) -> Option<BTreeSet<&'n Namespace>> {
-        self.graph
+        self.import_graph
             .get_constraint_graph(namespace)
             .map(|constraint_graph| {
                 constraint_graph
@@ -2009,22 +2007,22 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error> {
         let mut analysis_state = ModuleConstraintSolverAnalysisState::default();
-        for (module_name, dependent_module_names) in &self.graph.dependents {
+        for (module_name, import_names) in &self.import_graph.imports {
             analysis_state
                 .namespace_dependency_graph
                 .graph
                 .get_or_insert_default_node(Namespace::Module(module_name.clone()));
-            for dependent_module_name in dependent_module_names {
+            for import_name in import_names {
                 analysis_state
                     .namespace_dependency_graph
                     .graph
-                    .get_or_insert_default_node(Namespace::Module(dependent_module_name.clone()));
+                    .get_or_insert_default_node(Namespace::Module(import_name.clone()));
                 analysis_state
                     .namespace_dependency_graph
                     .graph
                     .edge_entry((
+                        Namespace::Module(import_name.clone()),
                         Namespace::Module(module_name.clone()),
-                        Namespace::Module(dependent_module_name.clone()),
                     ))
                     .or_default()
                     .insert(EdgeKind::Definition);
@@ -2038,7 +2036,7 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
         node: &Self::Node,
     ) -> Result<Self::AbstractState, Self::Error> {
         let namespace = Namespace::Module(node.clone());
-        let constraint_graph = self.graph.get_constraint_graph(&namespace).unwrap();
+        let constraint_graph = self.import_graph.get_constraint_graph(&namespace).unwrap();
 
         solve_namespace(
             &namespace,

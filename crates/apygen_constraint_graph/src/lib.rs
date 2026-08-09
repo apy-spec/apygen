@@ -186,19 +186,19 @@ impl Dot for ConstraintGraph {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ModuleDependentGraph {
-    pub nodes: imbl::OrdMap<SmolStr, ConstraintGraph>,
-    pub dependents: imbl::OrdMap<SmolStr, imbl::OrdSet<SmolStr>>,
+pub struct ImportGraph {
+    pub modules: imbl::OrdMap<SmolStr, ConstraintGraph>,
+    pub imports: imbl::OrdMap<SmolStr, imbl::OrdSet<SmolStr>>,
 }
 
-impl ModuleDependentGraph {
+impl ImportGraph {
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn get_constraint_graph(&self, namespace: &Namespace) -> Option<&ConstraintGraph> {
         match namespace {
-            Namespace::Module(module_name) => self.nodes.get(module_name),
+            Namespace::Module(module_name) => self.modules.get(module_name),
             Namespace::ProgramEntity(qualified_location) => self
                 .get_constraint_graph(qualified_location.namespace.as_ref())?
                 .subgraphs
@@ -211,50 +211,43 @@ impl ModuleDependentGraph {
     }
 }
 
-impl Default for ModuleDependentGraph {
+impl Default for ImportGraph {
     fn default() -> Self {
         Self {
-            nodes: imbl::OrdMap::default(),
-            dependents: imbl::OrdMap::default(),
+            modules: imbl::OrdMap::default(),
+            imports: imbl::OrdMap::default(),
         }
     }
 }
 
-impl ModuleDependentGraph {
-    pub fn insert(&mut self, node: SmolStr, state: ConstraintGraph) {
-        self.nodes.insert(node.clone(), state);
+impl ImportGraph {
+    pub fn insert(&mut self, module_name: SmolStr, constraint_graph: ConstraintGraph) {
+        self.modules.insert(module_name, constraint_graph);
     }
 
-    pub fn add_dependent(&mut self, from: SmolStr, to: SmolStr) {
-        self.dependents.entry(from).or_default().insert(to);
+    pub fn add_import(&mut self, module_name: SmolStr, import_name: SmolStr) {
+        self.imports
+            .entry(module_name)
+            .or_default()
+            .insert(import_name);
     }
 
-    pub fn remove_dependent(&mut self, from: SmolStr, to: SmolStr) {
-        if let Entry::Occupied(mut tos) = self.dependents.entry(from) {
-            tos.get_mut().remove(&to);
+    pub fn remove_import(&mut self, module: SmolStr, import_name: SmolStr) {
+        if let Entry::Occupied(mut import_names) = self.imports.entry(module) {
+            import_names.get_mut().remove(&import_name);
         }
     }
 }
 
-impl Display for ModuleDependentGraph {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{{ nodes: {:?}, dependents: {:?} }}",
-            self.nodes, self.dependents
-        )
-    }
-}
-
-impl Dot for ModuleDependentGraph {
+impl Dot for ImportGraph {
     fn fmt(&self, f: &mut Formatter<'_>, name: &str) -> fmt::Result {
         fmt_digraph(f, &name, |f| {
-            for (node, _) in &self.nodes {
-                fmt_display_node(f, node)?;
+            for (module_name, _) in &self.modules {
+                fmt_display_node(f, module_name)?;
             }
-            for (from, tos) in &self.dependents {
-                for to in tos {
-                    fmt_display_edge(f, &(from.clone(), to.clone()))?;
+            for (module_name, import_names) in &self.imports {
+                for import_name in import_names {
+                    fmt_display_edge(f, (module_name, import_name))?;
                 }
             }
             Ok(())

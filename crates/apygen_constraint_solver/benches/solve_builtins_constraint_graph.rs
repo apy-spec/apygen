@@ -5,7 +5,7 @@ use apygen_constraint_builder::finder::pathfinder::PathFinder;
 use apygen_constraint_builder::{SpecModuleLoader, analyse_program};
 use apygen_constraint_solver::ModuleConstraintSolver;
 use apygen_constraint_solver::analysis::DummyAnalysisObserver;
-use apygen_constraint_solver::constraint_graph::ModuleDependentGraph;
+use apygen_constraint_solver::constraint_graph::ImportGraph;
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -21,8 +21,8 @@ fn typeshed_dir() -> AbsolutePathBuf {
     .expect("canonicalized path is always absolute")
 }
 
-fn solve_builtins_constraints(module_dependent_graph: &ModuleDependentGraph) {
-    let solver = ModuleConstraintSolver::new(module_dependent_graph);
+fn solve_builtins_constraints(import_graph: &ImportGraph) {
+    let solver = ModuleConstraintSolver::new(import_graph);
 
     par_dependencies_analysis(&solver, &mut DummyAnalysisObserver::default())
         .expect("analysis should work");
@@ -41,10 +41,10 @@ fn bench_constraint_solver(criterion: &mut Criterion) {
 
     let module_loader = SpecModuleLoader { specs };
 
-    let module_dependent_graph = analyse_program(&module_loader, std::iter::empty());
+    let import_graph = analyse_program(&module_loader, std::iter::empty());
 
     criterion.bench_function("solve builtins constraints", |bencher| {
-        bencher.iter(|| solve_builtins_constraints(&module_dependent_graph))
+        bencher.iter(|| solve_builtins_constraints(&import_graph))
     });
 }
 

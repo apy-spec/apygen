@@ -7,21 +7,21 @@ digraph "DependentGraph" {
     "sys";
     "types";
     "_ast" -> "builtins";
+    "_ast" -> "sys";
     "_sitebuiltins" -> "builtins";
+    "_sitebuiltins" -> "sys";
     "_typeshed" -> "builtins";
+    "_typeshed" -> "sys";
     "builtins" -> "_ast";
     "builtins" -> "_sitebuiltins";
     "builtins" -> "_typeshed";
-    "builtins" -> "literal_boolean";
     "builtins" -> "sys";
     "builtins" -> "types";
-    "sys" -> "_ast";
-    "sys" -> "_sitebuiltins";
-    "sys" -> "_typeshed";
+    "literal_boolean" -> "builtins";
     "sys" -> "builtins";
     "sys" -> "sys";
-    "sys" -> "types";
     "types" -> "builtins";
+    "types" -> "sys";
 }
 digraph "literal_boolean" {
     "Entry";
