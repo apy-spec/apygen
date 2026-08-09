@@ -190,8 +190,9 @@ impl<'i> CfgBuilder<'i> {
 
         for (previous_point, edge_kind) in previous_points {
             cfg.graph
-                .get_mut_or_default_edge_data((previous_point, current_point))
+                .edge_entry((previous_point, current_point))
                 .expect("previous and current points should exist")
+                .or_default()
                 .insert(edge_kind);
         }
     }
@@ -377,14 +378,16 @@ impl<'i> CfgBuilder<'i> {
 
         for continue_point in result_points.continue_points.drain() {
             cfg.graph
-                .get_mut_or_default_edge_data((continue_point, current_point))
+                .edge_entry((continue_point, current_point))
                 .expect("continue and current points should exist")
+                .or_default()
                 .insert(CfgEdgeKind::Continue);
         }
         for (previous_point, edge_kind) in result_points.previous_points.drain() {
             cfg.graph
-                .get_mut_or_default_edge_data((previous_point, current_point))
+                .edge_entry((previous_point, current_point))
                 .expect("previous and current points should exist")
+                .or_default()
                 .insert(edge_kind);
         }
 

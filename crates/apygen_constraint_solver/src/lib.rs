@@ -1302,11 +1302,9 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
     ) -> Result<Option<Self::AbstractState>, Self::Error> {
         let (mut new_abstract_state, calls, definitions) = abstract_state.clone();
 
-        let guards = self
-            .constraint_graph
-            .graph
-            .get_edge_data(&(from.clone(), to.clone()))
-            .unwrap();
+        let edge = (from.clone(), to.clone());
+
+        let guards = self.constraint_graph.graph.get_edge_data(&edge).unwrap();
 
         let mut should_ignore = !guards.is_empty();
 
@@ -1827,7 +1825,7 @@ impl Display for NamespaceDependencyGraph {
 
 impl Graph for NamespaceDependencyGraph {
     type Node = Namespace;
-    type Edge = (Namespace, Namespace);
+    type Edge<'e> = &'e (Namespace, Namespace);
     type NodeData = NamespaceData;
     type EdgeData = imbl::OrdSet<EdgeKind>;
 
@@ -1835,7 +1833,7 @@ impl Graph for NamespaceDependencyGraph {
         self.nodes.iter()
     }
 
-    fn edges(&self) -> impl Iterator<Item = (&Self::Edge, &Self::EdgeData)> {
+    fn edges(&self) -> impl Iterator<Item = (Self::Edge<'_>, &Self::EdgeData)> {
         self.edges.iter()
     }
 }

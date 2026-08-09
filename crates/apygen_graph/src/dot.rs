@@ -104,9 +104,9 @@ pub fn fmt_labelled_edge(
     f.write_str("\"];\n")
 }
 
-pub fn fmt_display_edge(
+pub fn fmt_display_edge<'e>(
     f: &mut Formatter<'_>,
-    edge: &impl Edge<Node = impl Display>,
+    edge: impl Edge<'e, Node = impl Display + 'e>,
 ) -> fmt::Result {
     fmt_edge(
         f,
@@ -115,9 +115,9 @@ pub fn fmt_display_edge(
     )
 }
 
-pub fn fmt_display_labelled_edge(
+pub fn fmt_display_labelled_edge<'e>(
     f: &mut Formatter<'_>,
-    edge: &impl Edge<Node = impl Display>,
+    edge: impl Edge<'e, Node = impl Display + 'e>,
     label: &impl Display,
 ) -> fmt::Result {
     fmt_labelled_edge(

@@ -1,42 +1,156 @@
-use imbl::HashMap as ImmutableHashMap;
-use imbl::HashSet as ImmutableHashSet;
-use imbl::OrdMap;
-use imbl::OrdSet;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use imbl::{
+    HashMap as ImmutableHashMap, HashSet as ImmutableHashSet, OrdMap, OrdSet,
+    hashmap as immutable_hashmap, ordmap, shared_ptr::DefaultSharedPtr,
+};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map, hash_map};
 use std::fmt::{Display, Formatter};
-use std::hash::Hash;
+use std::hash::{Hash, RandomState};
 
-pub mod dot;
 pub use imbl;
+pub mod dot;
 
-pub trait Edge {
+pub trait GraphData {
     type Node;
-    fn from(&self) -> &Self::Node;
-    fn to(&self) -> &Self::Node;
+    type NodeData;
+
+    fn new(data: Self::NodeData) -> Self;
+    fn data(&self) -> &Self::NodeData;
+    fn data_mut(&mut self) -> &mut Self::NodeData;
+    fn into_data(self) -> Self::NodeData;
+    fn add_successor(&mut self, node: Self::Node);
+    fn remove_successor(&mut self, node: &Self::Node);
+    fn successors(&self) -> impl Iterator<Item = &Self::Node>;
+    fn add_predecessor(&mut self, node: Self::Node);
+    fn remove_predecessor(&mut self, node: &Self::Node);
+    fn predecessors(&self) -> impl Iterator<Item = &Self::Node>;
 }
 
-impl<N> Edge for (N, N) {
+macro_rules! impl_graph_data {
+    ($node:ty, $node_data:ty) => {
+        type Node = $node;
+        type NodeData = $node_data;
+
+        fn new(data: Self::NodeData) -> Self {
+            Self {
+                data,
+                successors: Default::default(),
+                predecessors: Default::default(),
+            }
+        }
+        fn data(&self) -> &Self::NodeData {
+            &self.data
+        }
+        fn data_mut(&mut self) -> &mut Self::NodeData {
+            &mut self.data
+        }
+        fn into_data(self) -> Self::NodeData {
+            self.data
+        }
+        fn add_successor(&mut self, node: Self::Node) {
+            self.successors.insert(node);
+        }
+        fn remove_successor(&mut self, node: &Self::Node) {
+            self.successors.remove(node);
+        }
+        fn successors(&self) -> impl Iterator<Item = &Self::Node> {
+            self.successors.iter()
+        }
+        fn add_predecessor(&mut self, node: Self::Node) {
+            self.predecessors.insert(node);
+        }
+        fn remove_predecessor(&mut self, node: &Self::Node) {
+            self.predecessors.remove(node);
+        }
+        fn predecessors(&self) -> impl Iterator<Item = &Self::Node> {
+            self.predecessors.iter()
+        }
+    };
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BTreeGraphData<N: Ord, ND> {
+    pub data: ND,
+    pub successors: BTreeSet<N>,
+    pub predecessors: BTreeSet<N>,
+}
+
+impl<N: Ord, ND> GraphData for BTreeGraphData<N, ND> {
+    impl_graph_data!(N, ND);
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct HashGraphData<N: Hash + Eq, ND> {
+    pub data: ND,
+    pub successors: HashSet<N>,
+    pub predecessors: HashSet<N>,
+}
+
+impl<N: Hash + Eq, ND> GraphData for HashGraphData<N, ND> {
+    impl_graph_data!(N, ND);
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OrdGraphData<N: Ord + Clone, ND> {
+    pub data: ND,
+    pub successors: OrdSet<N>,
+    pub predecessors: OrdSet<N>,
+}
+
+impl<N: Ord + Clone, ND> GraphData for OrdGraphData<N, ND> {
+    impl_graph_data!(N, ND);
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct ImmutableHashGraphData<N: Hash + Eq + Clone, ND> {
+    pub data: ND,
+    pub successors: ImmutableHashSet<N>,
+    pub predecessors: ImmutableHashSet<N>,
+}
+
+impl<N: Hash + Eq + Clone, ND> GraphData for ImmutableHashGraphData<N, ND> {
+    impl_graph_data!(N, ND);
+}
+
+pub trait Edge<'n> {
+    type Node;
+    fn from(&self) -> &'n Self::Node;
+    fn to(&self) -> &'n Self::Node;
+}
+
+impl<'n, N> Edge<'n> for (&'n N, &'n N) {
     type Node = N;
-    fn from(&self) -> &Self::Node {
+    fn from(&self) -> &'n Self::Node {
+        self.0
+    }
+    fn to(&self) -> &'n Self::Node {
+        self.1
+    }
+}
+
+impl<'n, N> Edge<'n> for &'n (N, N) {
+    type Node = N;
+    fn from(&self) -> &'n Self::Node {
         &self.0
     }
-    fn to(&self) -> &Self::Node {
+    fn to(&self) -> &'n Self::Node {
         &self.1
     }
 }
 
 pub trait Graph {
     type Node: Eq;
-    type Edge: Edge<Node = Self::Node> + Eq;
+    type Edge<'n>: Edge<'n, Node = Self::Node> + Eq
+    where
+        Self: 'n;
     type NodeData;
     type EdgeData;
 
     fn nodes(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)>;
-    fn edges(&self) -> impl Iterator<Item = (&Self::Edge, &Self::EdgeData)>;
+    fn edges(&self) -> impl Iterator<Item = (Self::Edge<'_>, &Self::EdgeData)>;
     fn node_indices(&self) -> impl Iterator<Item = &Self::Node> {
         self.nodes().into_iter().map(|(node, _)| node)
     }
-    fn edge_indices(&self) -> impl Iterator<Item = &Self::Edge> {
+    fn edge_indices(&self) -> impl Iterator<Item = Self::Edge<'_>> {
         self.edges().into_iter().map(|(edge, _)| edge)
     }
     fn get_node_data(&self, node: &Self::Node) -> Option<&Self::NodeData> {
@@ -47,7 +161,7 @@ pub trait Graph {
         }
         None
     }
-    fn get_edge_data(&self, edge: &Self::Edge) -> Option<&Self::EdgeData> {
+    fn get_edge_data<'n>(&'n self, edge: Self::Edge<'n>) -> Option<&'n Self::EdgeData> {
         for (e, edge_data) in self.edges() {
             if e == edge {
                 return Some(edge_data);
@@ -75,217 +189,307 @@ pub trait Graph {
     }
 }
 
-macro_rules! define_graph {
-    (
-        $graph:ident,
-        $data:ident,
-        $map:ident,
-        $set:ident,
-        bounds = ($($bounds:tt)*),
-        derives = ($($derives:tt)*)
-    ) => {
-        #[derive(Default, Debug, Clone, PartialEq, Eq, $($derives)*)]
-        struct $data<N: $($bounds)* + Clone, ND: Clone> {
-            pub data: ND,
-            pub successors: $set<N>,
-            pub predecessors: $set<N>,
+macro_rules! impl_graph_insert {
+    ($node:ty, $node_data:ty) => {
+        pub fn insert_node(&mut self, node: $node, data: $node_data) -> &mut $node_data {
+            self.nodes
+                .entry(node)
+                .insert_entry(GraphData::new(data))
+                .into_mut()
+                .data_mut()
         }
-
-        impl<N: $($bounds)* + Clone, ND: Clone> $data<N, ND> {
-            pub fn new(data: ND) -> Self {
-                Self {
-                    data,
-                    successors: $set::new(),
-                    predecessors: $set::new(),
-                }
-            }
+        pub fn get_or_insert_node(
+            &mut self,
+            node: $node,
+            f: impl FnOnce() -> $node_data,
+        ) -> &mut $node_data {
+            self.nodes
+                .entry(node)
+                .or_insert(GraphData::new(f()))
+                .data_mut()
         }
-
-        #[derive(Debug, Clone, PartialEq, Eq, $($derives)*)]
-        pub struct $graph<N: $($bounds)* + Clone, ND: Clone, ED: Clone> {
-            nodes: $map<N, $data<N, ND>>,
-            edges: $map<(N, N), ED>,
-        }
-
-        impl<N: $($bounds)* + Clone, ND: Clone, ED: Clone> $graph<N, ND, ED> {
-            pub fn new() -> Self {
-                Self::default()
-            }
-            pub fn insert_node(&mut self, node: N, data: ND) -> Option<ND> {
-                self.nodes
-                    .insert(node, $data::new(data))
-                    .map(|entry| entry.data)
-            }
-            pub fn get_mut_node_data(&mut self, node: &N) -> Option<&mut ND> {
-                self.nodes.get_mut(node).map(|node_data| &mut node_data.data)
-            }
-            pub fn get_mut_or_default_node_data(&mut self, node: N) -> &mut ND
-            where
-                ND: Default,
-            {
-                &mut self
-                    .nodes
-                    .entry(node)
-                    .or_insert($data::new(ND::default()))
-                    .data
-            }
-            pub fn remove_node(&mut self, node: &N) -> Option<ND> {
-                self.nodes.remove(node).map(|entry| entry.data)
-            }
-            pub fn insert_edge(&mut self, edge: (N, N), data: ED) -> Option<ED> {
-                if !self.nodes.contains_key(edge.from()) || !self.nodes.contains_key(edge.to()) {
-                    return None;
-                }
-
-                self.nodes
-                    .get_mut(edge.from())
-                    .expect("from node should exist")
-                    .successors
-                    .insert(edge.to().clone());
-                self.nodes
-                    .get_mut(edge.to())
-                    .expect("to node should exist")
-                    .predecessors
-                    .insert(edge.from().clone());
-
-                self.edges.insert(edge, data)
-            }
-            pub fn get_mut_edge_data(&mut self, edge: &(N, N)) -> Option<&mut ED> {
-                self.edges.get_mut(edge)
-            }
-            pub fn get_mut_or_default_edge_data(&mut self, edge: (N, N)) -> Option<&mut ED>
-            where
-                ED: Default,
-            {
-                if !self.nodes.contains_key(edge.from()) || !self.nodes.contains_key(edge.to()) {
-                    return None;
-                }
-
-                self.nodes
-                    .get_mut(edge.from())
-                    .expect("from node should exist")
-                    .successors
-                    .insert(edge.to().clone());
-                self.nodes
-                    .get_mut(edge.to())
-                    .expect("to node should exist")
-                    .predecessors
-                    .insert(edge.from().clone());
-
-                Some(self.edges.entry(edge).or_default())
-            }
-            pub fn remove_edge(&mut self, edge: &(N, N)) -> Option<ED> {
-                let previous_edge_data = self.edges.remove(edge)?;
-
-                self.nodes
-                    .get_mut(edge.from())
-                    .expect("from node should exist")
-                    .successors
-                    .remove(edge.to());
-                self.nodes
-                    .get_mut(edge.to())
-                    .expect("to node should exist")
-                    .predecessors
-                    .remove(edge.from());
-
-                Some(previous_edge_data)
+    };
+}
+macro_rules! impl_graph_methods {
+    ($node:ty, $node_data:ty, $edge_data:ty, $graph_data:ty, $entry:ty) => {
+        pub fn new() -> Self {
+            Self {
+                nodes: Default::default(),
+                edges: Default::default(),
             }
         }
-
-        impl<N: $($bounds)* + Clone, ND: Clone, ED: Clone> Default for $graph<N, ND, ED> {
-            fn default() -> Self {
-                Self {
-                    nodes: $map::default(),
-                    edges: $map::default(),
-                }
-            }
+        pub fn get_mut_node_data(&mut self, node: &$node) -> Option<&mut $node_data> {
+            Some(self.nodes.get_mut(node)?.data_mut())
         }
-
-        impl<N: $($bounds)* + Clone, ND: Clone, ED: Clone> Graph for $graph<N, ND, ED> {
-            type Node = N;
-            type Edge = (N, N);
-            type NodeData = ND;
-            type EdgeData = ED;
-
-            fn nodes(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
-                self.nodes
-                    .iter()
-                    .map(move |(node, entry)| (node, &entry.data))
-            }
-            fn edges(&self) -> impl Iterator<Item = (&Self::Edge, &Self::EdgeData)> {
-                self.edges.iter()
-            }
-            fn node_indices(&self) -> impl Iterator<Item = &Self::Node> {
-                self.nodes.keys()
-            }
-            fn edge_indices(&self) -> impl Iterator<Item = &Self::Edge> {
-                self.edges.keys()
-            }
-            fn get_node_data(&self, node: &Self::Node) -> Option<&Self::NodeData> {
-                self.nodes.get(node).map(|node_data| &node_data.data)
-            }
-            fn get_edge_data(&self, edge: &Self::Edge) -> Option<&Self::EdgeData> {
-                self.edges.get(edge)
-            }
-            fn successors(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
-                self.nodes
-                    .get(node)
-                    .into_iter()
-                    .flat_map(|node_data| node_data.successors.iter())
-            }
-            fn predecessors(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
-                self.nodes
-                    .get(node)
-                    .into_iter()
-                    .flat_map(|node_data| node_data.predecessors.iter())
-            }
+        pub fn remove_node(&mut self, node: &$node) -> Option<$node_data> {
+            Some(self.nodes.remove(node)?.into_data())
         }
-
-        impl<N: $($bounds)* + Clone + Display, ND: Clone + Display, ED: Clone + Display> dot::Dot for $graph<N, ND, ED> {
-            fn fmt(&self, f: &mut Formatter<'_>, name: &str) -> std::fmt::Result {
-                dot::fmt_digraph(f, &name, |f| {
-                    for (node, node_data) in self.nodes() {
-                        dot::fmt_display_labelled_node(f, node, node_data)?;
-                    }
-                    for (edge, edge_data) in self.edges() {
-                        dot::fmt_display_labelled_edge(f, edge, edge_data)?;
-                    }
-                    Ok(())
-                })
+        fn get_mut_node(&mut self, node: &$node) -> &mut $graph_data {
+            self.nodes.get_mut(node).expect("node should exist")
+        }
+        pub fn edge_entry(&mut self, (from, to): ($node, $node)) -> Option<$entry>
+        where
+            $node: Clone,
+        {
+            if !self.nodes.contains_key(&from) || !self.nodes.contains_key(&to) {
+                return None;
             }
+
+            self.get_mut_node(&from).add_successor(to.clone());
+            self.get_mut_node(&to).add_predecessor(from.clone());
+
+            Some(self.edges.entry((from, to)))
+        }
+        pub fn get_mut_edge_data(&mut self, edge: &($node, $node)) -> Option<&mut $edge_data> {
+            self.edges.get_mut(edge)
+        }
+        pub fn remove_edge(&mut self, edge: &($node, $node)) -> Option<$edge_data> {
+            let previous_edge_data = self.edges.remove(edge)?;
+
+            self.get_mut_node(edge.from()).remove_successor(edge.to());
+            self.get_mut_node(edge.to()).remove_predecessor(edge.from());
+
+            Some(previous_edge_data)
         }
     };
 }
 
-define_graph!(
-    BTreeGraph,
-    BTreeGraphData,
-    BTreeMap,
-    BTreeSet,
-    bounds = (Ord),
-    derives = (PartialOrd, Ord, Hash)
-);
-define_graph!(
-    HashGraph,
-    HashGraphData,
-    HashMap,
-    HashSet,
-    bounds = (Hash + Eq),
-    derives = ()
-);
-define_graph!(
-    OrdGraph,
-    OrdGraphData,
-    OrdMap,
-    OrdSet,
-    bounds = (Ord),
-    derives = (PartialOrd, Ord, Hash)
-);
-define_graph!(
-    ImmutableHashGraph,
-    ImmutableHashGraphData,
-    ImmutableHashMap,
-    ImmutableHashSet,
-    bounds = (Hash + Eq),
-    derives = ()
-);
+macro_rules! impl_graph_default {
+    () => {
+        fn default() -> Self {
+            Self::new()
+        }
+    };
+}
+
+macro_rules! impl_graph {
+    ($node:ty, $node_data:ty, $edge_data:ty) => {
+        type Node = $node;
+        type Edge<'n>
+            = &'n (Self::Node, Self::Node)
+        where
+            Self: 'n;
+        type NodeData = $node_data;
+        type EdgeData = $edge_data;
+
+        fn nodes(&self) -> impl Iterator<Item = (&Self::Node, &Self::NodeData)> {
+            self.nodes
+                .iter()
+                .map(move |(node, graph_data)| (node, graph_data.data()))
+        }
+        fn edges(&self) -> impl Iterator<Item = (Self::Edge<'_>, &Self::EdgeData)> {
+            self.edges.iter()
+        }
+        fn node_indices(&self) -> impl Iterator<Item = &Self::Node> {
+            self.nodes.keys()
+        }
+        fn edge_indices(&self) -> impl Iterator<Item = Self::Edge<'_>> {
+            self.edges.keys()
+        }
+        fn get_node_data(&self, node: &Self::Node) -> Option<&Self::NodeData> {
+            self.nodes.get(node).map(|graph_data| graph_data.data())
+        }
+        fn get_edge_data<'n>(&'n self, edge: Self::Edge<'n>) -> Option<&'n Self::EdgeData> {
+            self.edges.get(edge)
+        }
+        fn successors(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
+            self.nodes
+                .get(node)
+                .into_iter()
+                .flat_map(|graph_data| graph_data.successors())
+        }
+        fn predecessors(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
+            self.nodes
+                .get(node)
+                .into_iter()
+                .flat_map(|graph_data| graph_data.predecessors())
+        }
+    };
+}
+
+macro_rules! impl_graph_dot {
+    () => {
+        fn fmt(&self, f: &mut Formatter<'_>, name: &str) -> std::fmt::Result {
+            dot::fmt_digraph(f, &name, |f| {
+                for (node, node_data) in self.nodes() {
+                    dot::fmt_display_labelled_node(f, node, node_data)?;
+                }
+                for (edge, edge_data) in self.edges() {
+                    dot::fmt_display_labelled_edge(f, edge, edge_data)?;
+                }
+                Ok(())
+            })
+        }
+    };
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BTreeGraph<
+    N: Ord,
+    ND,
+    ED,
+    GD: GraphData<Node = N, NodeData = ND> = BTreeGraphData<N, ND>,
+> {
+    nodes: BTreeMap<N, GD>,
+    edges: BTreeMap<(N, N), ED>,
+}
+
+impl<N: Ord, ND, ED, GD: GraphData<Node = N, NodeData = ND>> BTreeGraph<N, ND, ED, GD> {
+    impl_graph_insert!(N, ND);
+    impl_graph_methods!(N, ND, ED, GD, btree_map::Entry<'_, (N, N), ED>);
+}
+
+impl<N: Ord, ND, ED, GD: GraphData<Node = N, NodeData = ND>> Default for BTreeGraph<N, ND, ED, GD> {
+    impl_graph_default!();
+}
+
+impl<N: Ord, ND, ED, GD: GraphData<Node = N, NodeData = ND>> Graph for BTreeGraph<N, ND, ED, GD> {
+    impl_graph!(N, ND, ED);
+}
+
+impl<N: Ord + Clone + Display, ND: Clone + Display, ED: Clone + Display> dot::Dot
+    for BTreeGraph<N, ND, ED>
+{
+    impl_graph_dot!();
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HashGraph<
+    N: Hash + Eq,
+    ND,
+    ED,
+    GD: GraphData<Node = N, NodeData = ND> = HashGraphData<N, ND>,
+> {
+    nodes: HashMap<N, GD>,
+    edges: HashMap<(N, N), ED>,
+}
+
+impl<N: Hash + Eq, ND, ED, GD: GraphData<Node = N, NodeData = ND>> HashGraph<N, ND, ED, GD> {
+    impl_graph_insert!(N, ND);
+    impl_graph_methods!(N, ND, ED, GD, hash_map::Entry<'_, (N, N), ED>);
+}
+
+impl<N: Hash + Eq, ND, ED, GD: GraphData<Node = N, NodeData = ND>> Default
+    for HashGraph<N, ND, ED, GD>
+{
+    impl_graph_default!();
+}
+
+impl<N: Hash + Eq, ND, ED, GD: GraphData<Node = N, NodeData = ND>> Graph
+    for HashGraph<N, ND, ED, GD>
+{
+    impl_graph!(N, ND, ED);
+}
+
+impl<N: Hash + Eq + Display, ND: Display, ED: Display> dot::Dot for HashGraph<N, ND, ED> {
+    impl_graph_dot!();
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OrdGraph<N: Ord, ND, ED, GD: GraphData<Node = N, NodeData = ND> = OrdGraphData<N, ND>> {
+    nodes: OrdMap<N, GD>,
+    edges: OrdMap<(N, N), ED>,
+}
+
+impl<N: Ord + Clone, ND: Clone, ED: Clone, GD: GraphData<Node = N, NodeData = ND> + Clone>
+    OrdGraph<N, ND, ED, GD>
+{
+    pub fn insert_node(&mut self, node: N, data: ND) -> &mut ND {
+        match self.nodes.entry(node) {
+            ordmap::Entry::Occupied(entry) => {
+                let current = entry.into_mut().data_mut();
+                *current = data;
+                current
+            }
+            ordmap::Entry::Vacant(entry) => entry.insert(GraphData::new(data)).data_mut(),
+        }
+    }
+    pub fn get_or_insert_node(&mut self, node: N, f: impl FnOnce() -> ND) -> &mut ND {
+        match self.nodes.entry(node) {
+            ordmap::Entry::Occupied(entry) => entry.into_mut().data_mut(),
+            ordmap::Entry::Vacant(entry) => entry.insert(GraphData::new(f())).data_mut(),
+        }
+    }
+    impl_graph_methods!(
+        N,
+        ND,
+        ED,
+        GD,
+        ordmap::Entry<'_, (N, N), ED, DefaultSharedPtr>
+    );
+}
+
+impl<N: Ord + Clone, ND: Clone, ED: Clone, GD: GraphData<Node = N, NodeData = ND> + Clone> Default
+    for OrdGraph<N, ND, ED, GD>
+{
+    impl_graph_default!();
+}
+
+impl<N: Ord, ND, ED, GD: GraphData<Node = N, NodeData = ND>> Graph for OrdGraph<N, ND, ED, GD> {
+    impl_graph!(N, ND, ED);
+}
+
+impl<N: Ord + Clone + Display, ND: Clone + Display, ED: Clone + Display> dot::Dot
+    for OrdGraph<N, ND, ED>
+{
+    impl_graph_dot!();
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImmutableHashGraph<
+    N: Hash + Eq,
+    ND,
+    ED,
+    GD: GraphData<Node = N, NodeData = ND> = ImmutableHashGraphData<N, ND>,
+> {
+    nodes: ImmutableHashMap<N, GD>,
+    edges: ImmutableHashMap<(N, N), ED>,
+}
+
+impl<N: Hash + Eq + Clone, ND: Clone, ED: Clone, GD: GraphData<Node = N, NodeData = ND> + Clone>
+    ImmutableHashGraph<N, ND, ED, GD>
+{
+    pub fn insert_node(&mut self, node: N, data: ND) -> &mut ND {
+        match self.nodes.entry(node) {
+            immutable_hashmap::Entry::Occupied(entry) => {
+                let current = entry.into_mut().data_mut();
+                *current = data;
+                current
+            }
+            immutable_hashmap::Entry::Vacant(entry) => {
+                entry.insert(GraphData::new(data)).data_mut()
+            }
+        }
+    }
+    pub fn get_or_insert_node(&mut self, node: N, f: impl FnOnce() -> ND) -> &mut ND {
+        match self.nodes.entry(node) {
+            immutable_hashmap::Entry::Occupied(entry) => entry.into_mut().data_mut(),
+            immutable_hashmap::Entry::Vacant(entry) => entry.insert(GraphData::new(f())).data_mut(),
+        }
+    }
+    impl_graph_methods!(
+        N,
+        ND,
+        ED,
+        GD,
+        immutable_hashmap::Entry<'_, (N, N), ED, RandomState, DefaultSharedPtr>
+    );
+}
+
+impl<N: Hash + Eq + Clone, ND: Clone, ED: Clone, GD: GraphData<Node = N, NodeData = ND> + Clone>
+    Default for ImmutableHashGraph<N, ND, ED, GD>
+{
+    impl_graph_default!();
+}
+
+impl<N: Hash + Eq, ND, ED, GD: GraphData<Node = N, NodeData = ND>> Graph
+    for ImmutableHashGraph<N, ND, ED, GD>
+{
+    impl_graph!(N, ND, ED);
+}
+
+impl<N: Hash + Eq + Clone + Display, ND: Display, ED: Display> dot::Dot
+    for ImmutableHashGraph<N, ND, ED>
+{
+    impl_graph_dot!();
+}

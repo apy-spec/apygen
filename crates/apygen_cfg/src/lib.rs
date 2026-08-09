@@ -1,8 +1,8 @@
-use crate::graph::{HashGraph, Graph};
 use crate::graph::dot::{
     Dot, fmt_digraph, fmt_display_edge, fmt_display_labelled_edge, fmt_display_labelled_node,
     fmt_display_node,
 };
+use crate::graph::{Graph, HashGraph};
 use ast::{
     ElifElseClause, Stmt, StmtAnnAssign, StmtAssert, StmtAssign, StmtAugAssign, StmtBreak,
     StmtClassDef, StmtContinue, StmtDelete, StmtExpr, StmtFor, StmtFunctionDef, StmtGlobal, StmtIf,
@@ -16,14 +16,14 @@ use std::hash::Hash;
 use text_size::TextSize;
 use thiserror::Error;
 
+pub use apygen_graph as graph;
+pub use apygen_identifiers as identifiers;
 pub use builder::{BuildCfgError, build_cfg};
 pub use identifiers::Location;
 pub use ruff_python_ast as ast;
 pub use ruff_python_parser as parser;
 pub use ruff_source_file as source_file;
 pub use ruff_text_size as text_size;
-pub use apygen_graph as graph;
-pub use apygen_identifiers as identifiers;
 pub mod builder;
 
 #[derive(Debug, Error)]
@@ -223,10 +223,12 @@ impl<'s> Cfg<'s> {
 
     pub fn empty() -> Self {
         let mut cfg = Cfg::default();
-        cfg.graph.insert_edge(
-            (ProgramPoint::Entry, ProgramPoint::Exit),
-            BTreeSet::default(),
-        );
+        cfg.graph.insert_node(ProgramPoint::Entry, None);
+        cfg.graph.insert_node(ProgramPoint::Exit, None);
+        cfg.graph
+            .edge_entry((ProgramPoint::Entry, ProgramPoint::Exit))
+            .expect("Edge should be inserted successfully")
+            .insert_entry(BTreeSet::default());
         cfg
     }
 }

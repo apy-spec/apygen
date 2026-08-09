@@ -1627,7 +1627,9 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
         to: &Self::Node,
         abstract_state: &Self::AbstractState,
     ) -> Result<Option<Self::AbstractState>, Self::Error> {
-        let Some(edge_kinds) = self.cfg.graph.get_edge_data(&(*from, *to)) else {
+        let edge = (*from, *to);
+
+        let Some(edge_kinds) = self.cfg.graph.get_edge_data(&edge) else {
             return Ok(None);
         };
 
@@ -1872,9 +1874,12 @@ pub fn create_constraint_graph(
         graph.insert_node(node, constraints);
     }
     for ((from, to), guards) in environment.edges {
-        graph.get_mut_or_default_node_data(from.clone());
-        graph.get_mut_or_default_node_data(to.clone());
-        graph.insert_edge((from, to), guards);
+        graph.get_or_insert_node(from.clone(), imbl::OrdSet::default);
+        graph.get_or_insert_node(to.clone(), imbl::OrdSet::default);
+        graph
+            .edge_entry((from, to))
+            .expect("Edge should exists")
+            .or_insert(guards);
     }
 
     let constraint_graph = ConstraintGraph::new(
