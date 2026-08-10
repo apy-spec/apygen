@@ -14,10 +14,10 @@ pub trait GraphAnalyser {
     type Error;
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error>;
-    fn next_nodes(
-        &self,
-        node: &Self::Node,
-    ) -> Result<impl Iterator<Item = &Self::Node>, Self::Error>;
+    fn next_nodes<'a: 'n, 'n>(
+        &'a self,
+        node: &'n Self::Node,
+    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error>;
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error>;
     fn analyse_node(
@@ -158,15 +158,15 @@ pub trait DependencyGraphAnalyser {
     type Error;
 
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error>;
-    fn dependency_nodes<'a>(
+    fn dependency_nodes<'a: 'n, 'n>(
         &'a self,
         analysis_state: &'a Self::AnalysisState,
-        node: &'a Self::Node,
+        node: &'n Self::Node,
     ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error>;
-    fn dependent_nodes<'a>(
+    fn dependent_nodes<'a: 'n, 'n>(
         &'a self,
         analysis_state: &'a Self::AnalysisState,
-        node: &'a Self::Node,
+        node: &'n Self::Node,
     ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error>;
 
     fn initialise_analysis_state(&self) -> Result<Self::AnalysisState, Self::Error>;

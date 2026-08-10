@@ -1144,10 +1144,10 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
         Ok(std::iter::once(ConstraintNode::Entry))
     }
 
-    fn next_nodes(
-        &self,
-        node: &Self::Node,
-    ) -> Result<impl Iterator<Item = &Self::Node>, Self::Error> {
+    fn next_nodes<'a: 'n, 'n>(
+        &'a self,
+        node: &'n Self::Node,
+    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
         Ok(self.constraint_graph.graph.successors(node))
     }
 
@@ -2154,10 +2154,10 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
         Ok(std::iter::once(BUILTINS_MODULE))
     }
-    fn dependency_nodes<'a>(
+    fn dependency_nodes<'a: 'n, 'n>(
         &'a self,
         analysis_state: &'a Self::AnalysisState,
-        node: &'a Self::Node,
+        node: &'n Self::Node,
     ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
         Ok(self
             .module_namespaces
@@ -2179,10 +2179,10 @@ impl DependencyGraphAnalyser for ModuleConstraintSolver<'_> {
                 }
             }))
     }
-    fn dependent_nodes<'a>(
+    fn dependent_nodes<'a: 'n, 'n>(
         &'a self,
         analysis_state: &'a Self::AnalysisState,
-        node: &'a Self::Node,
+        node: &'n Self::Node,
     ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
         Ok(self
             .module_namespaces

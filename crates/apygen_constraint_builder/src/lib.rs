@@ -1580,10 +1580,10 @@ impl GraphAnalyser for ConstraintsBuilder<'_> {
     fn entry_nodes(&self) -> Result<impl Iterator<Item = Self::Node>, Self::Error> {
         Ok(std::iter::once(ProgramPoint::Entry))
     }
-    fn next_nodes(
-        &self,
-        node: &Self::Node,
-    ) -> Result<impl Iterator<Item = &Self::Node>, Self::Error> {
+    fn next_nodes<'a: 'n, 'n>(
+        &'a self,
+        node: &'n Self::Node,
+    ) -> Result<impl Iterator<Item = &'a Self::Node>, Self::Error> {
         Ok(self.cfg.graph.successors(node))
     }
 

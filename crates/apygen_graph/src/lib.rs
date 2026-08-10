@@ -169,7 +169,10 @@ pub trait Graph {
         }
         None
     }
-    fn successors(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
+    fn successors<'a: 'n, 'n>(
+        &'a self,
+        node: &'n Self::Node,
+    ) -> impl Iterator<Item = &'a Self::Node> {
         self.edge_indices().filter_map(move |edge| {
             if edge.from() == node {
                 Some(edge.to())
@@ -178,7 +181,10 @@ pub trait Graph {
             }
         })
     }
-    fn predecessors(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
+    fn predecessors<'a: 'n, 'n>(
+        &'a self,
+        node: &'n Self::Node,
+    ) -> impl Iterator<Item = &'a Self::Node> {
         self.edge_indices().filter_map(move |edge| {
             if edge.to() == node {
                 Some(edge.from())
@@ -308,13 +314,19 @@ macro_rules! impl_graph {
         fn get_edge_data<'a: 'n, 'n>(&'a self, edge: Self::Edge<'n>) -> Option<&'a Self::EdgeData> {
             self.edges.get(edge)
         }
-        fn successors(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
+        fn successors<'a: 'n, 'n>(
+            &'a self,
+            node: &'n Self::Node,
+        ) -> impl Iterator<Item = &'a Self::Node> {
             self.nodes
                 .get(node)
                 .into_iter()
                 .flat_map(|graph_data| graph_data.successors())
         }
-        fn predecessors(&self, node: &Self::Node) -> impl Iterator<Item = &Self::Node> {
+        fn predecessors<'a: 'n, 'n>(
+            &'a self,
+            node: &'n Self::Node,
+        ) -> impl Iterator<Item = &'a Self::Node> {
             self.nodes
                 .get(node)
                 .into_iter()
