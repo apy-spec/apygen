@@ -5,7 +5,7 @@ use crate::analysis::{DummyAnalysisObserver, GraphAnalyser, analysis};
 use crate::cfg::ast;
 use crate::cfg::build_cfg;
 use crate::cfg::convert_text_size_to_location;
-use crate::cfg::graph::{Graph, OrdGraph};
+use crate::cfg::graph::{Graph, GraphMut, OrdGraph};
 use crate::cfg::parser::parse_module;
 use crate::cfg::source_file::LineIndex;
 use crate::cfg::text_size::Ranged;

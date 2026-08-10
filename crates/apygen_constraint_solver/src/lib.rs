@@ -11,7 +11,7 @@ use crate::constraint_graph::expressions::{
     ExpressionSubscript, ExpressionUnary, ExpressionVariableDefinition,
     ExpressionVariableReference, Namespace, Parameter, SmolStr,
 };
-use crate::constraint_graph::graph::{Graph, ImmutableHashGraph};
+use crate::constraint_graph::graph::{Graph, GraphMut, ImmutableHashGraph};
 use crate::constraint_graph::{Constraint, ConstraintGraph, ConstraintNode, Guard, ImportGraph};
 use crate::expressions::literal_class::method_resolution_order;
 use crate::expressions::{Call, Definition, PyEffects, PyTypeEval, gen_bool_value, type_literal};

@@ -2,6 +2,7 @@ use crate::ast::{
     ExceptHandler, Stmt, StmtBreak, StmtClassDef, StmtContinue, StmtFor, StmtFunctionDef, StmtIf,
     StmtMatch, StmtPass, StmtRaise, StmtReturn, StmtTry, StmtWhile, StmtWith, Suite,
 };
+use crate::graph::GraphMut;
 use crate::source_file::LineIndex;
 use crate::text_size::Ranged;
 use crate::{

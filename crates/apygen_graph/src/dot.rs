@@ -1,4 +1,4 @@
-use crate::Edge;
+use crate::EdgeRef;
 use std::fmt::{self, Display, Formatter};
 
 pub fn escape_dot(string: &str) -> String {
@@ -106,7 +106,7 @@ pub fn fmt_labelled_edge(
 
 pub fn fmt_display_edge<'e>(
     f: &mut Formatter<'_>,
-    edge: impl Edge<'e, Node = impl Display + 'e>,
+    edge: impl EdgeRef<'e, Node = impl Display + 'e>,
 ) -> fmt::Result {
     fmt_edge(
         f,
@@ -117,7 +117,7 @@ pub fn fmt_display_edge<'e>(
 
 pub fn fmt_display_labelled_edge<'e>(
     f: &mut Formatter<'_>,
-    edge: impl Edge<'e, Node = impl Display + 'e>,
+    edge: impl EdgeRef<'e, Node = impl Display + 'e>,
     label: &impl Display,
 ) -> fmt::Result {
     fmt_labelled_edge(

@@ -2,7 +2,7 @@ use crate::graph::dot::{
     Dot, fmt_digraph, fmt_display_edge, fmt_display_labelled_node, fmt_display_node,
     fmt_labelled_edge,
 };
-use crate::graph::{Graph, HashGraph};
+use crate::graph::{EdgeRef, Graph, GraphMut, HashGraph};
 use ast::{
     ElifElseClause, Stmt, StmtAnnAssign, StmtAssert, StmtAssign, StmtAugAssign, StmtBreak,
     StmtClassDef, StmtContinue, StmtDelete, StmtExpr, StmtFor, StmtFunctionDef, StmtGlobal, StmtIf,
@@ -17,7 +17,6 @@ use text_size::TextSize;
 use thiserror::Error;
 
 pub use apygen_graph as graph;
-use apygen_graph::Edge;
 pub use apygen_identifiers as identifiers;
 pub use builder::{BuildCfgError, build_cfg};
 pub use identifiers::Location;
@@ -25,7 +24,6 @@ pub use ruff_python_ast as ast;
 pub use ruff_python_parser as parser;
 pub use ruff_source_file as source_file;
 pub use ruff_text_size as text_size;
-
 pub mod builder;
 
 #[derive(Debug, Error)]
