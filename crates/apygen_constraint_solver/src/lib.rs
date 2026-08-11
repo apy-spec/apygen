@@ -120,22 +120,22 @@ impl<'s> ConstraintSolver<'s> {
         }
     }
 
-    pub fn evaluator(&self, mode: EvaluatorMode) -> ExpressionEvaluator<'_> {
-        ExpressionEvaluator::new(mode, self.namespace, self.namespace_dependent_graph)
-    }
-
     pub fn evaluate_expression<
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
     >(
         &self,
         mode: EvaluatorMode,
-        program_evaluation: &S,
+        abstract_state: &S,
         expression: &Expression,
     ) -> Deferred<PyTypeEval<S>, Expression> {
-        match self
-            .evaluator(mode)
-            .evaluate_expression(program_evaluation, expression)
-        {
+        let expression_evaluator = ExpressionEvaluator::new(
+            mode,
+            self.namespace,
+            abstract_state,
+            self.namespace_dependent_graph,
+        );
+
+        match expression_evaluator.evaluate_expression(expression) {
             Ok(eval) => Deferred::known(eval),
             Err(_) => Deferred::unknown(imbl::OrdSet::unit(Arc::new(expression.clone()))),
         }
