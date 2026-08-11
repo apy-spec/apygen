@@ -1,7 +1,7 @@
 use crate::EvaluationState;
 use crate::analysis::abstract_state::AbstractState;
 use crate::constraint_graph::expressions::{BinaryOperator, UnaryOperator};
-use crate::expressions::PyTypeEval;
+use crate::evaluation::PyTypeEval;
 use crate::identifiers::Namespace;
 use crate::inference::{Exception, Sourced, Type};
 use crate::primitives::literals::{LiteralBool, LiteralFloat, LiteralInt};

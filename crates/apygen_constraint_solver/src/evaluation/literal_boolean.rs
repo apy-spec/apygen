@@ -1,10 +1,10 @@
 use crate::analysis::abstract_state::AbstractState;
 use crate::constraint_graph::expressions::{BinaryOperator, UnaryOperator};
-use crate::expressions::PyTypeEval;
+use crate::evaluation::PyTypeEval;
 use crate::identifiers::Namespace;
 use crate::inference::Type;
 use crate::primitives::literals::{LiteralBool, LiteralInt};
-use crate::{EvaluationState, expressions};
+use crate::{EvaluationState, evaluation};
 
 pub fn as_integer(literal_boolean: &LiteralBool) -> i64 {
     if literal_boolean.value { 1 } else { 0 }
@@ -56,7 +56,7 @@ pub fn call_binary_op<S: AbstractState<Key = Namespace, AbstractValue = Evaluati
     operator: BinaryOperator,
     right: &LiteralBool,
 ) -> PyTypeEval<S> {
-    expressions::literal_integer::call_binary_op(
+    evaluation::literal_integer::call_binary_op(
         &LiteralInt::from(as_integer(left)),
         operator,
         &LiteralInt::from(as_integer(right)),

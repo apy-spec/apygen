@@ -63,7 +63,7 @@ pub fn method_resolution_order(literal_class: &LiteralClass) -> Option<VecDeque<
 
 #[cfg(test)]
 mod tests {
-    use crate::expressions::literal_class::method_resolution_order;
+    use crate::evaluation::literal_class::method_resolution_order;
     use crate::identifiers::{NamedQualifiedLocation, SmolStr};
     use crate::inference::{ClassType, LiteralClass};
     use apygen_constraint_graph::expressions::{Location, Namespace};

@@ -13,8 +13,8 @@ use crate::constraint_graph::expressions::{
 };
 use crate::constraint_graph::graph::{Graph, GraphMut, ImmutableHashGraph};
 use crate::constraint_graph::{Constraint, ConstraintGraph, ConstraintNode, Guard, ImportGraph};
-use crate::expressions::literal_class::method_resolution_order;
-use crate::expressions::{Call, Definition, PyEffects, PyTypeEval, gen_bool_value, type_literal};
+use crate::evaluation::literal_class::method_resolution_order;
+use crate::evaluation::{Call, Definition, PyEffects, PyTypeEval, gen_bool_value, type_literal};
 use crate::identifiers::smol_str::format_smolstr;
 use crate::identifiers::{Location, NamedQualifiedLocation, QualifiedLocation};
 use crate::inference::{
@@ -42,7 +42,7 @@ pub use apygen_primitives as primitives;
 pub use imbl;
 
 pub mod calls;
-pub mod expressions;
+pub mod evaluation;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Join)]
 pub struct EvaluationState {
