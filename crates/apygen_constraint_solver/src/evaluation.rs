@@ -613,6 +613,7 @@ pub struct ExpressionEvaluator<
         NodeData = Definition,
         EdgeData = imbl::OrdSet<EdgeKind>,
     >,
+    pub expression: Option<&'a Expression>,
 }
 
 impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord>
@@ -627,12 +628,14 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
             NodeData = Definition,
             EdgeData = imbl::OrdSet<EdgeKind>,
         >,
+        expression: Option<&'a Expression>,
     ) -> Self {
         Self {
             mode,
             namespace,
             abstract_state,
             namespace_dependent_graph,
+            expression,
         }
     }
 
@@ -642,6 +645,7 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
             namespace,
             self.abstract_state,
             self.namespace_dependent_graph,
+            self.expression,
         )
     }
 
@@ -651,6 +655,7 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
             self.namespace,
             self.abstract_state,
             self.namespace_dependent_graph,
+            self.expression,
         )
     }
 
@@ -674,9 +679,9 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_expression_variable_definition(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression_variable_definition: &ExpressionVariableDefinition,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression_variable_definition: &'a ExpressionVariableDefinition,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         let namespace = expression_variable_definition.namespace();
 
@@ -698,9 +703,9 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_expression_variable_reference(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression_variable_reference: &ExpressionVariableReference,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression_variable_reference: &'a ExpressionVariableReference,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         if let Some(evaluation_state) = self.abstract_state.get(&self.namespace) {
             if let Some(deferred_ty) = if matches!(self.mode, EvaluatorMode::Normal) {
@@ -745,9 +750,9 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_expression_annotated(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression_annotated: &ExpressionAnnotated,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression_annotated: &'a ExpressionAnnotated,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
@@ -780,17 +785,17 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_expression_override(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression_override: &ExpressionOverride,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression_override: &'a ExpressionOverride,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         self.evaluate_expression(known_evaluations, &expression_override.previous)
     }
 
     pub fn evaluate_expression_function(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression_function: &ExpressionFunction,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression_function: &'a ExpressionFunction,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
@@ -852,9 +857,9 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_expression_class(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression_class: &ExpressionClass,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression_class: &'a ExpressionClass,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         let class_namespace =
             Namespace::NamedProgramEntity(expression_class.program_entity.clone());
@@ -875,9 +880,9 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_expression_import(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression_import: &ExpressionImport,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression_import: &'a ExpressionImport,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         let namespace = Namespace::Module(expression_import.module.clone());
 
@@ -896,7 +901,7 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
 
     /// References: https://docs.python.org/3/howto/descriptor.html
     fn evaluate_attributes(
-        &self,
+        &mut self,
         value_ty: &Type,
         name: &SmolStr,
         instance_arguments: Option<&imbl::Vector<Arc<Type>>>,
@@ -982,9 +987,9 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_expression_attribute(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression_attribute: &ExpressionAttribute,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression_attribute: &'a ExpressionAttribute,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
@@ -1001,9 +1006,9 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_expression_subscript(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression_subscript: &ExpressionSubscript,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression_subscript: &'a ExpressionSubscript,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
@@ -1037,8 +1042,8 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_call(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
         ty: &Type,
         arguments: Arguments,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
@@ -1104,9 +1109,9 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_expression_call(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression_call: &ExpressionCall,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression_call: &'a ExpressionCall,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
@@ -1142,9 +1147,9 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_expression_unary(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression_unary: &ExpressionUnary,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression_unary: &'a ExpressionUnary,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
@@ -1168,8 +1173,8 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_binary_operation(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
         left_ty: &Type,
         operator: BinaryOperator,
         right_ty: &Type,
@@ -1287,9 +1292,9 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_expression_binary(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression_binary: &ExpressionBinary,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression_binary: &'a ExpressionBinary,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         let mut effects = PyEffects::new();
 
@@ -1316,10 +1321,16 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
     }
 
     pub fn evaluate_expression(
-        &self,
-        known_evaluations: &'a mut BTreeMap<Namespace, BTreeMap<Arc<Expression>, Sourced<Type>>>,
-        expression: &Expression,
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        expression: &'a Expression,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
+        if let Some(expressions) = known_evaluations.get(self.namespace) {
+            if let Some(eval) = expressions.get(expression) {
+                return Ok(eval.clone());
+            }
+        }
+
         let Some(evaluation_state) = self.abstract_state.get(self.namespace) else {
             return Err(EvaluationError::NamespaceReferenceError(
                 self.namespace.clone(),
@@ -1327,9 +1338,39 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
         };
 
         if let Some(deferred_ty) = evaluation_state.types.get(expression) {
-            return Ok(PyTypeEval::with_default_effects(Self::extract_deferred(
-                deferred_ty.clone(),
-            )?));
+            if let Some(evaluation_expression) = self.expression {
+                if evaluation_expression == expression {
+                    return Err(EvaluationError::Deferred);
+                }
+            }
+
+            self.expression = Some(expression);
+
+            let mut effects = PyEffects::new();
+            let mut sourced_ty = deferred_ty.value.clone();
+
+            for deferred_expression in &deferred_ty.expressions {
+                if let Ok(deferred_eval) =
+                    self.evaluate_expression(known_evaluations, deferred_expression)
+                {
+                    sourced_ty = sourced_ty.join(&effects.consume(deferred_eval));
+                } else {
+                    self.expression = None;
+
+                    return Err(EvaluationError::Deferred);
+                }
+            }
+
+            let eval = PyTypeEval::new(sourced_ty, effects);
+
+            known_evaluations
+                .entry(self.namespace.clone())
+                .or_default()
+                .insert(expression.clone(), eval.clone());
+
+            self.expression = None;
+
+            return Ok(eval);
         }
 
         match expression {

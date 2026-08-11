@@ -128,11 +128,12 @@ impl<'s> ConstraintSolver<'s> {
         abstract_state: &S,
         expression: &Expression,
     ) -> Deferred<PyTypeEval<S>, Expression> {
-        let expression_evaluator = ExpressionEvaluator::new(
+        let mut expression_evaluator = ExpressionEvaluator::new(
             mode,
             self.namespace,
             abstract_state,
             self.namespace_dependent_graph,
+            None,
         );
         let mut known_evaluations = BTreeMap::new();
 
