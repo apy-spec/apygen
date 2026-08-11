@@ -8,8 +8,8 @@ use crate::constraint_graph::graph::{Graph, GraphMut};
 use crate::constraint_graph::{Constraint, ConstraintGraph, ConstraintNode, Guard, ImportGraph};
 use crate::dependent_graph::{DependentGraph, DependentGraphProxy, ImmutableHashDependentGraph};
 use crate::evaluation::{
-    Call, Definition, EdgeCall, EdgeKind, EvaluationState, EvaluatorMode, ExpressionEvaluator,
-    PyTypeEval, gen_bool_value,
+    Call, Definition, EdgeCall, EdgeKind, EvaluationError, EvaluationState, EvaluatorMode,
+    ExpressionEvaluator, PyTypeEval, gen_bool_value,
 };
 use crate::identifiers::QualifiedLocation;
 use crate::inference::{
@@ -120,27 +120,51 @@ impl<'s> ConstraintSolver<'s> {
         }
     }
 
-    pub fn evaluate_expression<
+    pub fn evaluator<
+        'a,
         S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
     >(
-        &self,
-        mode: EvaluatorMode,
-        abstract_state: &S,
-        expression: &Expression,
-    ) -> Deferred<PyTypeEval<S>, Expression> {
-        let mut expression_evaluator = ExpressionEvaluator::new(
-            mode,
+        &'a self,
+        abstract_state: &'a S,
+    ) -> ExpressionEvaluator<'a, S> {
+        ExpressionEvaluator::new(
+            EvaluatorMode::Normal,
             self.namespace,
             abstract_state,
             self.namespace_dependent_graph,
             None,
-        );
+        )
+    }
+
+    pub fn evaluate_expression<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
+        &self,
+        abstract_state: &S,
+        expression: &Expression,
+    ) -> Deferred<PyTypeEval<S>, Expression> {
+        let mut expression_evaluator = self.evaluator(abstract_state);
+
         let mut known_evaluations = BTreeMap::new();
 
         match expression_evaluator.evaluate_expression(&mut known_evaluations, expression) {
             Ok(eval) => Deferred::known(eval),
             Err(_) => Deferred::unknown(imbl::OrdSet::unit(Arc::new(expression.clone()))),
         }
+    }
+
+    pub fn evaluate_deferred_type<
+        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
+    >(
+        &self,
+        abstract_state: &S,
+        deferred_ty: &Deferred<Sourced<Type>, Expression>,
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
+        let mut expression_evaluator = self.evaluator(abstract_state);
+
+        let mut known_evaluations = BTreeMap::new();
+
+        expression_evaluator.evaluate_deferred_type(&mut known_evaluations, deferred_ty)
     }
 }
 
@@ -239,7 +263,6 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                         match constraint {
                             Constraint::Type(type_constraint) => {
                                 let deferred = self.evaluate_expression(
-                                    EvaluatorMode::Normal,
                                     &program_evaluation,
                                     &type_constraint.left,
                                 );
@@ -247,16 +270,32 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                 let deferred_raised_exceptions =
                                     deferred.clone().map(|eval| eval.effects.exceptions);
 
+                                let mut previous_deferred_ty = Deferred::default();
+                                if let Some(evaluation_state) =
+                                    program_evaluation.get(self.namespace)
+                                {
+                                    if let Some(deferred_ty) =
+                                        evaluation_state.types.get(&type_constraint.right)
+                                    {
+                                        if !deferred_ty.expressions.is_empty() {
+                                            if let Ok(eval) = self.evaluate_deferred_type(
+                                                &program_evaluation,
+                                                &deferred_ty,
+                                            ) {
+                                                previous_deferred_ty.value = eval.value;
+                                            }
+                                        }
+                                    }
+                                }
+
                                 let evaluation_state = program_evaluation
                                     .get_or_insert_default(self.namespace.clone());
 
-                                evaluation_state
-                                    .types
-                                    .entry(type_constraint.right.clone())
-                                    .and_modify(|previous_deferred| {
-                                        *previous_deferred = previous_deferred.join(&deferred_ty)
-                                    })
-                                    .or_insert(deferred_ty);
+                                evaluation_state.types.insert(
+                                    type_constraint.right.clone(),
+                                    previous_deferred_ty.join(&deferred_ty),
+                                );
+
                                 evaluation_state.raised_exceptions = evaluation_state
                                     .raised_exceptions
                                     .join(&deferred_raised_exceptions);
@@ -275,7 +314,6 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                             }
                             Constraint::Return(return_constraint) => {
                                 let deferred = self.evaluate_expression(
-                                    EvaluatorMode::Normal,
                                     &program_evaluation,
                                     &return_constraint.expression,
                                 );
@@ -390,11 +428,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     should_ignore = false;
                 }
                 Guard::IsTrue(expression) => {
-                    let deferred = self.evaluate_expression(
-                        EvaluatorMode::Normal,
-                        &new_abstract_state,
-                        &expression,
-                    );
+                    let deferred = self.evaluate_expression(&new_abstract_state, &expression);
 
                     if let Some(eval) = deferred.to_value() {
                         if let Some(bool_value) = gen_bool_value(&eval.value.data) {
@@ -407,11 +441,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     should_ignore = false;
                 }
                 Guard::IsFalse(expression) => {
-                    let deferred = self.evaluate_expression(
-                        EvaluatorMode::Normal,
-                        &new_abstract_state,
-                        &expression,
-                    );
+                    let deferred = self.evaluate_expression(&new_abstract_state, &expression);
 
                     if let Some(eval) = deferred.to_value() {
                         if let Some(bool_value) = gen_bool_value(&eval.value.data) {
@@ -424,11 +454,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     should_ignore = false;
                 }
                 Guard::Succeed(expression) => {
-                    let deferred = self.evaluate_expression(
-                        EvaluatorMode::Normal,
-                        &new_abstract_state,
-                        &expression,
-                    );
+                    let deferred = self.evaluate_expression(&new_abstract_state, &expression);
 
                     if let Some(eval) = deferred.to_value() {
                         if is_sourced_type_unreachable!(eval.value) {
@@ -439,11 +465,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                     should_ignore = false;
                 }
                 Guard::Raise { expression, .. } => {
-                    let deferred = self.evaluate_expression(
-                        EvaluatorMode::Normal,
-                        &new_abstract_state,
-                        &expression,
-                    );
+                    let deferred = self.evaluate_expression(&new_abstract_state, &expression);
 
                     if let Some(eval) = deferred.as_value() {
                         if eval.effects.exceptions.exceptions.is_empty() {
@@ -512,11 +534,18 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
         );
 
         if let Some(evaluation_state) = new_abstract_state.get(&self.namespace) {
-            let new_evaluations = evaluation_state
+            let new_types = evaluation_state
                 .types
                 .clone()
                 .into_iter()
                 .map(|(expression, mut deferred)| {
+                    if !deferred.expressions.is_empty() {
+                        if let Ok(eval) =
+                            self.evaluate_deferred_type(&new_abstract_state, &deferred)
+                        {
+                            deferred.value = eval.value;
+                        }
+                    }
                     while deferred.value.data.width() > WIDTH_LIMIT {
                         deferred.value = match deferred.value.data {
                             Type::Union(type_union) => {
@@ -549,7 +578,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
             new_abstract_state
                 .get_mut(&self.namespace)
                 .expect("evaluation_state should exists")
-                .types = new_evaluations;
+                .types = new_types;
         }
 
         Ok((
@@ -1444,7 +1473,7 @@ mod tests {
         indoc! {r##"
         module:
             A@{module[3:6]} = Inferred(class(module[A@{3:6}]))
-            a@{module[1:0]} = Inferred(@class(module[A@{3:6}])) ⊔ #deferred{#annotated(A)}
+            a@{module[1:0]} = Inferred(@class(module[A@{3:6}]))
             #variables = {A: {module[3:6]}}
             #raise = {}
             #return = Inferred(None)

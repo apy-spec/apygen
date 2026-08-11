@@ -1346,31 +1346,19 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
 
             self.expression = Some(expression);
 
-            let mut effects = PyEffects::new();
-            let mut sourced_ty = deferred_ty.value.clone();
-
-            for deferred_expression in &deferred_ty.expressions {
-                if let Ok(deferred_eval) =
-                    self.evaluate_expression(known_evaluations, deferred_expression)
-                {
-                    sourced_ty = sourced_ty.join(&effects.consume(deferred_eval));
-                } else {
-                    self.expression = None;
-
-                    return Err(EvaluationError::Deferred);
-                }
-            }
-
-            let eval = PyTypeEval::new(sourced_ty, effects);
-
-            known_evaluations
-                .entry(self.namespace.clone())
-                .or_default()
-                .insert(expression.clone(), eval.clone());
+            let eval_result = self
+                .evaluate_deferred_type(known_evaluations, deferred_ty)
+                .map(|eval| {
+                    known_evaluations
+                        .entry(self.namespace.clone())
+                        .or_default()
+                        .insert(expression.clone(), eval.clone());
+                    eval
+                });
 
             self.expression = None;
 
-            return Ok(eval);
+            return eval_result;
         }
 
         match expression {
@@ -1437,5 +1425,24 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
                 Type::new_literal(TypeLiteral::Ellipsis),
             ))),
         }
+    }
+
+    pub fn evaluate_deferred_type(
+        &mut self,
+        known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
+        deferred_ty: &'a Deferred<Sourced<Type>, Expression>,
+    ) -> Result<PyTypeEval<S>, EvaluationError> {
+        let mut effects = PyEffects::new();
+        let mut sourced_ty = deferred_ty.value.clone();
+
+        for deferred_expression in &deferred_ty.expressions {
+            sourced_ty =
+                sourced_ty
+                    .join(&effects.consume(
+                        self.evaluate_expression(known_evaluations, deferred_expression)?,
+                    ));
+        }
+
+        Ok(PyTypeEval::new(sourced_ty, effects))
     }
 }
