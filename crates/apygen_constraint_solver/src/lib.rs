@@ -134,8 +134,9 @@ impl<'s> ConstraintSolver<'s> {
             abstract_state,
             self.namespace_dependent_graph,
         );
+        let mut known_evaluations = BTreeMap::new();
 
-        match expression_evaluator.evaluate_expression(expression) {
+        match expression_evaluator.evaluate_expression(&mut known_evaluations, expression) {
             Ok(eval) => Deferred::known(eval),
             Err(_) => Deferred::unknown(imbl::OrdSet::unit(Arc::new(expression.clone()))),
         }
