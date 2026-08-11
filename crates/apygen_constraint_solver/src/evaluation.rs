@@ -1426,21 +1426,4 @@ impl<'a> ExpressionEvaluator<'a> {
             ))),
         }
     }
-
-    pub fn evaluate_expressions<
-        'e,
-        S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Clone + Ord,
-    >(
-        &self,
-        abstract_state: &S,
-        expressions: impl IntoIterator<Item = &'e Expression>,
-    ) -> Result<PyTypeEval<S>, EvaluationError> {
-        let mut eval = PyTypeEval::with_default_effects(Sourced::specified(Type::Never));
-
-        for expression in expressions {
-            eval = eval.join(&self.evaluate_expression(abstract_state, expression)?);
-        }
-
-        Ok(eval)
-    }
 }
