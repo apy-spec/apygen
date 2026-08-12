@@ -93,7 +93,7 @@ impl ExpressionOverride {
 
 impl Display for ExpressionOverride {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#override(previous={}, new={})", self.previous, self.new)
+        write!(f, "#override({} ◀ {})", self.previous, self.new)
     }
 }
 
@@ -464,22 +464,6 @@ pub enum Expression {
     LiteralBoolean(LiteralBool),
     LiteralNone,
     LiteralEllipsis,
-}
-
-impl Expression {
-    pub fn is_constant(&self) -> bool {
-        matches!(
-            self,
-            Expression::LiteralInteger(_)
-                | Expression::LiteralFloat(_)
-                | Expression::LiteralComplex(_)
-                | Expression::LiteralString(_)
-                | Expression::LiteralBytes(_)
-                | Expression::LiteralBoolean(_)
-                | Expression::LiteralNone
-                | Expression::LiteralEllipsis
-        )
-    }
 }
 
 impl Display for Expression {

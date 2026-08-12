@@ -269,8 +269,7 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                 let deferred_ty = deferred.clone().map(|eval| eval.value);
                                 let deferred_raised_exceptions =
                                     deferred.clone().map(|eval| eval.effects.exceptions);
-
-                                let mut previous_deferred_ty = Deferred::default();
+                                let mut previous_deferred_ty = Deferred::known(Sourced::specified(Type::Never));
                                 if let Some(evaluation_state) =
                                     program_evaluation.get(self.namespace)
                                 {
@@ -1527,6 +1526,34 @@ mod tests {
             #raise = {}
             #return = Inferred(1 ⊔ 2)
         "##},
+    )]
+    #[case::inferred_variable_reassign(
+        indoc! {r##"
+        x = 1
+        x = 2
+        "##},
+        indoc! {r##"
+        module:
+            x@{module[1:0]} = Inferred(1)
+            x@{module[2:0]} = Inferred(2)
+            #variables = {x: {module[2:0]}}
+            #raise = {}
+            #return = Inferred(None)
+        "##},
+    )]
+    #[case::specified_variable_reassign(
+        indoc! {r##"
+        x: int = 1
+        x = "test"
+        "##},
+        indoc! {r##"
+        module:
+            x@{module[1:0]} = Specified(@class(builtins[int@{1:6}]))
+            x@{module[2:0]} = Specified(@class(builtins[int@{1:6}]))
+            #variables = {x: {module[2:0]}}
+            #raise = {}
+            #return = Inferred(None)
+        "##},  // TODO: fix when warnings are implemented
     )]
     fn test_constraints_solving(#[case] source: &str, #[case] expected_expressions: &str) {
         init_logger();

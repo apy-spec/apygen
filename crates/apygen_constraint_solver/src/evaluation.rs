@@ -586,6 +586,7 @@ impl Display for EdgeKind {
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum EvaluatorMode {
     Normal,
+    Override,
     Annotation,
 }
 
@@ -595,6 +596,8 @@ pub enum EvaluationError {
     Deferred,
     #[error("the expression is an invalid annotation")]
     InvalidAnnotation,
+    #[error("the expression uses an unknown variable")]
+    UnknownVariable,
     #[error("failed to get the reference to the qualified name {module}.{id}")]
     QualifiedNameReferenceError { module: SmolStr, id: SmolStr },
     #[error("failed to get the reference to the namespace {0}")]
@@ -708,11 +711,15 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
         expression_variable_reference: &'a ExpressionVariableReference,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
         if let Some(evaluation_state) = self.abstract_state.get(&self.namespace) {
-            if let Some(deferred_ty) = if matches!(self.mode, EvaluatorMode::Normal) {
-                evaluation_state.get_attribute(&expression_variable_reference.name)
-            } else {
-                evaluation_state.get_type_attribute(&expression_variable_reference.name)
-            } {
+            let deferred_ty_option = match self.mode {
+                EvaluatorMode::Normal | EvaluatorMode::Override => {
+                    evaluation_state.get_attribute(&expression_variable_reference.name)
+                }
+                EvaluatorMode::Annotation => {
+                    evaluation_state.get_type_attribute(&expression_variable_reference.name)
+                }
+            };
+            if let Some(deferred_ty) = deferred_ty_option {
                 return Ok(PyTypeEval::with_default_effects(Self::extract_deferred(
                     deferred_ty,
                 )?));
@@ -737,15 +744,15 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
                 );
         }
 
-        if matches!(self.mode, EvaluatorMode::Normal) {
-            Ok(PyTypeEval::raise(Exception::new(
+        match self.mode {
+            EvaluatorMode::Normal => Ok(PyTypeEval::raise(Exception::new(
                 Sourced::inferred(
                     self.find_type(&BUILTINS_MODULE, &SmolStr::new_static("NameError"))?,
                 ),
                 ExceptionOrigin::Specified, // TODO: fix origin
-            )))
-        } else {
-            Err(EvaluationError::InvalidAnnotation)
+            ))),
+            EvaluatorMode::Override => Err(EvaluationError::UnknownVariable),
+            EvaluatorMode::Annotation => Err(EvaluationError::InvalidAnnotation),
         }
     }
 
@@ -789,7 +796,33 @@ impl<'a, S: AbstractState<Key = Namespace, AbstractValue = EvaluationState> + Cl
         known_evaluations: &mut BTreeMap<Namespace, BTreeMap<Expression, PyTypeEval<S>>>,
         expression_override: &'a ExpressionOverride,
     ) -> Result<PyTypeEval<S>, EvaluationError> {
-        self.evaluate_expression(known_evaluations, &expression_override.previous)
+        let mut effects = PyEffects::new();
+
+        let previous_ty = match self
+            .with_mode(EvaluatorMode::Override)
+            .evaluate_expression(known_evaluations, &expression_override.previous)
+        {
+            Ok(eval) =>
+            // TODO: add better handling of forward references and deferred types
+            {
+                pytype_consume_or_return_ok!(effects, eval)
+            }
+            Err(EvaluationError::UnknownVariable) => Sourced::default(),
+            Err(e) => return Err(e),
+        };
+        let new_ty = pytype_consume_or_return_ok!(
+            effects,
+            self.evaluate_expression(known_evaluations, &expression_override.new)?
+        );
+
+        Ok(PyTypeEval::new(
+            // TODO: add warning if types are incompatible
+            match previous_ty.source {
+                Source::Inferred => new_ty,
+                Source::Specified => previous_ty,
+            },
+            effects,
+        ))
     }
 
     pub fn evaluate_expression_function(
