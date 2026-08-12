@@ -1,6 +1,6 @@
 use crate::analysis::fmt::fmt_display_wrapped;
 use crate::analysis::lattice::{Join, LatticeOrd, OrdJoin, OrdLatticeOrd};
-use crate::identifiers::{Location, NamedQualifiedLocation, Namespace, SmolStr};
+use crate::identifiers::{Location, NamedQualifiedLocation, Namespace, QualifiedLocation, SmolStr};
 use crate::primitives::literals::{
     LiteralBool, LiteralBytes, LiteralComplex, LiteralFloat, LiteralInt, LiteralStr,
 };
@@ -1456,7 +1456,7 @@ impl OrdJoin for Pureness {}
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Join)]
 pub struct DefinedVariables {
-    pub names: imbl::OrdMap<SmolStr, imbl::OrdSet<(Arc<Namespace>, Location)>>,
+    pub names: imbl::OrdMap<SmolStr, imbl::OrdSet<QualifiedLocation>>,
 }
 
 impl DefinedVariables {
@@ -1467,11 +1467,9 @@ impl DefinedVariables {
 
 impl Display for DefinedVariables {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        fmt_set(f, self.names.iter(), |f, (name, locations)| {
+        fmt_set(f, self.names.iter(), |f, (name, qualified_locations)| {
             write!(f, "{}: ", name)?;
-            fmt_set(f, locations.iter(), |f, (program_entity, location)| {
-                write!(f, "{}[{}]", program_entity, location)
-            })
+            fmt_display_set(f, qualified_locations.iter())
         })
     }
 }

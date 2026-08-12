@@ -10,7 +10,7 @@ use crate::constraint_graph::expressions::{
 use crate::dependent_graph::DependentGraph;
 use crate::evaluation::literal_class::method_resolution_order;
 use crate::identifiers::smol_str::format_smolstr;
-use crate::identifiers::{Location, NamedQualifiedLocation, Namespace};
+use crate::identifiers::{Location, NamedQualifiedLocation, Namespace, QualifiedLocation};
 use crate::inference::{
     BUILTINS_MODULE, Base, ClassType, Completeness, Deferred, DefinedVariables, Exception,
     ExceptionOrigin, FunctionType, ImportedModuleType, LiteralClass, LiteralFunction,
@@ -43,22 +43,22 @@ pub struct EvaluationState {
     pub return_value: Option<Deferred<Sourced<Type>, Expression>>,
     pub raised_exceptions: Deferred<RaisedExceptions, Expression>,
     pub defined_variables: DefinedVariables,
-    pub type_variables: imbl::OrdMap<SmolStr, imbl::OrdSet<(Arc<Namespace>, Location)>>,
+    pub type_variables: imbl::OrdMap<SmolStr, imbl::OrdSet<QualifiedLocation>>,
 }
 
 impl EvaluationState {
     pub fn get_variable_type(
         &self,
         variable_name: &SmolStr,
-        locations: &imbl::OrdSet<(Arc<Namespace>, Location)>,
+        qualified_locations: &imbl::OrdSet<QualifiedLocation>,
     ) -> Option<Deferred<Sourced<Type>, Expression>> {
         let mut ty = Deferred::known(Sourced::specified(Type::Never));
-        for (namespace, location) in locations {
+        for qualified_location in qualified_locations {
             let variable = Expression::VariableDefinition(ExpressionVariableDefinition::new(
                 NamedQualifiedLocation::new(
                     variable_name.clone(),
-                    location.clone(),
-                    namespace.clone(),
+                    qualified_location.location.clone(),
+                    qualified_location.namespace.clone(),
                 ),
             ));
             ty = ty.join(&self.types.get(&variable).cloned()?);

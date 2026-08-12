@@ -232,16 +232,16 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                 for (parameter, deferred_ty) in arguments {
                     evaluation_state.defined_variables.names.insert(
                         parameter.name.named_qualified_location.name.clone(),
-                        imbl::OrdSet::unit((
-                            parameter.name.named_qualified_location.namespace.clone(),
+                        imbl::OrdSet::unit(QualifiedLocation::new(
                             parameter.name.named_qualified_location.location.clone(),
+                            parameter.name.named_qualified_location.namespace.clone(),
                         )),
                     );
                     evaluation_state.type_variables.insert(
                         parameter.name.named_qualified_location.name.clone(),
-                        imbl::OrdSet::unit((
-                            parameter.name.named_qualified_location.namespace.clone(),
+                        imbl::OrdSet::unit(QualifiedLocation::new(
                             parameter.name.named_qualified_location.location.clone(),
+                            parameter.name.named_qualified_location.namespace.clone(),
                         )),
                     );
                     evaluation_state.types.insert(
@@ -269,7 +269,8 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
                                 let deferred_ty = deferred.clone().map(|eval| eval.value);
                                 let deferred_raised_exceptions =
                                     deferred.clone().map(|eval| eval.effects.exceptions);
-                                let mut previous_deferred_ty = Deferred::known(Sourced::specified(Type::Never));
+                                let mut previous_deferred_ty =
+                                    Deferred::known(Sourced::specified(Type::Never));
                                 if let Some(evaluation_state) =
                                     program_evaluation.get(self.namespace)
                                 {
@@ -346,16 +347,16 @@ impl<'s> GraphAnalyser for ConstraintSolver<'s> {
 
                                 evaluation_state.defined_variables.names.insert(
                                     expression.named_qualified_location.name.clone(),
-                                    imbl::OrdSet::unit((
-                                        expression.named_qualified_location.namespace.clone(),
+                                    imbl::OrdSet::unit(QualifiedLocation::new(
                                         expression.named_qualified_location.location.clone(),
+                                        expression.named_qualified_location.namespace.clone(),
                                     )),
                                 );
                                 evaluation_state.type_variables.insert(
                                     expression.named_qualified_location.name.clone(),
-                                    imbl::OrdSet::unit((
-                                        expression.named_qualified_location.namespace.clone(),
+                                    imbl::OrdSet::unit(QualifiedLocation::new(
                                         expression.named_qualified_location.location.clone(),
+                                        expression.named_qualified_location.namespace.clone(),
                                     )),
                                 );
                             }
